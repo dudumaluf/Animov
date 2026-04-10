@@ -15,19 +15,19 @@
   - .env.local.example documentado
   - GitHub remote: dudumaluf/Animov
 
-- [x] 1.2 Supabase project + schema inicial + RLS + seed
+- [x] 1.2 Supabase project + schema + RLS + seed
   - Projeto linkado: yhnbxrfcofjjyvuyxner
-  - 11 tabelas: users, credits, credit_transactions, projects, scenes, transitions, final_renders, models, presets, generation_logs, system_settings
-  - RLS ativo em todas as tabelas (user ve seus dados, admin ve tudo via is_admin())
-  - Trigger auto-create profile + 3 creditos de boas-vindas no signup
-  - Trigger updated_at automatico
-  - Seed: 5 modelos (Kling 2.5/3.0, Seedance 2.0, Wan, LTX), 6 presets com LLM prompts, system_settings
-  - Supabase helpers: client (browser), server (RSC), middleware (session), admin (service role)
-  - Middleware Next.js configurado pra refresh de sessao
+  - Schema completo: users, credits, credit_transactions, projects, scenes, transitions, final_renders, generation_logs, models, presets, system_settings
+  - Auto-create user profile + 3 créditos de boas-vindas via trigger on auth.users
+  - RLS ativo em todas as tabelas: user vê seus dados, admin vê tudo
+  - Função is_admin() como helper pra policies
+  - Seed: 5 modelos (Kling 2.5/3.0, Seedance 2.0, Wan, LTX), 6 presets cinematográficos, settings iniciais
+  - Supabase client helpers: browser, server, middleware, admin
+  - Middleware Next.js configurado pra refresh de sessão
 
 ### Em andamento
 - [ ] 1.3 Auth (email + Google) + layout base
-- [ ] 1.4 PROGRESS.md inicializado
+- [ ] 1.4 PROGRESS.md (vivo)
 
 ### Blockers
 - Nenhum
@@ -39,4 +39,4 @@
 - drei ScrollControls (não GSAP) pra R3F scroll — grátis, nativo
 - Framer Motion pra animações DOM — MIT license
 - Supabase project ID: yhnbxrfcofjjyvuyxner
-- Admin seed via trigger: ddmaluf@gmail.com recebe role admin quando se cadastrar (precisa promover manualmente via SQL após primeiro login)
+- Admin seed via trigger: ddmaluf@gmail.com será promovido a admin no primeiro cadastro

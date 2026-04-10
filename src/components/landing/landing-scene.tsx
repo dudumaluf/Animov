@@ -20,9 +20,68 @@ const IMAGES = [
   "/mock/Park_Avenue_45.png",
 ];
 
-function FilmStrip({ progressRef }: { progressRef: React.MutableRefObject<number> }) {
+/* ─── Tweakable parameters ─── */
+const SPIRAL = {
+  radius: 3.2,
+  turns: 2.5,
+  heightPerTurn: 2.4,
+  bandWidth: 1.6,
+  segments: 256,
+  tiltX: 0.15,
+  tiltZ: -0.1,
+};
+
+function createSpiralGeometry(params: typeof SPIRAL) {
+  const { radius, turns, heightPerTurn, bandWidth, segments } = params;
+  const totalAngle = turns * Math.PI * 2;
+  const totalHeight = turns * heightPerTurn;
+
+  const positions: number[] = [];
+  const uvs: number[] = [];
+  const indices: number[] = [];
+
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const angle = t * totalAngle;
+    const y = t * totalHeight - totalHeight / 2;
+
+    const cx = Math.cos(angle) * radius;
+    const cz = Math.sin(angle) * radius;
+
+    const tangentX = -Math.sin(angle);
+    const tangentZ = Math.cos(angle);
+    const len = Math.sqrt(tangentX * tangentX + tangentZ * tangentZ);
+    const nx = tangentX / len;
+    const nz = tangentZ / len;
+
+    const halfBand = bandWidth / 2;
+    positions.push(cx - nz * halfBand, y - halfBand * 0.15, cz + nx * halfBand);
+    positions.push(cx + nz * halfBand, y + halfBand * 0.15, cz - nx * halfBand);
+
+    uvs.push(t, 0);
+    uvs.push(t, 1);
+
+    if (i < segments) {
+      const base = i * 2;
+      indices.push(base, base + 1, base + 2);
+      indices.push(base + 1, base + 3, base + 2);
+    }
+  }
+
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  geometry.setAttribute("uv", new THREE.Float32BufferAttribute(uvs, 2));
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+
+  return geometry;
+}
+
+function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<number> }) {
   const meshRef = useRef<THREE.Mesh>(null!);
   const textures = useTexture(IMAGES);
+
+  const geometry = useMemo(() => createSpiralGeometry(SPIRAL), []);
 
   const atlasTexture = useMemo(() => {
     const canvas = document.createElement("canvas");
@@ -62,35 +121,28 @@ function FilmStrip({ progressRef }: { progressRef: React.MutableRefObject<number
     return texture;
   }, [textures]);
 
-  const radius = 5;
-  const height = 2.8;
-  const segments = 64;
-
   useFrame(() => {
     if (!meshRef.current) return;
     const t = progressRef.current;
 
-    const baseRotation = Math.PI * 0.1;
-    const scrollRotation = t * Math.PI * 1.5;
-    meshRef.current.rotation.y = baseRotation + scrollRotation;
+    meshRef.current.rotation.y = t * Math.PI * 0.8;
+    meshRef.current.rotation.x = SPIRAL.tiltX;
+    meshRef.current.rotation.z = SPIRAL.tiltZ;
 
-    const fadeStart = 0.35;
-    const fadeEnd = 0.55;
+    const fadeStart = 0.4;
+    const fadeEnd = 0.6;
     const opacity = t < fadeStart ? 1 : t > fadeEnd ? 0 : 1 - (t - fadeStart) / (fadeEnd - fadeStart);
     const mat = meshRef.current.material as THREE.MeshBasicMaterial;
     mat.opacity = opacity;
 
-    meshRef.current.position.y = THREE.MathUtils.lerp(0, -2, Math.min(t * 2, 1));
-    const scale = THREE.MathUtils.lerp(1, 0.7, Math.min(t * 2, 1));
-    meshRef.current.scale.setScalar(scale);
+    meshRef.current.position.y = THREE.MathUtils.lerp(0, -1.5, Math.min(t * 1.5, 1));
   });
 
   return (
-    <mesh ref={meshRef} position={[0, 0, 0]}>
-      <cylinderGeometry args={[radius, radius, height, segments, 1, true, 0, Math.PI * 1.2]} />
+    <mesh ref={meshRef} geometry={geometry}>
       <meshBasicMaterial
         map={atlasTexture}
-        side={THREE.BackSide}
+        side={THREE.DoubleSide}
         toneMapped={false}
         transparent
       />
@@ -114,15 +166,15 @@ function FloatingCard({
   const row = Math.floor(index / 4);
   const baseX = (col - 1.5) * 2.2 + (row % 2 === 0 ? 0 : 1.1);
   const baseY = (1 - row) * 1.8;
-  const baseZ = -row * 0.8 + (Math.random() - 0.5) * 0.4;
-  const rotZ = (Math.random() - 0.5) * 0.08;
+  const baseZ = -row * 0.8 + ((index * 7) % 5 - 2) * 0.15;
+  const rotZ = ((index * 13) % 7 - 3) * 0.02;
 
   useFrame(() => {
     if (!meshRef.current) return;
     const t = progressRef.current;
 
-    const appearStart = 0.4;
-    const appearEnd = 0.65;
+    const appearStart = 0.45;
+    const appearEnd = 0.7;
 
     if (t < appearStart) {
       meshRef.current.visible = false;
@@ -134,8 +186,8 @@ function FloatingCard({
     const ease = 1 - Math.pow(1 - p, 3);
 
     meshRef.current.position.x = THREE.MathUtils.lerp(0, baseX, ease);
-    meshRef.current.position.y = THREE.MathUtils.lerp(-3, baseY, ease);
-    meshRef.current.position.z = THREE.MathUtils.lerp(-5, baseZ, ease);
+    meshRef.current.position.y = THREE.MathUtils.lerp(-4, baseY, ease);
+    meshRef.current.position.z = THREE.MathUtils.lerp(-6, baseZ, ease);
     meshRef.current.rotation.z = rotZ * ease;
 
     const mat = meshRef.current.material as THREE.MeshBasicMaterial;
@@ -160,7 +212,7 @@ export function LandingScene({ progress }: { progress: number }) {
   return (
     <group>
       <ambientLight intensity={1} />
-      <FilmStrip progressRef={progressRef} />
+      <SpiralStrip progressRef={progressRef} />
       {IMAGES.map((url, i) => (
         <FloatingCard
           key={url}

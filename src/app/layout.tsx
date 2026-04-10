@@ -1,9 +1,8 @@
 import type { Metadata } from "next";
-import { Instrument_Serif, DM_Sans, DM_Mono, Geist } from "next/font/google";
-import "./globals.css";
+import { Instrument_Serif, DM_Sans, DM_Mono } from "next/font/google";
 import { cn } from "@/lib/utils";
-
-const geist = Geist({subsets:['latin'],variable:'--font-sans'});
+import { ThemeProvider } from "@/components/shared/theme-provider";
+import "./globals.css";
 
 const instrumentSerif = Instrument_Serif({
   subsets: ["latin"],
@@ -41,11 +40,22 @@ export default function RootLayout({
   return (
     <html
       lang="pt-BR"
-      className={cn(instrumentSerif.variable, dmSans.variable, dmMono.variable, "font-sans", geist.variable)}
+      className={cn(
+        instrumentSerif.variable,
+        dmSans.variable,
+        dmMono.variable,
+      )}
       suppressHydrationWarning
     >
       <body className="grain">
-        {children}
+        <ThemeProvider
+          attribute="class"
+          defaultTheme="dark"
+          enableSystem={false}
+          disableTransitionOnChange
+        >
+          {children}
+        </ThemeProvider>
       </body>
     </html>
   );

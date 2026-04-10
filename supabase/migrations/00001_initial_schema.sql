@@ -153,11 +153,12 @@ create trigger set_updated_at_system_settings
 create or replace function public.handle_new_user()
 returns trigger as $$
 begin
-  insert into public.users (id, email, name)
+  insert into public.users (id, email, name, role)
   values (
     new.id,
     new.email,
-    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name', split_part(new.email, '@', 1))
+    coalesce(new.raw_user_meta_data ->> 'full_name', new.raw_user_meta_data ->> 'name', split_part(new.email, '@', 1)),
+    case when new.email = 'ddmaluf@gmail.com' then 'admin' else 'user' end
   );
   insert into public.credits (user_id, balance)
   values (new.id, 3);

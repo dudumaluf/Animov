@@ -141,6 +141,8 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     heightPerTurn: { value: 6.0, step: 0.1 },
     bandWidth: { value: 2.1, step: 0.1 },
     imageGap: { value: 0.0, step: 0.01 },
+    imageGapPx: { value: 0, step: 2 },
+    gapColor: { value: "#0D0D0B" },
   });
 
   const start = useControls("Spiral.Start", {
@@ -192,10 +194,11 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     const canvas = document.createElement("canvas");
     const cols = IMAGES.length;
     const cW = 512, cH = 320;
-    canvas.width = cW * cols;
+    const gap = Math.max(0, Math.round(shape.imageGapPx));
+    canvas.width = cW * cols + gap * (cols - 1);
     canvas.height = cH;
     const ctx = canvas.getContext("2d")!;
-    ctx.fillStyle = "#0D0D0B";
+    ctx.fillStyle = shape.gapColor;
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     textures.forEach((tex, i) => {
       if (tex.image) {
@@ -204,7 +207,8 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
         let sw: number, sh: number, sx: number, sy: number;
         if (sa > ca) { sh = img.height; sw = sh * ca; sx = (img.width - sw) / 2; sy = 0; }
         else { sw = img.width; sh = sw / ca; sx = 0; sy = (img.height - sh) / 2; }
-        ctx.drawImage(img, sx, sy, sw, sh, i * cW, 0, cW, cH);
+        const dx = i * (cW + gap);
+        ctx.drawImage(img, sx, sy, sw, sh, dx, 0, cW, cH);
       }
     });
     const t = new THREE.CanvasTexture(canvas);
@@ -213,7 +217,7 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     t.wrapT = THREE.RepeatWrapping;
     t.needsUpdate = true;
     return t;
-  }, [textures]);
+  }, [textures, shape.imageGapPx, shape.gapColor]);
 
   const uniforms = useRef({
     uMap: { value: atlasTexture },

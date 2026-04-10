@@ -21,11 +21,10 @@ const IMAGES = [
   "/mock/Park_Avenue_45.png",
 ];
 
-function lerp(a: number, b: number, t: number) {
+function mix(a: number, b: number, t: number) {
   return a + (b - a) * t;
 }
 
-/* ─── Spiral geometry ─── */
 function createSpiralGeometry(
   radius: number, turns: number, hpt: number,
   bandWidth: number, segs: number, imageGap: number,
@@ -63,8 +62,7 @@ function createSpiralGeometry(
   return geo;
 }
 
-/* ─── Spiral shader with edge fade ─── */
-const spiralVertexShader = /* glsl */ `
+const spiralVert = /* glsl */ `
   varying vec2 vUv;
   void main() {
     vUv = uv;
@@ -72,26 +70,64 @@ const spiralVertexShader = /* glsl */ `
   }
 `;
 
-const spiralFragmentShader = /* glsl */ `
+const spiralFrag = /* glsl */ `
   uniform sampler2D uMap;
   uniform float uOpacity;
-  uniform float uEdgeFadeX;
-  uniform float uEdgeFadeY;
-  uniform vec3 uBackColor;
+
+  // edge fade: start/end positions for each axis (0-1 UV space)
+  uniform float uFadeLeftStart;
+  uniform float uFadeLeftEnd;
+  uniform float uFadeRightStart;
+  uniform float uFadeRightEnd;
+  uniform float uFadeTopStart;
+  uniform float uFadeTopEnd;
+  uniform float uFadeBottomStart;
+  uniform float uFadeBottomEnd;
+
+  // fade mode: 0 = alpha, 1 = color blend
+  uniform float uFadeMode;
+  uniform vec3 uFadeColor;
+
+  // backside
   uniform float uShowBack;
+  uniform vec3 uBackColorA;
+  uniform vec3 uBackColorB;
+  uniform float uBackGradientDir; // 0=horizontal, 1=vertical
+
   varying vec2 vUv;
 
   void main() {
     vec4 tex = texture2D(uMap, vUv);
 
-    float fadeX = smoothstep(0.0, uEdgeFadeX, vUv.x) * smoothstep(0.0, uEdgeFadeX, 1.0 - vUv.x);
-    float fadeY = smoothstep(0.0, uEdgeFadeY, vUv.y) * smoothstep(0.0, uEdgeFadeY, 1.0 - vUv.y);
-    float fade = fadeX * fadeY;
+    float fadeL = smoothstep(uFadeLeftStart, uFadeLeftEnd, vUv.x);
+    float fadeR = smoothstep(uFadeRightStart, uFadeRightEnd, 1.0 - vUv.x);
+    float fadeT = smoothstep(uFadeTopStart, uFadeTopEnd, 1.0 - vUv.y);
+    float fadeB = smoothstep(uFadeBottomStart, uFadeBottomEnd, vUv.y);
+    float fade = fadeL * fadeR * fadeT * fadeB;
 
-    vec3 color = gl_FrontFacing ? tex.rgb : uBackColor;
-    float alpha = gl_FrontFacing ? fade * uOpacity : uShowBack * fade * uOpacity * 0.6;
+    vec3 frontColor;
+    float frontAlpha;
 
-    gl_FragColor = vec4(color, alpha);
+    if (uFadeMode < 0.5) {
+      // alpha mode
+      frontColor = tex.rgb;
+      frontAlpha = fade * uOpacity;
+    } else {
+      // color blend mode
+      frontColor = mix(uFadeColor, tex.rgb, fade);
+      frontAlpha = uOpacity;
+    }
+
+    if (gl_FrontFacing) {
+      gl_FragColor = vec4(frontColor, frontAlpha);
+    } else {
+      float gradT = uBackGradientDir < 0.5 ? vUv.x : vUv.y;
+      vec3 backCol = mix(uBackColorA, uBackColorB, gradT);
+      // blend original texture with back gradient
+      vec3 backFinal = mix(backCol, tex.rgb * backCol, 0.3);
+      float backAlpha = uShowBack * fade * uOpacity * 0.7;
+      gl_FragColor = vec4(backFinal, backAlpha);
+    }
   }
 `;
 
@@ -100,41 +136,51 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
   const textures = useTexture(IMAGES);
 
   const shape = useControls("Spiral.Shape", {
-    radius: { value: 4.0, min: 1, max: 10, step: 0.1 },
-    turns: { value: 2.5, min: 0.5, max: 5, step: 0.1 },
-    heightPerTurn: { value: 6.0, min: 1, max: 10, step: 0.1 },
-    bandWidth: { value: 2.1, min: 0.5, max: 5, step: 0.1 },
-    imageGap: { value: 0.0, min: 0, max: 1, step: 0.05 },
+    radius: { value: 4.0, step: 0.1 },
+    turns: { value: 2.5, step: 0.1 },
+    heightPerTurn: { value: 6.0, step: 0.1 },
+    bandWidth: { value: 2.1, step: 0.1 },
+    imageGap: { value: 0.0, step: 0.01 },
   });
 
-  const transformStart = useControls("Spiral.Start", {
-    posX: { value: 0, min: -10, max: 10, step: 0.1 },
-    posY: { value: 0, min: -10, max: 10, step: 0.1 },
-    posZ: { value: -2.5, min: -15, max: 5, step: 0.1 },
-    rotX: { value: 0.02, min: -3.14, max: 3.14, step: 0.01 },
-    rotY: { value: 0.3, min: -3.14, max: 3.14, step: 0.01 },
-    rotZ: { value: 0.26, min: -3.14, max: 3.14, step: 0.01 },
-    scale: { value: 1.0, min: 0.1, max: 3, step: 0.05 },
-    opacity: { value: 1.0, min: 0, max: 1, step: 0.05 },
+  const start = useControls("Spiral.Start", {
+    posX: { value: 0, step: 0.1 },
+    posY: { value: 0, step: 0.1 },
+    posZ: { value: -2.5, step: 0.1 },
+    rotX: { value: 0.02, step: 0.01 },
+    rotY: { value: 0.3, step: 0.01 },
+    rotZ: { value: 0.26, step: 0.01 },
+    scale: { value: 1.0, step: 0.01 },
+    opacity: { value: 1.0, step: 0.01 },
   });
 
-  const transformEnd = useControls("Spiral.End", {
-    posX: { value: 0, min: -10, max: 10, step: 0.1 },
-    posY: { value: 6.0, min: -10, max: 20, step: 0.1 },
-    posZ: { value: -2.5, min: -15, max: 5, step: 0.1 },
-    rotX: { value: 0.5, min: -3.14, max: 3.14, step: 0.01 },
-    rotY: { value: 0.8, min: -3.14, max: 3.14, step: 0.01 },
-    rotZ: { value: 0.26, min: -3.14, max: 3.14, step: 0.01 },
-    scale: { value: 1.0, min: 0.1, max: 3, step: 0.05 },
-    opacity: { value: 0.0, min: 0, max: 1, step: 0.05 },
+  const end = useControls("Spiral.End", {
+    posX: { value: 0, step: 0.1 },
+    posY: { value: 6.0, step: 0.1 },
+    posZ: { value: -2.5, step: 0.1 },
+    rotX: { value: 0.5, step: 0.01 },
+    rotY: { value: 0.8, step: 0.01 },
+    rotZ: { value: 0.26, step: 0.01 },
+    scale: { value: 1.0, step: 0.01 },
+    opacity: { value: 0.0, step: 0.01 },
   });
 
-  const material = useControls("Spiral.Material", {
-    edgeFadeX: { value: 0.08, min: 0, max: 0.5, step: 0.01 },
-    edgeFadeY: { value: 0.15, min: 0, max: 0.5, step: 0.01 },
+  const mat = useControls("Spiral.Material", {
+    uvScrollSpeed: { value: 0.015, step: 0.001 },
+    fadeMode: { options: { alpha: 0, colorBlend: 1 } },
+    fadeColor: { value: "#0D0D0B" },
+    fadeLeftStart: { value: 0.0, step: 0.01 },
+    fadeLeftEnd: { value: 0.08, step: 0.01 },
+    fadeRightStart: { value: 0.0, step: 0.01 },
+    fadeRightEnd: { value: 0.08, step: 0.01 },
+    fadeTopStart: { value: 0.0, step: 0.01 },
+    fadeTopEnd: { value: 0.15, step: 0.01 },
+    fadeBottomStart: { value: 0.0, step: 0.01 },
+    fadeBottomEnd: { value: 0.15, step: 0.01 },
     showBack: { value: true },
-    backColor: { value: "#0D0D0B" },
-    uvScrollSpeed: { value: 0.0, min: -0.1, max: 0.1, step: 0.002 },
+    backColorA: { value: "#0D0D0B" },
+    backColorB: { value: "#1a1a18" },
+    backGradientDir: { options: { horizontal: 0, vertical: 1 } },
   });
 
   const geometry = useMemo(
@@ -164,6 +210,7 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     const t = new THREE.CanvasTexture(canvas);
     t.colorSpace = THREE.SRGBColorSpace;
     t.wrapS = THREE.RepeatWrapping;
+    t.wrapT = THREE.RepeatWrapping;
     t.needsUpdate = true;
     return t;
   }, [textures]);
@@ -171,44 +218,63 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
   const uniforms = useRef({
     uMap: { value: atlasTexture },
     uOpacity: { value: 1.0 },
-    uEdgeFadeX: { value: 0.08 },
-    uEdgeFadeY: { value: 0.15 },
-    uBackColor: { value: new THREE.Color("#0D0D0B") },
+    uFadeLeftStart: { value: 0.0 },
+    uFadeLeftEnd: { value: 0.08 },
+    uFadeRightStart: { value: 0.0 },
+    uFadeRightEnd: { value: 0.08 },
+    uFadeTopStart: { value: 0.0 },
+    uFadeTopEnd: { value: 0.15 },
+    uFadeBottomStart: { value: 0.0 },
+    uFadeBottomEnd: { value: 0.15 },
+    uFadeMode: { value: 0.0 },
+    uFadeColor: { value: new THREE.Color("#0D0D0B") },
     uShowBack: { value: 1.0 },
+    uBackColorA: { value: new THREE.Color("#0D0D0B") },
+    uBackColorB: { value: new THREE.Color("#1a1a18") },
+    uBackGradientDir: { value: 0.0 },
   });
 
   useFrame((_, delta) => {
     if (!meshRef.current) return;
     const p = progressRef.current;
 
-    atlasTexture.offset.x += material.uvScrollSpeed * delta * 10;
+    atlasTexture.offset.x += mat.uvScrollSpeed * delta;
 
     meshRef.current.position.set(
-      lerp(transformStart.posX, transformEnd.posX, p),
-      lerp(transformStart.posY, transformEnd.posY, p),
-      lerp(transformStart.posZ, transformEnd.posZ, p),
+      mix(start.posX, end.posX, p),
+      mix(start.posY, end.posY, p),
+      mix(start.posZ, end.posZ, p),
     );
     meshRef.current.rotation.set(
-      lerp(transformStart.rotX, transformEnd.rotX, p),
-      lerp(transformStart.rotY, transformEnd.rotY, p),
-      lerp(transformStart.rotZ, transformEnd.rotZ, p),
+      mix(start.rotX, end.rotX, p),
+      mix(start.rotY, end.rotY, p),
+      mix(start.rotZ, end.rotZ, p),
     );
-    const s = lerp(transformStart.scale, transformEnd.scale, p);
-    meshRef.current.scale.setScalar(s);
+    meshRef.current.scale.setScalar(mix(start.scale, end.scale, p));
 
     const u = uniforms.current;
-    u.uOpacity.value = lerp(transformStart.opacity, transformEnd.opacity, p);
-    u.uEdgeFadeX.value = material.edgeFadeX;
-    u.uEdgeFadeY.value = material.edgeFadeY;
-    u.uBackColor.value.set(material.backColor);
-    u.uShowBack.value = material.showBack ? 1.0 : 0.0;
+    u.uOpacity.value = mix(start.opacity, end.opacity, p);
+    u.uFadeMode.value = mat.fadeMode as number;
+    u.uFadeColor.value.set(mat.fadeColor);
+    u.uFadeLeftStart.value = mat.fadeLeftStart;
+    u.uFadeLeftEnd.value = mat.fadeLeftEnd;
+    u.uFadeRightStart.value = mat.fadeRightStart;
+    u.uFadeRightEnd.value = mat.fadeRightEnd;
+    u.uFadeTopStart.value = mat.fadeTopStart;
+    u.uFadeTopEnd.value = mat.fadeTopEnd;
+    u.uFadeBottomStart.value = mat.fadeBottomStart;
+    u.uFadeBottomEnd.value = mat.fadeBottomEnd;
+    u.uShowBack.value = mat.showBack ? 1.0 : 0.0;
+    u.uBackColorA.value.set(mat.backColorA);
+    u.uBackColorB.value.set(mat.backColorB);
+    u.uBackGradientDir.value = mat.backGradientDir as number;
   });
 
   return (
     <mesh ref={meshRef} geometry={geometry}>
       <shaderMaterial
-        vertexShader={spiralVertexShader}
-        fragmentShader={spiralFragmentShader}
+        vertexShader={spiralVert}
+        fragmentShader={spiralFrag}
         uniforms={uniforms.current}
         transparent
         side={THREE.DoubleSide}
@@ -232,36 +298,38 @@ function Card({
   const texture = useTexture(url);
 
   const layout = useControls("Cards.Layout", {
-    columns: { value: 3, min: 1, max: 5, step: 1 },
-    spreadX: { value: 2.4, min: 0.5, max: 6, step: 0.1 },
-    spreadY: { value: 1.6, min: 0.5, max: 5, step: 0.1 },
-    zigzagX: { value: 0.5, min: 0, max: 2, step: 0.1 },
-    depthVar: { value: 1.2, min: 0, max: 5, step: 0.1 },
-    cardW: { value: 2.8, min: 0.5, max: 5, step: 0.1 },
-    cardH: { value: 1.75, min: 0.5, max: 4, step: 0.1 },
+    columns: { value: 3, step: 1 },
+    spreadX: { value: 2.4, step: 0.1 },
+    spreadY: { value: 1.6, step: 0.1 },
+    zigzagX: { value: 0.5, step: 0.1 },
+    depthVar: { value: 1.2, step: 0.1 },
+    cardW: { value: 2.8, step: 0.1 },
+    cardH: { value: 1.75, step: 0.1 },
   });
 
   const transform = useControls("Cards.Transform", {
-    offsetX: { value: -1.5, min: -8, max: 8, step: 0.1 },
-    offsetY: { value: 0, min: -5, max: 5, step: 0.1 },
-    offsetZ: { value: 0, min: -5, max: 5, step: 0.1 },
-    rotX: { value: 0, min: -1, max: 1, step: 0.01 },
-    rotY: { value: 0, min: -1, max: 1, step: 0.01 },
+    offsetX: { value: -1.5, step: 0.1 },
+    offsetY: { value: 0, step: 0.1 },
+    offsetZ: { value: 0, step: 0.1 },
+    rotX: { value: 0, step: 0.01 },
+    rotY: { value: 0, step: 0.01 },
+    rotZ: { value: 0, step: 0.01 },
   });
 
   const anim = useControls("Cards.Animation", {
-    startAt: { value: 0.35, min: 0, max: 0.9, step: 0.01 },
-    stagger: { value: 0.03, min: 0, max: 0.1, step: 0.005 },
-    duration: { value: 0.25, min: 0.05, max: 0.5, step: 0.01 },
-    entryOffsetX: { value: 3, min: -5, max: 10, step: 0.5 },
-    entryOffsetY: { value: -5, min: -10, max: 5, step: 0.5 },
-    entryOffsetZ: { value: -4, min: -10, max: 0, step: 0.5 },
+    startAt: { value: 0.35, step: 0.01 },
+    stagger: { value: 0.03, step: 0.005 },
+    duration: { value: 0.25, step: 0.01 },
+    entryX: { value: 3, step: 0.5 },
+    entryY: { value: -5, step: 0.5 },
+    entryZ: { value: -4, step: 0.5 },
   });
 
-  const col = index % layout.columns;
-  const row = Math.floor(index / layout.columns);
+  const cols = Math.max(1, layout.columns);
+  const col = index % cols;
+  const row = Math.floor(index / cols);
   const zigzag = row % 2 === 0 ? 0 : layout.zigzagX;
-  const centerCol = (layout.columns - 1) / 2;
+  const centerCol = (cols - 1) / 2;
 
   const baseX = (col - centerCol + zigzag) * layout.spreadX + transform.offsetX;
   const baseY = -row * layout.spreadY + transform.offsetY;
@@ -270,20 +338,19 @@ function Card({
   useFrame(() => {
     if (!meshRef.current) return;
     const t = progressRef.current;
-    const start = anim.startAt + index * anim.stagger;
-    const end = start + anim.duration;
+    const s = anim.startAt + index * anim.stagger;
+    const e = s + anim.duration;
 
-    if (t < start) { meshRef.current.visible = false; return; }
+    if (t < s) { meshRef.current.visible = false; return; }
     meshRef.current.visible = true;
 
-    const raw = Math.min(1, (t - start) / (end - start));
+    const raw = Math.min(1, (t - s) / (e - s));
     const ease = raw < 0.5 ? 4 * raw * raw * raw : 1 - Math.pow(-2 * raw + 2, 3) / 2;
 
-    meshRef.current.position.x = lerp(baseX + anim.entryOffsetX, baseX, ease);
-    meshRef.current.position.y = lerp(baseY + anim.entryOffsetY, baseY, ease);
-    meshRef.current.position.z = lerp(baseZ + anim.entryOffsetZ, baseZ, ease);
-    meshRef.current.rotation.x = transform.rotX;
-    meshRef.current.rotation.y = transform.rotY;
+    meshRef.current.position.x = mix(baseX + anim.entryX, baseX, ease);
+    meshRef.current.position.y = mix(baseY + anim.entryY, baseY, ease);
+    meshRef.current.position.z = mix(baseZ + anim.entryZ, baseZ, ease);
+    meshRef.current.rotation.set(transform.rotX, transform.rotY, transform.rotZ);
 
     (meshRef.current.material as THREE.MeshBasicMaterial).opacity = ease;
   });

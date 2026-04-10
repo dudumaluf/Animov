@@ -67,17 +67,17 @@ function SpiralStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
   const textures = useTexture(IMAGES);
 
   const spiral = useControls("Spiral", {
-    radius: { value: 4.5, min: 2, max: 8, step: 0.1 },
-    turns: { value: 2.0, min: 0.5, max: 4, step: 0.1 },
-    heightPerTurn: { value: 3.2, min: 1, max: 6, step: 0.1 },
-    bandWidth: { value: 2.2, min: 0.5, max: 4, step: 0.1 },
-    tiltX: { value: 0.18, min: -1, max: 1, step: 0.01 },
-    tiltZ: { value: -0.08, min: -1, max: 1, step: 0.01 },
-    posZ: { value: -5, min: -12, max: 0, step: 0.5 },
-    scrollSpeed: { value: 0.5, min: 0, max: 2, step: 0.05 },
-    uvScrollSpeed: { value: 0.02, min: 0, max: 0.1, step: 0.002 },
-    exitRotX: { value: 0.8, min: 0, max: 2, step: 0.05 },
-    exitUpSpeed: { value: 6, min: 0, max: 15, step: 0.5 },
+    radius: { value: 4.0, min: 2, max: 8, step: 0.1 },
+    turns: { value: 2.5, min: 0.5, max: 4, step: 0.1 },
+    heightPerTurn: { value: 6.0, min: 1, max: 6, step: 0.1 },
+    bandWidth: { value: 2.1, min: 0.5, max: 4, step: 0.1 },
+    tiltX: { value: 0.02, min: -1, max: 1, step: 0.01 },
+    tiltZ: { value: 0.26, min: -1, max: 1, step: 0.01 },
+    posZ: { value: -2.5, min: -12, max: 0, step: 0.5 },
+    scrollSpeed: { value: 0.05, min: 0, max: 2, step: 0.05 },
+    uvScrollSpeed: { value: 0.00, min: 0, max: 0.1, step: 0.002 },
+    exitRotX: { value: 0.00, min: 0, max: 2, step: 0.05 },
+    exitUpSpeed: { value: 6.0, min: 0, max: 15, step: 0.5 },
   });
 
   const geometry = useMemo(

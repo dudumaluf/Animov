@@ -1,43 +1,45 @@
 # Animov.ai — Progresso
 
-## Fase atual: 1 — Fundação
+## Fase atual: 2 — Landing
 
 ### Concluído
 - [x] 1.1 Repo + Next.js 14 + Tailwind + shadcn/ui + TS strict
-  - Next.js 14 App Router, pnpm, TypeScript strict + noUncheckedIndexedAccess
-  - Tailwind configurado com paleta Animov (dark default, light toggle)
-  - shadcn/ui inicializado (radix, lucide icons)
-  - Fontes: Instrument Serif (display), DM Sans (body), DM Mono (labels)
-  - next-themes com ThemeProvider (dark default)
-  - Grain texture overlay
-  - Route groups com placeholders
-  - GitHub remote: dudumaluf/Animov
-
-- [x] 1.2 Supabase project + schema + RLS + seed
-  - Schema: users, credits, credit_transactions, projects, scenes, transitions, final_renders, generation_logs, models, presets, system_settings
-  - Trigger auto-create profile + 3 créditos boas-vindas
-  - RLS com is_admin() helper
-  - Seed: 5 modelos AI, 6 presets, settings
-
+- [x] 1.2 Supabase schema + RLS + seed
 - [x] 1.3 Auth (email/password) + layout base
-  - Login e cadastro com Supabase Auth (server actions)
-  - Callback route pra confirmação de email
-  - Layout (app) protegido: redirect se não logado
-  - Layout admin protegido: redirect se não admin
-  - Sidebar com navegação, créditos, nome, logout
-  - ddmaluf@gmail.com auto-promovido a admin via trigger
-  - Middleware Next.js pra session refresh
+
+- [x] 2.1 Estrutura one-pager + tipografia serif + preto absoluto
+  - Navbar fixa com links anchor + CTA
+  - Hero com titulo serif gigante, eyebrow dourado, stats, CTA duplo
+  - Como funciona: 3 passos com numeros itálico dourado
+  - Pricing: 3 planos (Free/Starter/Pro) com card dourado destaque
+  - Footer minimalista
+  - Framer Motion: fade-in, stagger, useInView pra cada seção
+
+- [x] 2.2 R3F scene com cards de imóvel
+  - Canvas com ScrollControls (drei) + 4 páginas de scroll
+  - 12 cards com fotos Park Avenue como texturas
+  - PlaneGeometry + meshBasicMaterial + useTexture
+
+- [x] 2.3 Scroll-driven layouts (grid → cilindro → espiral)
+  - Grid em perspectiva (4 colunas, profundidade por row)
+  - Cilindro: cards dispostos em anel 360°
+  - Espiral: raio crescente + distribuição vertical
+  - Transições suaves via lerp entre os 3 layouts
+
+- [x] 2.4 Parallax de títulos sincronizado com presets
+  - Html overlay com drei pra título da seção
+  - Labels de presets (Dolly In, Orbit, Ken Burns, Reveal, Float Up, Cinematic Pan)
 
 ### Em andamento
-- [ ] 1.4 PROGRESS.md vivo
+- [ ] 2.5 Responsivo + fallback mobile
+- [ ] Polish visual (ajustes de spacing, timing, cores)
 
 ### Blockers
 - Nenhum
 
 ### Notas/decisões
-- Instrument Serif como font display (CSS var --font-display)
-- Dark (#0D0D0B) como tema default, light (#F5F2EC) via toggle
-- drei ScrollControls (não GSAP) pra R3F scroll
-- Framer Motion pra animações DOM
-- Auth: email/password agora, Google OAuth depois
-- Admin: ddmaluf@gmail.com promovido automaticamente no cadastro
+- R3F v8 + drei v9 (compatíveis com React 18 / Next.js 14)
+- dynamic import com ssr: false pra Canvas R3F
+- Framer Motion pra animações DOM (não GSAP)
+- 12 fotos Park Avenue como mock assets
+- ScrollControls com damping 0.3 pra scroll suave

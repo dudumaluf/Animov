@@ -98,15 +98,21 @@ export function HeroWithShowcase() {
           </motion.div>
         </div>
 
-        {/* Cards section text — fades in on scroll */}
+        {/* Cards section text — large on the right, editorial */}
         <div
-          className="pointer-events-none absolute inset-0 flex flex-col items-center justify-end pb-16 transition-opacity duration-300"
-          style={{ opacity: Math.max(0, Math.min(1, (progress - 0.5) * 3)) }}
+          className="pointer-events-none absolute inset-0 flex items-center justify-end pr-10 transition-opacity duration-500 md:pr-20"
+          style={{ opacity: Math.max(0, Math.min(1, (progress - 0.45) * 4)) }}
         >
-          <p className="eyebrow">— Movimentos de câmera</p>
-          <p className="mt-3 text-center font-display text-display-md">
-            Seis formas de mostrar<br />um espaço.
-          </p>
+          <div className="max-w-lg text-right">
+            <p className="eyebrow">— Movimentos de câmera</p>
+            <h2 className="mt-4 font-display text-display-xl italic leading-[0.9]">
+              Seis formas
+              <br />
+              de mostrar
+              <br />
+              um espaço.
+            </h2>
+          </div>
         </div>
 
         {/* Stats — bottom of hero */}

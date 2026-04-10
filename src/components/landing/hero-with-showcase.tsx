@@ -31,7 +31,7 @@ export function HeroWithShowcase() {
         {/* R3F Canvas — behind everything */}
         <div className="absolute inset-0">
           <Canvas
-            camera={{ position: [0, 0, 6], fov: 50 }}
+            camera={{ position: [0, 0, 8], fov: 45 }}
             dpr={[1, 1.5]}
             gl={{ antialias: true, alpha: true }}
             style={{ background: "transparent" }}

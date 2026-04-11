@@ -91,6 +91,29 @@ function createRibbonGeometry(
   return geo;
 }
 
+/*
+  Spiral geometry: helix path, same UV/face winding as ribbon.
+*/
+function createSpiralGeometry(
+  radius: number, turns: number, hpt: number,
+  bandWidth: number, segments: number,
+  twistStart: number, twistEnd: number, twistCenter: number,
+) {
+  const totalAngle = turns * Math.PI * 2;
+  const totalHeight = turns * hpt;
+
+  const curvePoints: THREE.Vector3[] = [];
+  const steps = 60;
+  for (let i = 0; i <= steps; i++) {
+    const t = i / steps;
+    const angle = t * totalAngle;
+    const y = t * totalHeight - totalHeight / 2;
+    curvePoints.push(new THREE.Vector3(Math.cos(angle) * radius, y, Math.sin(angle) * radius));
+  }
+
+  return createRibbonGeometry(curvePoints, bandWidth, segments, twistStart, twistEnd, twistCenter, false);
+}
+
 const ribbonVert = /* glsl */ `
   varying vec2 vUv;
   void main() {
@@ -150,13 +173,23 @@ function RibbonStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
   const meshRef = useRef<THREE.Mesh>(null!);
   const textures = useTexture(IMAGES);
 
-  const shape = useControls("Ribbon.Shape", {
+  const mode = useControls("Strip.Mode", {
+    type: { options: { spiral: "spiral", ribbon: "ribbon" } },
+  });
+
+  const shape = useControls("Strip.Shape", {
     bandWidth: { value: 2.1, step: 0.1 },
     segments: { value: 300, step: 10 },
     closed: false,
   });
 
-  const path = useControls("Ribbon.Path", {
+  const spiral = useControls("Strip.Spiral", {
+    radius: { value: 4.0, step: 0.1 },
+    turns: { value: 2.5, step: 0.1 },
+    heightPerTurn: { value: 6.0, step: 0.1 },
+  });
+
+  const path = useControls("Strip.Ribbon", {
     p0x: { value: -6, step: 0.1 }, p0y: { value: 4, step: 0.1 }, p0z: { value: 2, step: 0.1 },
     p1x: { value: -3, step: 0.1 }, p1y: { value: 2, step: 0.1 }, p1z: { value: -3, step: 0.1 },
     p2x: { value: 2, step: 0.1 },  p2y: { value: 0, step: 0.1 }, p2z: { value: -2, step: 0.1 },
@@ -165,25 +198,25 @@ function RibbonStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     p5x: { value: -2, step: 0.1 }, p5y: { value: -5, step: 0.1 }, p5z: { value: -1, step: 0.1 },
   });
 
-  const twist = useControls("Ribbon.Twist", {
+  const twist = useControls("Strip.Twist", {
     twistStart: { value: 0.4, step: 0.01 },
     twistCenter: { value: 0.0, step: 0.01 },
     twistEnd: { value: -0.3, step: 0.01 },
   });
 
-  const start = useControls("Ribbon.Start", {
+  const start = useControls("Strip.Start", {
     posX: { value: 0, step: 0.1 }, posY: { value: 0, step: 0.1 }, posZ: { value: -2.5, step: 0.1 },
     rotX: { value: 0.02, step: 0.01 }, rotY: { value: 0.3, step: 0.01 }, rotZ: { value: 0.26, step: 0.01 },
     scale: { value: 1.0, step: 0.01 }, opacity: { value: 1.0, step: 0.01 },
   });
 
-  const end = useControls("Ribbon.End", {
+  const end = useControls("Strip.End", {
     posX: { value: 0, step: 0.1 }, posY: { value: 6.0, step: 0.1 }, posZ: { value: -2.5, step: 0.1 },
     rotX: { value: 0.5, step: 0.01 }, rotY: { value: 0.8, step: 0.01 }, rotZ: { value: 0.26, step: 0.01 },
     scale: { value: 1.0, step: 0.01 }, opacity: { value: 0.0, step: 0.01 },
   });
 
-  const mat = useControls("Ribbon.Material", {
+  const mat = useControls("Strip.Material", {
     uvScrollSpeed: { value: 0.015, step: 0.001 },
     bgColor: { value: "#0D0D0B" },
     fadeLeftStart: { value: 0.0, step: 0.005 },
@@ -200,12 +233,12 @@ function RibbonStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     backGradientDir: { options: { alongPath: 0, acrossBand: 1 } },
   });
 
-  const atlas = useControls("Ribbon.Atlas", {
+  const atlas = useControls("Strip.Atlas", {
     imageGapPx: { value: 0, step: 2 },
     gapColor: { value: "#0D0D0B" },
   });
 
-  const points = useMemo(() => [
+  const ribbonPoints = useMemo(() => [
     new THREE.Vector3(path.p0x, path.p0y, path.p0z),
     new THREE.Vector3(path.p1x, path.p1y, path.p1z),
     new THREE.Vector3(path.p2x, path.p2y, path.p2z),
@@ -216,10 +249,21 @@ function RibbonStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
       path.p2x, path.p2y, path.p2z, path.p3x, path.p3y, path.p3z,
       path.p4x, path.p4y, path.p4z, path.p5x, path.p5y, path.p5z]);
 
-  const geometry = useMemo(
-    () => createRibbonGeometry(points, shape.bandWidth, shape.segments, twist.twistStart, twist.twistEnd, twist.twistCenter, shape.closed),
-    [points, shape.bandWidth, shape.segments, twist.twistStart, twist.twistEnd, twist.twistCenter, shape.closed],
-  );
+  const geometry = useMemo(() => {
+    if (mode.type === "spiral") {
+      return createSpiralGeometry(
+        spiral.radius, spiral.turns, spiral.heightPerTurn,
+        shape.bandWidth, shape.segments,
+        twist.twistStart, twist.twistEnd, twist.twistCenter,
+      );
+    }
+    return createRibbonGeometry(
+      ribbonPoints, shape.bandWidth, shape.segments,
+      twist.twistStart, twist.twistEnd, twist.twistCenter, shape.closed,
+    );
+  }, [mode.type, spiral.radius, spiral.turns, spiral.heightPerTurn,
+      ribbonPoints, shape.bandWidth, shape.segments,
+      twist.twistStart, twist.twistEnd, twist.twistCenter, shape.closed]);
 
   const atlasTexture = useMemo(() => {
     const canvas = document.createElement("canvas");

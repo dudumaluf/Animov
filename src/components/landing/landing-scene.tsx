@@ -125,6 +125,7 @@ const ribbonVert = /* glsl */ `
 const ribbonFrag = /* glsl */ `
   uniform sampler2D uMap;
   uniform float uOpacity;
+  uniform float uUvOffsetX;
 
   // front: color blend to bg (no alpha change)
   uniform vec3 uBgColor;
@@ -146,7 +147,8 @@ const ribbonFrag = /* glsl */ `
   varying vec2 vUv;
 
   void main() {
-    vec4 tex = texture2D(uMap, vUv);
+    vec2 scrolledUv = vec2(fract(vUv.x + uUvOffsetX), vUv.y);
+    vec4 tex = texture2D(uMap, scrolledUv);
 
     float fadeL = smoothstep(uFadeLeftStart, uFadeLeftEnd, vUv.x);
     float fadeR = smoothstep(uFadeRightStart, uFadeRightEnd, 1.0 - vUv.x);
@@ -293,9 +295,12 @@ function RibbonStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     return t;
   }, [textures, atlas.imageGapPx, atlas.gapColor]);
 
+  const uvOffsetX = useRef(0);
+
   const uniforms = useRef({
     uMap: { value: atlasTexture },
     uOpacity: { value: 1.0 },
+    uUvOffsetX: { value: 0.0 },
     uBgColor: { value: new THREE.Color("#0D0D0B") },
     uFadeLeftStart: { value: 0.0 }, uFadeLeftEnd: { value: 0.08 },
     uFadeRightStart: { value: 0.0 }, uFadeRightEnd: { value: 0.08 },
@@ -313,7 +318,8 @@ function RibbonStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
     if (!meshRef.current) return;
     const p = progressRef.current;
 
-    atlasTexture.offset.x += mat.uvScrollSpeed * delta;
+    atlasTexture.needsUpdate = false;
+    uvOffsetX.current += mat.uvScrollSpeed * delta;
 
     meshRef.current.position.set(mix(start.posX, end.posX, p), mix(start.posY, end.posY, p), mix(start.posZ, end.posZ, p));
     meshRef.current.rotation.set(mix(start.rotX, end.rotX, p), mix(start.rotY, end.rotY, p), mix(start.rotZ, end.rotZ, p));
@@ -321,6 +327,7 @@ function RibbonStrip({ progressRef }: { progressRef: React.MutableRefObject<numb
 
     const u = uniforms.current;
     u.uOpacity.value = mix(start.opacity, end.opacity, p);
+    u.uUvOffsetX.value = uvOffsetX.current;
     u.uBgColor.value.set(mat.bgColor);
     u.uFadeLeftStart.value = mat.fadeLeftStart;   u.uFadeLeftEnd.value = mat.fadeLeftEnd;
     u.uFadeRightStart.value = mat.fadeRightStart; u.uFadeRightEnd.value = mat.fadeRightEnd;

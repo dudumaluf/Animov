@@ -4,6 +4,20 @@ import Image from "next/image";
 import { useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { X, GripVertical, ArrowRightLeft, Plus } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  useSortable,
+  horizontalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 
 const ACCEPTED = ".jpg,.jpeg,.png,.webp";
 
@@ -21,7 +35,16 @@ const PRESET_LABELS: Record<string, string> = {
   whip_pan: "Whip Pan",
 };
 
-function SceneCard({ sceneId, onPreviewVideo }: { sceneId: string; onPreviewVideo?: (url: string) => void }) {
+function SortableSceneCard({
+  sceneId,
+  onPreviewVideo,
+}: {
+  sceneId: string;
+  onPreviewVideo?: (url: string) => void;
+}) {
+  const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
+    useSortable({ id: sceneId });
+
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === sceneId));
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const selectScene = useProjectStore((s) => s.selectScene);
@@ -31,15 +54,24 @@ function SceneCard({ sceneId, onPreviewVideo }: { sceneId: string; onPreviewVide
   if (!scene) return null;
   const isSelected = selectedSceneId === sceneId;
 
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 50 : undefined,
+  };
+
   return (
     <div
+      ref={setNodeRef}
+      style={style}
       onClick={() => selectScene(sceneId)}
       onDoubleClick={() => {
         if (scene.status === "ready" && scene.videoUrl && onPreviewVideo) {
           onPreviewVideo(scene.videoUrl);
         }
       }}
-      className={`group relative flex w-48 shrink-0 cursor-pointer flex-col overflow-hidden rounded-xl border transition-all ${
+      className={`group relative flex w-48 shrink-0 cursor-pointer flex-col overflow-hidden rounded-xl border transition-colors ${
         isSelected
           ? "border-accent-gold/50 ring-1 ring-accent-gold/20"
           : "border-white/5 hover:border-white/10"
@@ -86,7 +118,9 @@ function SceneCard({ sceneId, onPreviewVideo }: { sceneId: string; onPreviewVide
           <X size={10} />
         </button>
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-4">
-          <GripVertical size={12} className="text-white/30" />
+          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+            <GripVertical size={12} className="text-white/40 hover:text-white/70" />
+          </div>
           <span className="font-mono text-[10px] text-white/70">{scene.duration}s</span>
         </div>
       </div>
@@ -187,18 +221,39 @@ function AddSceneButton() {
 export function FilmStrip({ onPreviewVideo }: { onPreviewVideo?: (url: string) => void }) {
   const scenes = useProjectStore((s) => s.scenes);
   const transitions = useProjectStore((s) => s.transitions);
+  const reorderScenes = useProjectStore((s) => s.reorderScenes);
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
+  );
+
+  const handleDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    const fromIndex = scenes.findIndex((s) => s.id === active.id);
+    const toIndex = scenes.findIndex((s) => s.id === over.id);
+    if (fromIndex !== -1 && toIndex !== -1) {
+      reorderScenes(fromIndex, toIndex);
+    }
+  };
+
+  const sceneIds = scenes.map((s) => s.id);
 
   return (
-    <div className="flex items-start gap-2 py-4">
-      {scenes.map((scene, i) => (
-        <div key={scene.id} className="flex items-start gap-1">
-          <SceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
-          {i < scenes.length - 1 && transitions[i] && (
-            <TransitionCard transitionId={transitions[i]!.id} insertIndex={i + 1} />
-          )}
+    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+      <SortableContext items={sceneIds} strategy={horizontalListSortingStrategy}>
+        <div className="flex items-start gap-2 py-4">
+          {scenes.map((scene, i) => (
+            <div key={scene.id} className="flex items-start gap-1">
+              <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
+              {i < scenes.length - 1 && transitions[i] && (
+                <TransitionCard transitionId={transitions[i]!.id} insertIndex={i + 1} />
+              )}
+            </div>
+          ))}
+          <AddSceneButton />
         </div>
-      ))}
-      <AddSceneButton />
-    </div>
+      </SortableContext>
+    </DndContext>
   );
 }

@@ -53,6 +53,7 @@ export type ProjectStore = {
 
   updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string) => void;
   generateAll: () => Promise<void>;
+  generateScene: (sceneId: string) => Promise<void>;
 
   initProject: (urlProjectId: string) => Promise<void>;
   saveToSupabase: () => Promise<void>;
@@ -436,6 +437,54 @@ export const useProjectStore = create<ProjectStore>()(
             console.error(`[generate] scene ${scene.id}:`, err);
             get().updateSceneStatus(scene.id, "failed");
           }
+        }
+
+        set({ isGenerating: false });
+        get().saveToSupabase();
+      },
+
+      generateScene: async (sceneId) => {
+        const state = get();
+        const scene = state.scenes.find((s) => s.id === sceneId);
+        if (!scene || state.isGenerating) return;
+
+        set({ isGenerating: true });
+
+        let file = state._photoFiles[scene.id];
+        if (!file && scene.photoDataUrl) {
+          file = await dataUrlToFile(scene.photoDataUrl, `${scene.id}.jpg`);
+        }
+        if (!file && scene.photoUrl && !scene.photoUrl.startsWith("blob:")) {
+          const res = await fetch(scene.photoUrl);
+          const blob = await res.blob();
+          file = new File([blob], `${scene.id}.jpg`, { type: blob.type });
+        }
+        if (!file) { set({ isGenerating: false }); return; }
+
+        get().updateSceneStatus(sceneId, "generating");
+
+        try {
+          const formData = new FormData();
+          formData.append("photo", file);
+          formData.append("presetId", scene.presetId);
+          formData.append("duration", String(scene.duration));
+          formData.append("modelId", state.modelId);
+
+          const res = await fetch("/api/generate-scene", {
+            method: "POST",
+            body: formData,
+          });
+
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error ?? "Failed");
+          }
+
+          const data = await res.json();
+          get().updateSceneStatus(sceneId, "ready", data.videoUrl);
+        } catch (err) {
+          console.error(`[generate] scene ${sceneId}:`, err);
+          get().updateSceneStatus(sceneId, "failed");
         }
 
         set({ isGenerating: false });

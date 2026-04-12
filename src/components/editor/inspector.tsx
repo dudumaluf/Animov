@@ -26,6 +26,8 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
   );
   const setScenePreset = useProjectStore((s) => s.setScenePreset);
   const setSceneDuration = useProjectStore((s) => s.setSceneDuration);
+  const generateScene = useProjectStore((s) => s.generateScene);
+  const isGenerating = useProjectStore((s) => s.isGenerating);
   const selectScene = useProjectStore((s) => s.selectScene);
 
   const isOpen = !!scene && !!selectedSceneId;
@@ -142,6 +144,14 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
                 </span>
               </div>
             </div>
+
+            <button
+              disabled={isGenerating}
+              onClick={() => generateScene(selectedSceneId)}
+              className="mt-4 w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:opacity-30 disabled:cursor-not-allowed"
+            >
+              {scene.status === "ready" ? "Regenerar cena" : scene.status === "generating" ? "Gerando..." : "Gerar esta cena"}
+            </button>
           </div>
         </div>
       )}

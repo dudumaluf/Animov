@@ -1,5 +1,6 @@
 import Link from "next/link";
 import { createClient } from "@/lib/supabase/server";
+import { ProjectCard } from "@/components/editor/project-card";
 
 export default async function DashboardPage() {
   const supabase = createClient();
@@ -38,34 +39,7 @@ export default async function DashboardPage() {
       ) : (
         <div className="mt-8 grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
           {projects.map((project) => (
-            <Link
-              key={project.id}
-              href={`/editor/${project.id}`}
-              className="group rounded-xl border border-white/5 p-5 transition-all hover:border-accent-gold/20 hover:bg-white/[0.02]"
-            >
-              <p className="font-display text-lg group-hover:text-accent-gold transition-colors">
-                {project.name}
-              </p>
-              <div className="mt-3 flex items-center gap-3">
-                <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 font-mono text-[10px] uppercase ${
-                  project.status === "ready"
-                    ? "bg-green-500/10 text-green-400"
-                    : project.status === "generating"
-                    ? "bg-accent-gold/10 text-accent-gold"
-                    : project.status === "failed"
-                    ? "bg-red-500/10 text-red-400"
-                    : "bg-white/5 text-text-secondary"
-                }`}>
-                  {project.status === "draft" && "Rascunho"}
-                  {project.status === "generating" && "Gerando"}
-                  {project.status === "ready" && "Pronto"}
-                  {project.status === "failed" && "Erro"}
-                </span>
-                <span className="font-mono text-[10px] text-text-secondary">
-                  {new Date(project.updated_at).toLocaleDateString("pt-BR")}
-                </span>
-              </div>
-            </Link>
+            <ProjectCard key={project.id} project={project} />
           ))}
         </div>
       )}

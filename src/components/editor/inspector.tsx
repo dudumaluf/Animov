@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState, useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers, Music, Trash2, Upload } from "lucide-react";
+import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers, Music, Trash2, Upload, Clapperboard } from "lucide-react";
 
 const PRESETS = [
   { id: "push_in_serene", label: "Avanço Suave", desc: "Dolly lento em direção ao ponto focal", icon: MoveRight, arrow: "→" },
@@ -418,23 +418,53 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
       )}
       {showEdit && (
         <div className="flex h-full w-80 flex-col">
-          <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
-            <div className="flex items-center gap-2">
-              <Music size={14} className="text-accent-gold" />
-              <span className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                Edit Final
-              </span>
-            </div>
+          <div className="relative aspect-video w-full bg-white/5">
+            {(() => {
+              const preview = useProjectStore.getState().scenes.find((s) => s.status === "ready" && s.videoUrl);
+              if (preview?.videoUrl) {
+                return (
+                  <video
+                    src={preview.videoUrl}
+                    className="h-full w-full object-cover"
+                    muted
+                    loop
+                    autoPlay
+                    playsInline
+                  />
+                );
+              }
+              if (preview) {
+                return (
+                  <Image
+                    src={preview.photoDataUrl ?? preview.photoUrl}
+                    alt="edit"
+                    fill
+                    className="object-cover"
+                    unoptimized
+                  />
+                );
+              }
+              return (
+                <div className="flex h-full w-full items-center justify-center">
+                  <Clapperboard size={24} className="text-text-secondary" />
+                </div>
+              );
+            })()}
             <button
               onClick={() => useProjectStore.setState({ editNodeSelected: false })}
-              className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:text-white"
+              className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
             >
               <X size={12} />
             </button>
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
-            <MusicSection
+            <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+              Edit Final
+            </p>
+
+            <div className="mt-4">
+              <MusicSection
               musicUrl={musicUrl}
               musicPrompt={musicPrompt}
               isMusicGenerating={isMusicGenerating}
@@ -443,8 +473,9 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
               clearMusic={clearMusic}
               setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
             />
+            </div>
 
-            <div className="mt-6 rounded-lg border border-white/5 p-3">
+            <div className="mt-4 rounded-lg border border-white/5 p-3">
               <span className="block font-mono text-[9px] uppercase text-text-secondary">Composição</span>
               <div className="mt-2 space-y-1">
                 <div className="flex items-center justify-between">

@@ -129,6 +129,7 @@ export default function EditorPage({
               ref={canvasRef}
               className="flex flex-1 items-center justify-center overflow-auto p-6"
               onWheel={handleWheel}
+              onClick={() => useProjectStore.getState().selectScene(null)}
             >
               <div
                 className="origin-center transition-transform duration-150"

@@ -65,7 +65,7 @@ function SortableSceneCard({
     <div
       ref={setNodeRef}
       style={style}
-      onClick={() => selectScene(sceneId)}
+      onClick={(e) => { e.stopPropagation(); selectScene(sceneId); }}
       onDoubleClick={() => {
         if (scene.status === "ready" && scene.videoUrl && onPreviewVideo) {
           onPreviewVideo(scene.videoUrl);
@@ -84,8 +84,9 @@ function SortableSceneCard({
             className="h-full w-full object-cover"
             muted
             loop
-            autoPlay
             playsInline
+            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
           />
         ) : (
           <Image
@@ -96,7 +97,7 @@ function SortableSceneCard({
             unoptimized
           />
         )}
-        <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px] text-white">
+        <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
           <span>{sceneIndex + 1}</span>
           {scene.status === "generating" && (
             <span className="animate-pulse text-accent-gold">●</span>
@@ -108,6 +109,11 @@ function SortableSceneCard({
             <span className="text-red-400">✗</span>
           )}
         </div>
+        {scene.status === "generating" && (
+          <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px]">
+            <span className="animate-pulse text-accent-gold">●</span>
+          </div>
+        )}
         <button
           onClick={(e) => {
             e.stopPropagation();
@@ -117,14 +123,14 @@ function SortableSceneCard({
         >
           <X size={10} />
         </button>
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-4">
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-4 opacity-0 transition-opacity group-hover:opacity-100">
           <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
             <GripVertical size={12} className="text-white/40 hover:text-white/70" />
           </div>
           <span className="font-mono text-[10px] text-white/70">{scene.duration}s</span>
         </div>
       </div>
-      <div className="flex items-center gap-1.5 px-2.5 py-2">
+      <div className="flex items-center gap-1.5 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100">
         <span className="truncate font-mono text-[11px] text-text-secondary">
           {PRESET_LABELS[scene.presetId] ?? scene.presetId}
         </span>
@@ -268,33 +274,29 @@ function EditNode({ onExport }: { onExport: () => void }) {
   const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
 
   return (
-    <div className="flex w-48 shrink-0 flex-col overflow-hidden rounded-xl border border-accent-gold/20 bg-accent-gold/[0.03]">
-      <div className="flex aspect-[16/10] flex-col items-center justify-center gap-2 bg-accent-gold/[0.05]">
-        <Clapperboard size={24} className="text-accent-gold" />
-        <span className="font-display text-sm italic text-accent-gold">Edit Final</span>
+    <div
+      className="group relative flex w-48 shrink-0 cursor-pointer flex-col overflow-hidden rounded-xl border border-accent-gold/20 bg-accent-gold/[0.03]"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="flex aspect-[16/10] flex-col items-center justify-center gap-1 bg-accent-gold/[0.05]">
+        <Clapperboard size={20} className="text-accent-gold" />
+        <span className="font-display text-xs italic text-accent-gold">Edit Final</span>
+        <span className="font-mono text-[9px] text-text-secondary">{readyCount}/{scenes.length} cenas · {totalDuration}s</span>
       </div>
-      <div className="space-y-1.5 p-2.5">
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[9px] uppercase text-text-secondary">Cenas</span>
-          <span className="font-mono text-[11px] text-accent-gold">{readyCount}/{scenes.length}</span>
-        </div>
-        <div className="flex items-center justify-between">
-          <span className="font-mono text-[9px] uppercase text-text-secondary">Duração</span>
-          <span className="font-mono text-[11px] text-text-secondary">{totalDuration}s</span>
-        </div>
+      <div className="flex items-center justify-between px-2.5 py-2">
         <button
           onClick={onExport}
           disabled={readyCount < 2}
-          className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent-gold/10 py-1.5 font-mono text-[11px] text-accent-gold transition-all hover:bg-accent-gold/20 disabled:opacity-30 disabled:cursor-not-allowed"
+          className="flex items-center gap-1 font-mono text-[11px] text-accent-gold transition-all hover:text-accent-gold/80 disabled:opacity-30 disabled:cursor-not-allowed"
         >
           <Download size={10} />
-          Exportar MP4
+          Exportar
         </button>
         <button
           onClick={() => setHasEditNode(false)}
-          className="w-full py-1 font-mono text-[9px] text-text-secondary transition-colors hover:text-red-400"
+          className="font-mono text-[9px] text-text-secondary transition-colors hover:text-red-400"
         >
-          Remover
+          <X size={10} />
         </button>
       </div>
     </div>

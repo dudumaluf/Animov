@@ -1,7 +1,6 @@
 import {
   Input,
   Output,
-  Conversion,
   ALL_FORMATS,
   BlobSource,
   BufferTarget,

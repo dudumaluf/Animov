@@ -7,6 +7,7 @@ import { FilmStrip } from "@/components/editor/film-strip";
 import { Inspector } from "@/components/editor/inspector";
 import { DropZone } from "@/components/editor/drop-zone";
 import { VideoPreviewModal } from "@/components/editor/video-preview-modal";
+import { composeVideos, downloadBlob } from "@/lib/composition/compose";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 
 const ZOOM_MIN = 0.5;
@@ -25,6 +26,7 @@ export default function EditorPage({
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [mounted, setMounted] = useState(false);
+  const [composing, setComposing] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const canvasRef = useRef<HTMLDivElement>(null);
 
@@ -93,6 +95,23 @@ export default function EditorPage({
     );
   }
 
+  const handleExport = useCallback(async () => {
+    const readyScenes = scenes.filter((s) => s.status === "ready" && s.videoUrl);
+    if (readyScenes.length < 2 || composing) return;
+    setComposing(true);
+    try {
+      const clipUrls = readyScenes.map((s) => s.videoUrl!);
+      const blob = await composeVideos({ clipUrls });
+      const projectName = useProjectStore.getState().projectName;
+      const safeName = projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
+      downloadBlob(blob, `${safeName}.mp4`);
+    } catch (err) {
+      console.error("[export]", err);
+    } finally {
+      setComposing(false);
+    }
+  }, [scenes, composing]);
+
   const isEmpty = scenes.length === 0;
 
   return (
@@ -115,7 +134,7 @@ export default function EditorPage({
                 className="origin-center transition-transform duration-150"
                 style={{ transform: `scale(${zoom})` }}
               >
-                <FilmStrip onPreviewVideo={setPreviewVideoUrl} />
+                <FilmStrip onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} />
               </div>
             </div>
 

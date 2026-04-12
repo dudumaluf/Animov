@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, Download } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -134,7 +134,7 @@ function SortableSceneCard({
 }
 
 type InsertMenuPosition = "between" | "end";
-type InsertMenuAction = "photo" | "crossfade" | "ai-transition";
+type InsertMenuAction = "photo" | "crossfade" | "ai-transition" | "edit";
 
 function InsertMenu({
   position,
@@ -148,6 +148,8 @@ function InsertMenu({
   const [open, setOpen] = useState(false);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
   const addPhotos = useProjectStore((s) => s.addPhotos);
+  const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
+  const hasEditNode = useProjectStore((s) => s.hasEditNode);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -163,6 +165,9 @@ function InsertMenu({
     if (action === "ai-transition") {
       // TODO: implement AI transition generation
       console.log("[insert] AI transition at index", insertIndex);
+    }
+    if (action === "edit") {
+      setHasEditNode(true);
     }
   };
 
@@ -188,6 +193,7 @@ function InsertMenu({
 
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Adicionar fotos", desc: "Novas cenas no final", ready: true },
+    ...(!hasEditNode ? [{ action: "edit" as const, icon: Clapperboard, label: "Criar Edit", desc: "Junta todas as cenas num vídeo final", ready: true }] : []),
   ];
 
   const options = position === "between" && hasScenesOnBothSides
@@ -259,8 +265,49 @@ function InsertMenu({
   );
 }
 
-export function FilmStrip({ onPreviewVideo }: { onPreviewVideo?: (url: string) => void }) {
+function EditNode({ onExport }: { onExport: () => void }) {
   const scenes = useProjectStore((s) => s.scenes);
+  const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
+  const readyCount = scenes.filter((s) => s.status === "ready").length;
+  const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
+
+  return (
+    <div className="flex w-48 shrink-0 flex-col overflow-hidden rounded-xl border border-accent-gold/20 bg-accent-gold/[0.03]">
+      <div className="flex aspect-[16/10] flex-col items-center justify-center gap-2 bg-accent-gold/[0.05]">
+        <Clapperboard size={24} className="text-accent-gold" />
+        <span className="font-display text-sm italic text-accent-gold">Edit Final</span>
+      </div>
+      <div className="space-y-1.5 p-2.5">
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[9px] uppercase text-text-secondary">Cenas</span>
+          <span className="font-mono text-[11px] text-accent-gold">{readyCount}/{scenes.length}</span>
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="font-mono text-[9px] uppercase text-text-secondary">Duração</span>
+          <span className="font-mono text-[11px] text-text-secondary">{totalDuration}s</span>
+        </div>
+        <button
+          onClick={onExport}
+          disabled={readyCount < 2}
+          className="mt-1 flex w-full items-center justify-center gap-1.5 rounded-lg bg-accent-gold/10 py-1.5 font-mono text-[11px] text-accent-gold transition-all hover:bg-accent-gold/20 disabled:opacity-30 disabled:cursor-not-allowed"
+        >
+          <Download size={10} />
+          Exportar MP4
+        </button>
+        <button
+          onClick={() => setHasEditNode(false)}
+          className="w-full py-1 font-mono text-[9px] text-text-secondary transition-colors hover:text-red-400"
+        >
+          Remover
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url: string) => void; onExport?: () => void }) {
+  const scenes = useProjectStore((s) => s.scenes);
+  const hasEditNode = useProjectStore((s) => s.hasEditNode);
   const reorderScenes = useProjectStore((s) => s.reorderScenes);
 
   const sensors = useSensors(
@@ -300,6 +347,12 @@ export function FilmStrip({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
             insertIndex={scenes.length}
             hasScenesOnBothSides={false}
           />
+          {hasEditNode && onExport && (
+            <>
+              <div className="flex h-8 w-px shrink-0 self-center bg-accent-gold/20" />
+              <EditNode onExport={onExport} />
+            </>
+          )}
         </div>
       </SortableContext>
     </DndContext>

@@ -32,6 +32,7 @@ export type ProjectStore = {
   scenes: Scene[];
   transitions: Transition[];
   selectedSceneId: string | null;
+  hasEditNode: boolean;
   isDirty: boolean;
   isGenerating: boolean;
   isSaving: boolean;
@@ -50,6 +51,7 @@ export type ProjectStore = {
   setSceneDuration: (sceneId: string, duration: number) => void;
 
   toggleTransition: (transitionId: string) => void;
+  setHasEditNode: (has: boolean) => void;
 
   updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string) => void;
   generateAll: () => Promise<void>;
@@ -114,6 +116,7 @@ export const useProjectStore = create<ProjectStore>()(
       scenes: [],
       transitions: [],
       selectedSceneId: null,
+      hasEditNode: false,
       isDirty: false,
       isGenerating: false,
       isSaving: false,
@@ -284,6 +287,8 @@ export const useProjectStore = create<ProjectStore>()(
           isDirty: true,
         }));
       },
+
+      setHasEditNode: (has) => set({ hasEditNode: has, isDirty: true }),
 
       updateSceneStatus: (sceneId, status, videoUrl) => {
         set((state) => ({

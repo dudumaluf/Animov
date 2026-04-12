@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, Download } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, Download, ArrowDownToLine } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -98,7 +98,6 @@ function SortableSceneCard({
           />
         )}
         <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
-          <span>{sceneIndex + 1}</span>
           {scene.status === "ready" && (
             <span className="text-green-400">✓</span>
           )}
@@ -111,15 +110,27 @@ function SortableSceneCard({
             <span className="animate-pulse text-accent-gold">●</span>
           </div>
         )}
-        <button
-          onClick={(e) => {
-            e.stopPropagation();
-            removeScene(sceneId);
-          }}
-          className="absolute right-1.5 top-1.5 flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 opacity-0 transition-opacity hover:text-white group-hover:opacity-100"
-        >
-          <X size={10} />
-        </button>
+        <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          {scene.status === "ready" && scene.videoUrl && (
+            <a
+              href={scene.videoUrl}
+              download
+              onClick={(e) => e.stopPropagation()}
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+            >
+              <ArrowDownToLine size={10} />
+            </a>
+          )}
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              removeScene(sceneId);
+            }}
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+          >
+            <X size={10} />
+          </button>
+        </div>
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
           <span className="truncate font-mono text-[10px] text-white/80">
             {PRESET_LABELS[scene.presetId] ?? scene.presetId}
@@ -282,25 +293,26 @@ function EditNode({ onExport }: { onExport: () => void }) {
       } bg-accent-gold/[0.03]`}
       onClick={(e) => { e.stopPropagation(); selectEditNode(); }}
     >
-      <div className="flex aspect-[16/10] w-full flex-col items-center justify-center gap-1 bg-accent-gold/[0.05]">
-        <Clapperboard size={20} className="text-accent-gold" />
-        <span className="font-display text-xs italic text-accent-gold">Edit Final</span>
-        <span className="font-mono text-[9px] text-text-secondary">
-          {readyCount}/{scenes.length} cenas · {totalDuration}s
-          {musicUrl && " · ♫"}
-        </span>
-        <div className="mt-1 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
-          <button
-            onClick={(e) => { e.stopPropagation(); onExport(); }}
-            disabled={readyCount < 2}
-            className="flex items-center gap-1 font-mono text-[10px] text-accent-gold hover:text-accent-gold/80 disabled:opacity-30"
-          >
-            <Download size={9} />
-            Exportar
-          </button>
+      <div className="relative aspect-[16/10] w-full">
+        <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-accent-gold/[0.05]">
+          <Clapperboard size={18} className="text-accent-gold" />
+          <span className="font-display text-[11px] italic text-accent-gold">Edit Final</span>
+          <span className="font-mono text-[9px] text-text-secondary">
+            {readyCount}/{scenes.length} · {totalDuration}s{musicUrl ? " · ♫" : ""}
+          </span>
+        </div>
+        <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+          {readyCount >= 2 && (
+            <button
+              onClick={(e) => { e.stopPropagation(); onExport(); }}
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-accent-gold transition-colors hover:text-white"
+            >
+              <ArrowDownToLine size={10} />
+            </button>
+          )}
           <button
             onClick={(e) => { e.stopPropagation(); setHasEditNode(false); }}
-            className="text-text-secondary hover:text-red-400"
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-red-400"
           >
             <X size={10} />
           </button>

@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2 } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -251,6 +251,7 @@ function InsertMenu({
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Adicionar fotos", desc: "Novas cenas no final", ready: true },
     ...(!hasEditNode ? [{ action: "edit" as const, icon: Clapperboard, label: "Criar Edit", desc: "Junta todas as cenas num vídeo final", ready: true }] : []),
+    { action: "composer" as InsertMenuAction, icon: Type, label: "Composer", desc: "Logo, texto, gráficos", ready: false },
   ];
 
   const options = position === "between" && hasScenesOnBothSides
@@ -274,7 +275,7 @@ function InsertMenu({
       <button
         onClick={(e) => {
           e.stopPropagation();
-          if (options.length === 1 && options[0]!.ready) {
+          if (variant === "plus" && options.length === 1 && options[0]!.ready) {
             handleAction(options[0]!.action);
           } else {
             setOpen(!open);

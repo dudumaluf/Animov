@@ -342,7 +342,6 @@ function TransitionNode({
   const transitionId = `t-${fromSceneId}-${toSceneId}`;
   const transition = useProjectStore((s) => s.transitions.find((t) => t.id === transitionId));
   const fromScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === fromSceneId));
-  const toScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === toSceneId));
 
   if (!transition || transition.status === "idle" || transition.status === "failed") return null;
 
@@ -351,7 +350,7 @@ function TransitionNode({
 
   return (
     <div
-      className="group relative flex w-28 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-accent-gold/20 bg-accent-gold/[0.02] self-center"
+      className="group relative flex w-48 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-accent-gold/20 self-start"
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={() => {
         if (isReady && transition.videoUrl && onPreviewVideo) {
@@ -359,7 +358,7 @@ function TransitionNode({
         }
       }}
     >
-      <div className="relative aspect-[16/10] w-full">
+      <div className="relative aspect-[16/10] w-full bg-white/5">
         {isReady && transition.videoUrl ? (
           <video
             src={transition.videoUrl}
@@ -370,36 +369,44 @@ function TransitionNode({
             onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
             onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
           />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center gap-1">
-            {fromScene && (
-              <Image
-                src={fromScene.photoDataUrl ?? fromScene.photoUrl}
-                alt="from"
-                width={40}
-                height={25}
-                className="rounded object-cover opacity-60"
-                unoptimized
-              />
-            )}
-            <Loader2 size={12} className="shrink-0 animate-spin text-accent-gold" />
-            {toScene && (
-              <Image
-                src={toScene.photoDataUrl ?? toScene.photoUrl}
-                alt="to"
-                width={40}
-                height={25}
-                className="rounded object-cover opacity-60"
-                unoptimized
-              />
-            )}
-          </div>
-        )}
+        ) : fromScene ? (
+          <Image
+            src={fromScene.photoDataUrl ?? fromScene.photoUrl}
+            alt="transition"
+            fill
+            className="object-cover opacity-40"
+            unoptimized
+          />
+        ) : null}
         {isGenerating && (
-          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
-            <Loader2 size={14} className="animate-spin text-accent-gold" />
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50">
+            <Loader2 size={16} className="animate-spin text-accent-gold" />
+            <span className="font-mono text-[9px] text-accent-gold">Gerando transição</span>
           </div>
         )}
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
+          <span className="font-mono text-[10px] text-accent-gold">Transição AI</span>
+          {isReady && transition.videoUrl && (
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  const res = await fetch(transition.videoUrl!);
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = "transicao.mp4";
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch { /* ignore */ }
+              }}
+              className="text-white/60 hover:text-white"
+            >
+              <ArrowDownToLine size={10} />
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

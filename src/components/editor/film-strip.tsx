@@ -438,8 +438,10 @@ function EditNode({ onExport }: { onExport: () => void }) {
   const selectEditNode = useProjectStore((s) => s.selectEditNode);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const musicUrl = useProjectStore((s) => s.musicUrl);
-  const readyCount = scenes.filter((s) => s.status === "ready").length;
+  const readyScenes = scenes.filter((s) => s.status === "ready" && s.videoUrl);
+  const readyCount = readyScenes.length;
   const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
+  const previewScene = readyScenes[0];
 
   return (
     <div
@@ -447,29 +449,48 @@ function EditNode({ onExport }: { onExport: () => void }) {
         editNodeSelected
           ? "border-accent-gold/50 ring-1 ring-accent-gold/20"
           : "border-accent-gold/20 hover:border-accent-gold/30"
-      } bg-accent-gold/[0.03]`}
+      }`}
       onClick={(e) => { e.stopPropagation(); selectEditNode(); }}
     >
-      <div className="relative aspect-[16/10] w-full">
-        <div className="flex h-full w-full flex-col items-center justify-center gap-1 bg-accent-gold/[0.05]">
-          <Clapperboard size={18} className="text-accent-gold" />
-          <span className="font-display text-[11px] italic text-accent-gold">Edit Final</span>
-          <span className="font-mono text-[9px] text-text-secondary">
+      <div className="relative aspect-[16/10] w-full bg-white/5">
+        {previewScene?.videoUrl ? (
+          <video
+            src={previewScene.videoUrl}
+            className="h-full w-full object-cover opacity-60"
+            muted
+            loop
+            playsInline
+            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+          />
+        ) : previewScene?.photoUrl ? (
+          <Image
+            src={previewScene.photoDataUrl ?? previewScene.photoUrl}
+            alt="edit preview"
+            fill
+            className="object-cover opacity-30"
+            unoptimized
+          />
+        ) : null}
+        <div className="absolute inset-0 flex flex-col items-center justify-center gap-1">
+          <Clapperboard size={16} className="text-accent-gold" />
+          <span className="font-display text-[10px] italic text-accent-gold">Edit Final</span>
+          <span className="font-mono text-[8px] text-text-secondary">
             {readyCount}/{scenes.length} · {totalDuration}s{musicUrl ? " · ♫" : ""}
           </span>
         </div>
         <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
-          {readyCount >= 2 && (
+          {readyCount >= 1 && (
             <button
               onClick={(e) => { e.stopPropagation(); onExport(); }}
-              className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-accent-gold transition-colors hover:text-white"
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-accent-gold hover:text-white"
             >
               <ArrowDownToLine size={10} />
             </button>
           )}
           <button
             onClick={(e) => { e.stopPropagation(); setHasEditNode(false); }}
-            className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-red-400"
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 hover:text-red-400"
           >
             <X size={10} />
           </button>
@@ -532,7 +553,15 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
           />
           {hasEditNode && onExport && (
             <>
-              <div className="flex h-8 w-px shrink-0 self-center bg-accent-gold/20" />
+              <button
+                className="group/eq flex h-8 w-8 shrink-0 items-center justify-center self-center"
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div className="relative flex h-8 w-8 items-center justify-center rounded-full border border-accent-gold/20 transition-all group-hover/eq:border-accent-gold/40">
+                  <span className="absolute h-[1.5px] w-3 bg-accent-gold/40 transition-all group-hover/eq:rotate-90 group-hover/eq:bg-accent-gold" />
+                  <span className="absolute h-[1.5px] w-3 bg-accent-gold/40 transition-all group-hover/eq:bg-accent-gold" />
+                </div>
+              </button>
               <EditNode onExport={onExport} />
             </>
           )}

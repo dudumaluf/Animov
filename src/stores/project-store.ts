@@ -58,7 +58,7 @@ export type ProjectStore = {
   setActiveVersion: (sceneId: string, version: number) => void;
 
   toggleTransition: (transitionId: string) => void;
-  generateTransition: (fromSceneId: string, toSceneId: string) => Promise<void>;
+  generateTransition: (fromSceneId: string, toSceneId: string, duration?: number) => Promise<void>;
   setHasEditNode: (has: boolean) => void;
   selectEditNode: () => void;
   setMusicPrompt: (prompt: string) => void;
@@ -321,7 +321,7 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
-      generateTransition: async (fromSceneId, toSceneId) => {
+      generateTransition: async (fromSceneId, toSceneId, duration = 3) => {
         const state = get();
         const fromScene = state.scenes.find((s) => s.id === fromSceneId);
         const toScene = state.scenes.find((s) => s.id === toSceneId);
@@ -343,7 +343,7 @@ export const useProjectStore = create<ProjectStore>()(
           const res = await fetch("/api/generate-transition", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ startImageUrl, endImageUrl, duration: 3 }),
+            body: JSON.stringify({ startImageUrl, endImageUrl, duration }),
           });
 
           if (!res.ok) {

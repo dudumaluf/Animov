@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2 } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -186,6 +186,7 @@ function InsertMenu({
   toSceneId?: string;
 }) {
   const [open, setOpen] = useState(false);
+  const [showDurationPicker, setShowDurationPicker] = useState(false);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
   const addPhotos = useProjectStore((s) => s.addPhotos);
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
@@ -195,21 +196,28 @@ function InsertMenu({
   const menuRef = useRef<HTMLDivElement>(null);
 
   const handleAction = (action: InsertMenuAction) => {
+    if (action === "ai-transition") {
+      setShowDurationPicker(true);
+      return;
+    }
     setOpen(false);
+    setShowDurationPicker(false);
     if (action === "photo") {
       inputRef.current?.click();
     }
     if (action === "crossfade") {
-      // TODO: implement crossfade node insertion
       console.log("[insert] crossfade at index", insertIndex);
-    }
-    if (action === "ai-transition") {
-      if (fromSceneId && toSceneId) {
-        generateTransition(fromSceneId, toSceneId);
-      }
     }
     if (action === "edit") {
       setHasEditNode(true);
+    }
+  };
+
+  const handleGenerateTransition = (duration: number) => {
+    setOpen(false);
+    setShowDurationPicker(false);
+    if (fromSceneId && toSceneId) {
+      generateTransition(fromSceneId, toSceneId, duration);
     }
   };
 
@@ -273,32 +281,126 @@ function InsertMenu({
 
       {open && (
         <>
-          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setShowDurationPicker(false); }} />
           <div className="absolute left-1/2 top-full z-50 mt-2 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
-            {options.map((opt) => (
-              <button
-                key={opt.action}
-                onClick={() => opt.ready && handleAction(opt.action)}
-                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
-                  opt.ready
-                    ? "hover:bg-white/5"
-                    : "opacity-30 cursor-not-allowed"
-                }`}
-              >
-                <opt.icon size={14} className={opt.ready ? "text-accent-gold" : "text-text-secondary"} />
-                <div>
-                  <span className="block font-mono text-[11px] font-medium text-[var(--text)]">
-                    {opt.label}
-                  </span>
-                  <span className="block font-mono text-[9px] text-text-secondary">
-                    {opt.ready ? opt.desc : "Em breve"}
-                  </span>
+            {showDurationPicker ? (
+              <div>
+                <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
+                  <button onClick={() => setShowDurationPicker(false)} className="font-mono text-[10px] text-text-secondary hover:text-[var(--text)]">←</button>
+                  <span className="font-mono text-[10px] text-accent-gold">Duração da transição</span>
                 </div>
-              </button>
-            ))}
+                {[3, 5, 7].map((d) => (
+                  <button
+                    key={d}
+                    onClick={() => handleGenerateTransition(d)}
+                    className="flex w-full items-center justify-between px-3 py-2.5 font-mono text-[11px] text-[var(--text)] transition-colors hover:bg-white/5"
+                  >
+                    <span>{d} segundos</span>
+                    <span className="text-[9px] text-text-secondary">~${(d * 0.112).toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : (
+              options.map((opt) => (
+                <button
+                  key={opt.action}
+                  onClick={() => opt.ready && handleAction(opt.action)}
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                    opt.ready
+                      ? "hover:bg-white/5"
+                      : "opacity-30 cursor-not-allowed"
+                  }`}
+                >
+                  <opt.icon size={14} className={opt.ready ? "text-accent-gold" : "text-text-secondary"} />
+                  <div>
+                    <span className="block font-mono text-[11px] font-medium text-[var(--text)]">
+                      {opt.label}
+                    </span>
+                    <span className="block font-mono text-[9px] text-text-secondary">
+                      {opt.ready ? opt.desc : "Em breve"}
+                    </span>
+                  </div>
+                </button>
+              ))
+            )}
           </div>
         </>
       )}
+    </div>
+  );
+}
+
+function TransitionNode({
+  fromSceneId,
+  toSceneId,
+  onPreviewVideo,
+}: {
+  fromSceneId: string;
+  toSceneId: string;
+  onPreviewVideo?: (url: string) => void;
+}) {
+  const transitionId = `t-${fromSceneId}-${toSceneId}`;
+  const transition = useProjectStore((s) => s.transitions.find((t) => t.id === transitionId));
+  const fromScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === fromSceneId));
+  const toScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === toSceneId));
+
+  if (!transition || transition.status === "idle" || transition.status === "failed") return null;
+
+  const isGenerating = transition.status === "generating";
+  const isReady = transition.status === "ready" && transition.videoUrl;
+
+  return (
+    <div
+      className="group relative flex w-28 shrink-0 cursor-pointer overflow-hidden rounded-lg border border-accent-gold/20 bg-accent-gold/[0.02] self-center"
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={() => {
+        if (isReady && transition.videoUrl && onPreviewVideo) {
+          onPreviewVideo(transition.videoUrl);
+        }
+      }}
+    >
+      <div className="relative aspect-[16/10] w-full">
+        {isReady && transition.videoUrl ? (
+          <video
+            src={transition.videoUrl}
+            className="h-full w-full object-cover"
+            muted
+            loop
+            playsInline
+            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
+            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+          />
+        ) : (
+          <div className="flex h-full w-full items-center justify-center gap-1">
+            {fromScene && (
+              <Image
+                src={fromScene.photoDataUrl ?? fromScene.photoUrl}
+                alt="from"
+                width={40}
+                height={25}
+                className="rounded object-cover opacity-60"
+                unoptimized
+              />
+            )}
+            <Loader2 size={12} className="shrink-0 animate-spin text-accent-gold" />
+            {toScene && (
+              <Image
+                src={toScene.photoDataUrl ?? toScene.photoUrl}
+                alt="to"
+                width={40}
+                height={25}
+                className="rounded object-cover opacity-60"
+                unoptimized
+              />
+            )}
+          </div>
+        )}
+        {isGenerating && (
+          <div className="absolute inset-0 flex items-center justify-center bg-black/40">
+            <Loader2 size={14} className="animate-spin text-accent-gold" />
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -379,13 +481,20 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
             <div key={scene.id} className="flex items-start gap-1.5">
               <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
               {i < scenes.length - 1 && (
-                <InsertMenu
-                  position="between"
-                  insertIndex={i + 1}
-                  hasScenesOnBothSides={true}
-                  fromSceneId={scene.id}
-                  toSceneId={scenes[i + 1]?.id}
-                />
+                <>
+                  <TransitionNode
+                    fromSceneId={scene.id}
+                    toSceneId={scenes[i + 1]!.id}
+                    onPreviewVideo={onPreviewVideo}
+                  />
+                  <InsertMenu
+                    position="between"
+                    insertIndex={i + 1}
+                    hasScenesOnBothSides={true}
+                    fromSceneId={scene.id}
+                    toSceneId={scenes[i + 1]?.id}
+                  />
+                </>
               )}
             </div>
           ))}

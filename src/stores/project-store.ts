@@ -59,6 +59,7 @@ export type ProjectStore = {
 
   toggleTransition: (transitionId: string) => void;
   generateTransition: (fromSceneId: string, toSceneId: string, duration?: number) => Promise<void>;
+  removeTransition: (transitionId: string) => void;
   setHasEditNode: (has: boolean) => void;
   selectEditNode: () => void;
   setMusicPrompt: (prompt: string) => void;
@@ -77,18 +78,24 @@ export type ProjectStore = {
   reset: () => void;
 };
 
-function rebuildTransitions(scenes: Scene[]): Transition[] {
+function rebuildTransitions(scenes: Scene[], existingTransitions?: Transition[]): Transition[] {
   const transitions: Transition[] = [];
   for (let i = 0; i < scenes.length - 1; i++) {
-    transitions.push({
-      id: `t-${scenes[i]!.id}-${scenes[i + 1]!.id}`,
-      fromSceneId: scenes[i]!.id,
-      toSceneId: scenes[i + 1]!.id,
-      presetId: "soft_dissolve_drift",
-      enabled: true,
-      status: "idle",
-      costCredits: 1,
-    });
+    const id = `t-${scenes[i]!.id}-${scenes[i + 1]!.id}`;
+    const existing = existingTransitions?.find((t) => t.id === id);
+    if (existing) {
+      transitions.push(existing);
+    } else {
+      transitions.push({
+        id,
+        fromSceneId: scenes[i]!.id,
+        toSceneId: scenes[i + 1]!.id,
+        presetId: "soft_dissolve_drift",
+        enabled: true,
+        status: "idle",
+        costCredits: 1,
+      });
+    }
   }
   return transitions;
 }
@@ -168,7 +175,7 @@ export const useProjectStore = create<ProjectStore>()(
           const scenes = [...state.scenes, ...newScenes];
           return {
             scenes,
-            transitions: rebuildTransitions(scenes),
+            transitions: rebuildTransitions(scenes, state.transitions),
             selectedSceneId: newScenes[0]?.id ?? state.selectedSceneId,
             isDirty: true,
             _photoFiles: { ...state._photoFiles, ...fileMap },
@@ -220,7 +227,7 @@ export const useProjectStore = create<ProjectStore>()(
           scenes.splice(index, 0, newScene);
           return {
             scenes,
-            transitions: rebuildTransitions(scenes),
+            transitions: rebuildTransitions(scenes, state.transitions),
             selectedSceneId: id,
             isDirty: true,
             _photoFiles: { ...state._photoFiles, [id]: file },
@@ -257,7 +264,7 @@ export const useProjectStore = create<ProjectStore>()(
           delete files[id];
           return {
             scenes,
-            transitions: rebuildTransitions(scenes),
+            transitions: rebuildTransitions(scenes, state.transitions),
             selectedSceneId:
               state.selectedSceneId === id
                 ? (scenes[0]?.id ?? null)
@@ -276,7 +283,7 @@ export const useProjectStore = create<ProjectStore>()(
           scenes.splice(toIndex, 0, moved);
           return {
             scenes,
-            transitions: rebuildTransitions(scenes),
+            transitions: rebuildTransitions(scenes, state.transitions),
             isDirty: true,
           };
         });
@@ -369,6 +376,15 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       setHasEditNode: (has) => set({ hasEditNode: has, editNodeSelected: has, isDirty: true }),
+
+      removeTransition: (transitionId) => {
+        set((state) => ({
+          transitions: state.transitions.map((t) =>
+            t.id === transitionId ? { ...t, status: "idle" as const, videoUrl: undefined } : t,
+          ),
+          isDirty: true,
+        }));
+      },
 
       selectEditNode: () => set({ editNodeSelected: true, selectedSceneId: null }),
 

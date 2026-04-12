@@ -192,8 +192,13 @@ function InsertMenu({
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
   const generateTransition = useProjectStore((s) => s.generateTransition);
+  const transitions = useProjectStore((s) => s.transitions);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+
+  const hasTransition = fromSceneId && toSceneId
+    ? transitions.some((t) => t.id === `t-${fromSceneId}-${toSceneId}` && t.status !== "idle")
+    : false;
 
   const handleAction = (action: InsertMenuAction) => {
     if (action === "ai-transition") {
@@ -238,7 +243,7 @@ function InsertMenu({
   const betweenOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Inserir foto", desc: "Nova cena nesta posição", ready: true },
     { action: "crossfade", icon: Blend, label: "Crossfade", desc: "Dissolve suave entre cenas", ready: false },
-    { action: "ai-transition", icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: true },
+    ...(!hasTransition ? [{ action: "ai-transition" as const, icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: true }] : []),
   ];
 
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
@@ -342,10 +347,12 @@ function TransitionNode({
   const transitionId = `t-${fromSceneId}-${toSceneId}`;
   const transition = useProjectStore((s) => s.transitions.find((t) => t.id === transitionId));
   const fromScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === fromSceneId));
+  const removeTransition = useProjectStore((s) => s.removeTransition);
 
-  if (!transition || transition.status === "idle" || transition.status === "failed") return null;
+  if (!transition || transition.status === "idle") return null;
 
   const isGenerating = transition.status === "generating";
+  const isFailed = transition.status === "failed";
   const isReady = transition.status === "ready" && transition.videoUrl;
 
   return (
@@ -384,8 +391,12 @@ function TransitionNode({
             <span className="font-mono text-[9px] text-accent-gold">Gerando transição</span>
           </div>
         )}
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
-          <span className="font-mono text-[10px] text-accent-gold">Transição AI</span>
+        {isFailed && (
+          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50">
+            <span className="font-mono text-[10px] text-red-400">Erro</span>
+          </div>
+        )}
+        <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {isReady && transition.videoUrl && (
             <button
               onClick={async (e) => {
@@ -401,11 +412,20 @@ function TransitionNode({
                   URL.revokeObjectURL(url);
                 } catch { /* ignore */ }
               }}
-              className="text-white/60 hover:text-white"
+              className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 hover:text-white"
             >
               <ArrowDownToLine size={10} />
             </button>
           )}
+          <button
+            onClick={(e) => { e.stopPropagation(); removeTransition(transitionId); }}
+            className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 hover:text-white"
+          >
+            <X size={10} />
+          </button>
+        </div>
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
+          <span className="font-mono text-[10px] text-accent-gold">Transição AI</span>
         </div>
       </div>
     </div>

@@ -11,6 +11,7 @@ import {
 
 type CompositionInput = {
   clipUrls: string[];
+  audioUrl?: string;
   width?: number;
   height?: number;
   fps?: number;
@@ -19,6 +20,7 @@ type CompositionInput = {
 
 export async function composeVideos({
   clipUrls,
+  audioUrl,
   width = 1920,
   height = 1080,
   fps = 30,
@@ -26,13 +28,17 @@ export async function composeVideos({
 }: CompositionInput): Promise<Blob> {
   if (clipUrls.length === 0) throw new Error("No clips to compose");
 
-  if (clipUrls.length === 1) {
+  if (clipUrls.length === 1 && !audioUrl) {
     const res = await fetch(clipUrls[0]!);
     return res.blob();
   }
 
+  if (audioUrl) {
+    return composeWithMediaRecorder({ clipUrls, audioUrl, width, height, onProgress });
+  }
+
   try {
-    return await composeWithMediabunny({ clipUrls, width, height, fps, onProgress });
+    return await composeWithMediabunny({ clipUrls, audioUrl, width, height, fps, onProgress });
   } catch (err) {
     console.warn("[compose] Mediabunny failed, falling back to MediaRecorder:", err);
     return composeWithMediaRecorder({ clipUrls, width, height, onProgress });
@@ -41,12 +47,14 @@ export async function composeVideos({
 
 async function composeWithMediabunny({
   clipUrls,
+  audioUrl,
   width,
   height,
   fps,
   onProgress,
 }: {
   clipUrls: string[];
+  audioUrl?: string;
   width: number;
   height: number;
   fps: number;
@@ -116,11 +124,13 @@ async function composeWithMediabunny({
 
 async function composeWithMediaRecorder({
   clipUrls,
+  audioUrl,
   width,
   height,
   onProgress,
 }: {
   clipUrls: string[];
+  audioUrl?: string;
   width: number;
   height: number;
   onProgress?: CompositionInput["onProgress"];
@@ -130,9 +140,34 @@ async function composeWithMediaRecorder({
   canvas.height = height;
   const ctx = canvas.getContext("2d")!;
 
-  const stream = canvas.captureStream(30);
+  const videoStream = canvas.captureStream(30);
+
+  let combinedStream: MediaStream;
+  let audioEl: HTMLAudioElement | null = null;
+
+  if (audioUrl) {
+    audioEl = document.createElement("audio");
+    audioEl.crossOrigin = "anonymous";
+    audioEl.src = audioUrl;
+    audioEl.volume = 1;
+    await new Promise<void>((resolve) => { audioEl!.oncanplaythrough = () => resolve(); audioEl!.load(); });
+
+    const audioCtx = new AudioContext();
+    const source = audioCtx.createMediaElementSource(audioEl);
+    const dest = audioCtx.createMediaStreamDestination();
+    source.connect(dest);
+    source.connect(audioCtx.destination);
+
+    combinedStream = new MediaStream([
+      ...videoStream.getVideoTracks(),
+      ...dest.stream.getAudioTracks(),
+    ]);
+  } else {
+    combinedStream = videoStream;
+  }
+
   const mimeType = getSupportedMimeType();
-  const recorder = new MediaRecorder(stream, {
+  const recorder = new MediaRecorder(combinedStream, {
     mimeType,
     videoBitsPerSecond: 10_000_000,
   });
@@ -143,6 +178,7 @@ async function composeWithMediaRecorder({
   };
 
   recorder.start();
+  if (audioEl) audioEl.play();
 
   for (let i = 0; i < clipUrls.length; i++) {
     onProgress?.(i, clipUrls.length);
@@ -151,6 +187,7 @@ async function composeWithMediaRecorder({
 
   onProgress?.(clipUrls.length, clipUrls.length);
 
+  if (audioEl) { audioEl.pause(); audioEl.currentTime = 0; }
   recorder.stop();
   await new Promise<void>((resolve) => {
     recorder.onstop = () => resolve();

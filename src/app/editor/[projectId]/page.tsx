@@ -55,7 +55,10 @@ export default function EditorPage({
 
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "=" || e.key === "+") {
+      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+        e.preventDefault();
+        saveToSupabase();
+      } else if (e.key === "=" || e.key === "+") {
         e.preventDefault();
         setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP));
       } else if (e.key === "-") {
@@ -67,18 +70,17 @@ export default function EditorPage({
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, []);
+  }, [saveToSupabase]);
 
   const handleExport = useCallback(async () => {
-    const currentScenes = useProjectStore.getState().scenes;
-    const readyScenes = currentScenes.filter((s) => s.status === "ready" && s.videoUrl);
-    if (readyScenes.length < 2 || composing) return;
+    const state = useProjectStore.getState();
+    const readyScenes = state.scenes.filter((s) => s.status === "ready" && s.videoUrl);
+    if (readyScenes.length < 1 || composing) return;
     setComposing(true);
     try {
       const clipUrls = readyScenes.map((s) => s.videoUrl!);
-      const blob = await composeVideos({ clipUrls });
-      const projectName = useProjectStore.getState().projectName;
-      const safeName = projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
+      const blob = await composeVideos({ clipUrls, audioUrl: state.musicUrl ?? undefined });
+      const safeName = state.projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
       downloadBlob(blob, `${safeName}.mp4`);
     } catch (err) {
       console.error("[export]", err);

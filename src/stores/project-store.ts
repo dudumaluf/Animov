@@ -654,6 +654,9 @@ export const useProjectStore = create<ProjectStore>()(
         supabaseProjectId: state.supabaseProjectId,
         projectName: state.projectName,
         modelId: state.modelId,
+        hasEditNode: state.hasEditNode,
+        musicPrompt: state.musicPrompt,
+        musicUrl: state.musicUrl,
         scenes: state.scenes.map((s) => ({
           id: s.id,
           photoUrl: s.photoUrl.startsWith("blob:") ? "" : s.photoUrl,
@@ -661,6 +664,8 @@ export const useProjectStore = create<ProjectStore>()(
           duration: s.duration,
           status: s.status,
           videoUrl: s.videoUrl,
+          videoVersions: s.videoVersions ?? [],
+          activeVersion: s.activeVersion ?? 0,
           costCredits: s.costCredits,
         })),
         transitions: state.transitions,

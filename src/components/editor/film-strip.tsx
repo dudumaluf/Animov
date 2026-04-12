@@ -71,13 +71,13 @@ function SortableSceneCard({
           onPreviewVideo(scene.videoUrl);
         }
       }}
-      className={`group relative flex w-48 shrink-0 cursor-pointer flex-col overflow-hidden rounded-xl border transition-colors ${
+      className={`group relative flex w-48 shrink-0 cursor-pointer overflow-hidden rounded-xl border transition-colors ${
         isSelected
           ? "border-accent-gold/50 ring-1 ring-accent-gold/20"
           : "border-white/5 hover:border-white/10"
       }`}
     >
-      <div className="relative aspect-[16/10] bg-white/5">
+      <div className="relative aspect-[16/10] w-full bg-white/5">
         {scene.status === "ready" && scene.videoUrl ? (
           <video
             src={scene.videoUrl}
@@ -99,9 +99,6 @@ function SortableSceneCard({
         )}
         <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
           <span>{sceneIndex + 1}</span>
-          {scene.status === "generating" && (
-            <span className="animate-pulse text-accent-gold">●</span>
-          )}
           {scene.status === "ready" && (
             <span className="text-green-400">✓</span>
           )}
@@ -123,17 +120,17 @@ function SortableSceneCard({
         >
           <X size={10} />
         </button>
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2 pb-1.5 pt-4 opacity-0 transition-opacity group-hover:opacity-100">
-          <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
-            <GripVertical size={12} className="text-white/40 hover:text-white/70" />
+        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
+          <span className="truncate font-mono text-[10px] text-white/80">
+            {PRESET_LABELS[scene.presetId] ?? scene.presetId}
+          </span>
+          <div className="flex items-center gap-2">
+            <span className="font-mono text-[10px] text-white/60">{scene.duration}s</span>
+            <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
+              <GripVertical size={10} className="text-white/40 hover:text-white/70" />
+            </div>
           </div>
-          <span className="font-mono text-[10px] text-white/70">{scene.duration}s</span>
         </div>
-      </div>
-      <div className="flex items-center gap-1.5 px-2.5 py-2 opacity-0 transition-opacity group-hover:opacity-100">
-        <span className="truncate font-mono text-[11px] text-text-secondary">
-          {PRESET_LABELS[scene.presetId] ?? scene.presetId}
-        </span>
       </div>
     </div>
   );
@@ -270,34 +267,44 @@ function InsertMenu({
 function EditNode({ onExport }: { onExport: () => void }) {
   const scenes = useProjectStore((s) => s.scenes);
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
+  const selectEditNode = useProjectStore((s) => s.selectEditNode);
+  const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
+  const musicUrl = useProjectStore((s) => s.musicUrl);
   const readyCount = scenes.filter((s) => s.status === "ready").length;
   const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
 
   return (
     <div
-      className="group relative flex w-48 shrink-0 cursor-pointer flex-col overflow-hidden rounded-xl border border-accent-gold/20 bg-accent-gold/[0.03]"
-      onClick={(e) => e.stopPropagation()}
+      className={`group relative flex w-48 shrink-0 cursor-pointer overflow-hidden rounded-xl border transition-colors ${
+        editNodeSelected
+          ? "border-accent-gold/50 ring-1 ring-accent-gold/20"
+          : "border-accent-gold/20 hover:border-accent-gold/30"
+      } bg-accent-gold/[0.03]`}
+      onClick={(e) => { e.stopPropagation(); selectEditNode(); }}
     >
-      <div className="flex aspect-[16/10] flex-col items-center justify-center gap-1 bg-accent-gold/[0.05]">
+      <div className="flex aspect-[16/10] w-full flex-col items-center justify-center gap-1 bg-accent-gold/[0.05]">
         <Clapperboard size={20} className="text-accent-gold" />
         <span className="font-display text-xs italic text-accent-gold">Edit Final</span>
-        <span className="font-mono text-[9px] text-text-secondary">{readyCount}/{scenes.length} cenas · {totalDuration}s</span>
-      </div>
-      <div className="flex items-center justify-between px-2.5 py-2">
-        <button
-          onClick={onExport}
-          disabled={readyCount < 2}
-          className="flex items-center gap-1 font-mono text-[11px] text-accent-gold transition-all hover:text-accent-gold/80 disabled:opacity-30 disabled:cursor-not-allowed"
-        >
-          <Download size={10} />
-          Exportar
-        </button>
-        <button
-          onClick={() => setHasEditNode(false)}
-          className="font-mono text-[9px] text-text-secondary transition-colors hover:text-red-400"
-        >
-          <X size={10} />
-        </button>
+        <span className="font-mono text-[9px] text-text-secondary">
+          {readyCount}/{scenes.length} cenas · {totalDuration}s
+          {musicUrl && " · ♫"}
+        </span>
+        <div className="mt-1 flex items-center gap-2 opacity-0 transition-opacity group-hover:opacity-100">
+          <button
+            onClick={(e) => { e.stopPropagation(); onExport(); }}
+            disabled={readyCount < 2}
+            className="flex items-center gap-1 font-mono text-[10px] text-accent-gold hover:text-accent-gold/80 disabled:opacity-30"
+          >
+            <Download size={9} />
+            Exportar
+          </button>
+          <button
+            onClick={(e) => { e.stopPropagation(); setHasEditNode(false); }}
+            className="text-text-secondary hover:text-red-400"
+          >
+            <X size={10} />
+          </button>
+        </div>
       </div>
     </div>
   );

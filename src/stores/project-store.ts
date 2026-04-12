@@ -33,6 +33,10 @@ export type ProjectStore = {
   transitions: Transition[];
   selectedSceneId: string | null;
   hasEditNode: boolean;
+  editNodeSelected: boolean;
+  musicPrompt: string;
+  musicUrl: string | null;
+  isMusicGenerating: boolean;
   isDirty: boolean;
   isGenerating: boolean;
   isSaving: boolean;
@@ -52,6 +56,10 @@ export type ProjectStore = {
 
   toggleTransition: (transitionId: string) => void;
   setHasEditNode: (has: boolean) => void;
+  selectEditNode: () => void;
+  setMusicPrompt: (prompt: string) => void;
+  generateMusic: () => Promise<void>;
+  clearMusic: () => void;
 
   updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string) => void;
   generateAll: () => Promise<void>;
@@ -117,6 +125,10 @@ export const useProjectStore = create<ProjectStore>()(
       transitions: [],
       selectedSceneId: null,
       hasEditNode: false,
+      editNodeSelected: false,
+      musicPrompt: "Calm ambient instrumental, warm piano, soft strings, real estate luxury, 90 BPM, elegant and inviting",
+      musicUrl: null,
+      isMusicGenerating: false,
       isDirty: false,
       isGenerating: false,
       isSaving: false,
@@ -127,6 +139,7 @@ export const useProjectStore = create<ProjectStore>()(
       selectScene: (id) =>
         set((state) => ({
           selectedSceneId: state.selectedSceneId === id ? null : id,
+          editNodeSelected: false,
         })),
 
       addPhotos: (files) => {
@@ -288,7 +301,33 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
-      setHasEditNode: (has) => set({ hasEditNode: has, isDirty: true }),
+      setHasEditNode: (has) => set({ hasEditNode: has, editNodeSelected: has, isDirty: true }),
+
+      selectEditNode: () => set({ editNodeSelected: true, selectedSceneId: null }),
+
+      setMusicPrompt: (prompt) => set({ musicPrompt: prompt, isDirty: true }),
+
+      generateMusic: async () => {
+        const state = get();
+        if (state.isMusicGenerating) return;
+        set({ isMusicGenerating: true });
+
+        try {
+          const res = await fetch("/api/generate-music", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: state.musicPrompt, instrumental: true }),
+          });
+          if (!res.ok) throw new Error("Music generation failed");
+          const data = await res.json();
+          set({ musicUrl: data.audioUrl, isMusicGenerating: false, isDirty: true });
+        } catch (err) {
+          console.error("[generateMusic]", err);
+          set({ isMusicGenerating: false });
+        }
+      },
+
+      clearMusic: () => set({ musicUrl: null, isDirty: true }),
 
       updateSceneStatus: (sceneId, status, videoUrl) => {
         set((state) => ({

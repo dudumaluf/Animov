@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers } from "lucide-react";
+import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers, Music, Trash2 } from "lucide-react";
 
 const PRESETS = [
   { id: "push_in_serene", label: "Avanço Suave", desc: "Dolly lento em direção ao ponto focal", icon: MoveRight, arrow: "→" },
@@ -90,6 +90,7 @@ function PresetSelector({
 
 export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) => void }) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
+  const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) =>
     s.scenes.find((sc) => sc.id === s.selectedSceneId),
   );
@@ -102,7 +103,16 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
   const isGenerating = useProjectStore((s) => s.isGenerating);
   const selectScene = useProjectStore((s) => s.selectScene);
 
-  const isOpen = !!scene && !!selectedSceneId;
+  const musicPrompt = useProjectStore((s) => s.musicPrompt);
+  const musicUrl = useProjectStore((s) => s.musicUrl);
+  const isMusicGenerating = useProjectStore((s) => s.isMusicGenerating);
+  const setMusicPrompt = useProjectStore((s) => s.setMusicPrompt);
+  const generateMusicAction = useProjectStore((s) => s.generateMusic);
+  const clearMusic = useProjectStore((s) => s.clearMusic);
+
+  const showScene = !!scene && !!selectedSceneId;
+  const showEdit = editNodeSelected && !selectedSceneId;
+  const isOpen = showScene || showEdit;
 
   return (
     <aside
@@ -110,7 +120,7 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
         isOpen ? "w-80" : "w-0 border-l-0"
       }`}
     >
-      {scene && selectedSceneId && (
+      {scene && selectedSceneId && showScene && (
         <div className="flex h-full w-80 flex-col">
           <div className="relative aspect-video w-full bg-white/5">
             {scene.status === "ready" && scene.videoUrl ? (
@@ -209,6 +219,83 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
             >
               {scene.status === "ready" ? "Regenerar cena" : scene.status === "generating" ? "Gerando..." : "Gerar esta cena"}
             </button>
+          </div>
+        </div>
+      )}
+      {showEdit && (
+        <div className="flex h-full w-80 flex-col">
+          <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
+            <div className="flex items-center gap-2">
+              <Music size={14} className="text-accent-gold" />
+              <span className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                Edit Final
+              </span>
+            </div>
+            <button
+              onClick={() => useProjectStore.setState({ editNodeSelected: false })}
+              className="flex h-6 w-6 items-center justify-center rounded-full text-text-secondary transition-colors hover:text-white"
+            >
+              <X size={12} />
+            </button>
+          </div>
+
+          <div className="flex-1 overflow-y-auto p-4">
+            <div>
+              <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                Trilha Sonora
+              </label>
+
+              {musicUrl ? (
+                <div className="space-y-2">
+                  <audio src={musicUrl} controls className="w-full h-8 opacity-80" />
+                  <button
+                    onClick={clearMusic}
+                    className="flex items-center gap-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:text-red-400"
+                  >
+                    <Trash2 size={10} />
+                    Remover trilha
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  <textarea
+                    value={musicPrompt}
+                    onChange={(e) => setMusicPrompt(e.target.value)}
+                    placeholder="Descreva o estilo da música..."
+                    rows={3}
+                    className="w-full resize-none rounded-lg border border-white/10 bg-transparent px-3 py-2 font-mono text-[11px] text-[var(--text)] placeholder:text-text-secondary focus:border-accent-gold/30 focus:outline-none"
+                  />
+                  <button
+                    onClick={generateMusicAction}
+                    disabled={isMusicGenerating || !musicPrompt.trim()}
+                    className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:opacity-30 disabled:cursor-not-allowed"
+                  >
+                    {isMusicGenerating ? "Gerando trilha..." : "Gerar trilha sonora"}
+                  </button>
+                  <p className="font-mono text-[9px] text-text-secondary">
+                    $0.15 por geração · Instrumental · ~30s de duração
+                  </p>
+                </div>
+              )}
+            </div>
+
+            <div className="mt-6 rounded-lg border border-white/5 p-3">
+              <span className="block font-mono text-[9px] uppercase text-text-secondary">Composição</span>
+              <div className="mt-2 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] text-text-secondary">Cenas prontas</span>
+                  <span className="font-mono text-[11px] text-accent-gold">
+                    {useProjectStore.getState().scenes.filter((s) => s.status === "ready").length}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] text-text-secondary">Trilha sonora</span>
+                  <span className="font-mono text-[11px]">
+                    {musicUrl ? <span className="text-green-400">✓</span> : <span className="text-text-secondary">—</span>}
+                  </span>
+                </div>
+              </div>
+            </div>
           </div>
         </div>
       )}

@@ -9,6 +9,7 @@
 **Foco: Fase 1 (fundacao) + Fase 2 (landing visual polish)**
 
 ### Feito:
+
 - Familiarizacao com o projeto existente (Fases 1+2 parciais ja existiam)
 - Hero.Text — Leva controls pra alinhamento (left/center/right), padding, maxWidth, verticalPosition
 - Hero.Text — defaults gravados (left, paddingX 48, maxWidth 640)
@@ -39,6 +40,7 @@
 **Foco: Fase 3 (editor) + Fase 4 (pipeline) + Supabase + Vercel**
 
 ### Feito:
+
 - Zustand store completo (cenas, transicoes, presets, reorder, custo, geracao)
 - Editor layout full-screen `/editor/[projectId]` (sem sidebar da app)
 - Editor toolbar (nome editavel, contador, custo, botao Gerar, status save)
@@ -68,6 +70,7 @@
 - Commits: `feat: editor shell + generation pipeline + Supabase persistence`, `fix: lint errors`
 
 ### Primeira geracao:
+
 - Modelo: Kling O1 Pro (fal-ai/kling-video/o1/image-to-video)
 - Custo: ~$0.56 por clip 5s
 - Resultado: video cinematografico a partir de foto de imovel
@@ -79,6 +82,7 @@
 **Foco: Assessment + documentacao**
 
 ### Feito:
+
 - Assessment honesto do estado do projeto vs roadmap
 - MASTER_PLAN.md criado (biblia do projeto)
 - ROADMAP.md criado (checklist ticavel por fase)
@@ -92,6 +96,7 @@
 **Foco: Seguranca, UX, composicao de video, documentacao**
 
 ### Feito:
+
 - Auth check + credit validation/deduction no generate-scene API
 - Drag-drop reorder de cenas com dnd-kit (grab handle)
 - Regenerar cena individual (botao no inspector)
@@ -111,6 +116,7 @@
 - Stripe test keys configuradas
 
 ### Testes:
+
 - Geracao de 2 videos (Kling O1 Pro) com Vision LLM
 - Export MP4 com 2 clips concatenados via Mediabunny (funcionando)
 
@@ -121,6 +127,7 @@
 **Foco: Editor UX polish + Music + Features avancadas**
 
 ### Feito:
+
 - Context menu "+" inteligente entre cenas (Insert Photo, Crossfade soon, AI Transition soon)
 - Context menu "+" no final (Add Photos, Criar Edit)
 - Preset UX: dropdown com simbolos de direcao (→ ↔ ↕ ↻ ⊙ ◐ ⟵)
@@ -140,6 +147,7 @@
 - Standardize "+" button (mesmo estilo everywhere)
 
 ### Ideias capturadas pro ROADMAP (Fase 4b):
+
 - Node de texto/titulo overlay
 - Node de imagem/logo overlay
 - Multi-version por cena (diferentes presets, escolher qual usar "1/3")
@@ -158,6 +166,7 @@
 **Foco: Features + fixes + muitos patches rapidos**
 
 ### Feito:
+
 - Download fix (fetch blob, nao redireciona)
 - Smart CTA navbar (logado → "Meus projetos")
 - Removeu badges de status dos cards
@@ -180,6 +189,7 @@
 - Fix transition URLs (upload to fal.ai storage pra data/blob URLs)
 
 ### Problemas identificados (debt tecnico):
+
 - Muitos patches rapidos acumulados
 - Admin panel ainda placeholder
 - Preset que falhou sem debug view

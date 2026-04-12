@@ -26,27 +26,16 @@ export async function POST(req: NextRequest) {
 
   const admin = createAdminClient();
 
-  const { data: credits } = await admin
-    .from("credits")
-    .select("balance")
-    .eq("user_id", userId)
-    .single();
-
-  if (!credits) {
-    return NextResponse.json({ error: "User not found" }, { status: 404 });
-  }
-
-  await admin
-    .from("credits")
-    .update({ balance: credits.balance + amount })
-    .eq("user_id", userId);
-
-  await admin.from("credit_transactions").insert({
-    user_id: userId,
-    delta: amount,
-    reason,
-    admin_id: user.id,
+  const { data: newBalance, error } = await admin.rpc("add_credit", {
+    p_user_id: userId,
+    p_amount: amount,
+    p_reason: reason,
+    p_admin_id: user.id,
   });
 
-  return NextResponse.json({ balance: credits.balance + amount });
+  if (error) {
+    return NextResponse.json({ error: error.message }, { status: 500 });
+  }
+
+  return NextResponse.json({ balance: newBalance });
 }

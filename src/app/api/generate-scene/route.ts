@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdapter } from "@/lib/adapters";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 
@@ -14,16 +15,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const { data: credits } = await supabase
-    .from("credits")
-    .select("balance")
-    .eq("user_id", user.id)
-    .single();
-
-  if (!credits || credits.balance < 1) {
-    return NextResponse.json({ error: "Créditos insuficientes" }, { status: 402 });
-  }
-
   const formData = await req.formData();
   const photo = formData.get("photo") as File | null;
   const presetId = (formData.get("presetId") as string) ?? "push_in_serene";
@@ -34,18 +25,33 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "photo is required" }, { status: 400 });
   }
 
+  const admin = createAdminClient();
+
+  let debited = false;
   try {
+    const { data: newBalance, error: debitError } = await admin.rpc("debit_credit", {
+      p_user_id: user.id,
+      p_amount: 1,
+      p_reason: `Cena: preset=${presetId}, duration=${duration}s`,
+    });
+
+    if (debitError) {
+      if (debitError.message.includes("Insufficient")) {
+        return NextResponse.json({ error: "Créditos insuficientes" }, { status: 402 });
+      }
+      return NextResponse.json({ error: debitError.message }, { status: 500 });
+    }
+
+    debited = true;
+
     const adapter = getAdapter(modelId);
     const photoUrl = await fal.storage.upload(photo);
 
-    const { positive, visionData, visionCost } = await buildPromptForScene({
+    const { positive, negative, visionData, visionCost } = await buildPromptForScene({
       photoUrl,
       presetId,
       adapter,
     });
-
-    console.log(`[generate-scene] user=${user.id} preset=${presetId}`);
-    console.log(`[generate-scene] prompt="${positive.slice(0, 100)}..."`);
 
     const result = await adapter.generateScene({
       photoUrl,
@@ -53,20 +59,19 @@ export async function POST(req: NextRequest) {
       duration,
     });
 
-    const { error: debitError } = await supabase
-      .from("credits")
-      .update({ balance: credits.balance - 1 })
-      .eq("user_id", user.id);
-
-    if (debitError) {
-      console.error("[generate-scene] debit failed:", debitError);
-    } else {
-      await supabase.from("credit_transactions").insert({
-        user_id: user.id,
-        delta: -1,
-        reason: `Geração: preset=${presetId}, duration=${duration}s`,
-      });
-    }
+    await admin.from("generation_logs").insert({
+      user_id: user.id,
+      model_id: null,
+      generation_type: "scene",
+      preset_id: presetId,
+      vision_data: visionData,
+      final_positive_prompt: positive,
+      final_negative_prompt: negative,
+      duration_seconds: duration,
+      cost: adapter.costPerSecond * duration,
+      request_payload: { photoUrl, presetId, duration, modelId },
+      response_payload: { videoUrl: result.videoUrl },
+    });
 
     return NextResponse.json({
       videoUrl: result.videoUrl,
@@ -74,9 +79,18 @@ export async function POST(req: NextRequest) {
       visionData,
       prompt: positive,
       visionCost,
-      creditsRemaining: credits.balance - 1,
+      creditsRemaining: newBalance,
     });
   } catch (err) {
+    if (debited) {
+      await admin.rpc("add_credit", {
+        p_user_id: user.id,
+        p_amount: 1,
+        p_reason: "Reembolso: erro na geração",
+        p_admin_id: null,
+      });
+    }
+
     console.error("[generate-scene]", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Generation failed" },

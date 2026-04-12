@@ -1,5 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
+import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
@@ -9,7 +11,6 @@ async function ensureFalUrl(url: string): Promise<string> {
   if (url.startsWith("https://") && !url.startsWith("data:")) {
     return url;
   }
-
   const res = await fetch(url);
   const blob = await res.blob();
   const file = new File([blob], "frame.jpg", { type: blob.type || "image/jpeg" });
@@ -17,6 +18,13 @@ async function ensureFalUrl(url: string): Promise<string> {
 }
 
 export async function POST(req: NextRequest) {
+  const supabase = createClient();
+  const { data: { user } } = await supabase.auth.getUser();
+
+  if (!user) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
   const body = await req.json();
   const { startImageUrl, endImageUrl, duration = 3 } = body;
 
@@ -27,13 +35,29 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  const admin = createAdminClient();
+
+  let debited = false;
   try {
-    console.log(`[generate-transition] uploading frames to fal.ai storage...`);
+    const { data: newBalance, error: debitError } = await admin.rpc("debit_credit", {
+      p_user_id: user.id,
+      p_amount: 1,
+      p_reason: `Transição AI: duration=${duration}s`,
+    });
+
+    if (debitError) {
+      if (debitError.message.includes("Insufficient")) {
+        return NextResponse.json({ error: "Créditos insuficientes" }, { status: 402 });
+      }
+      return NextResponse.json({ error: debitError.message }, { status: 500 });
+    }
+
+    debited = true;
+
     const [falStartUrl, falEndUrl] = await Promise.all([
       ensureFalUrl(startImageUrl),
       ensureFalUrl(endImageUrl),
     ]);
-    console.log(`[generate-transition] start=${falStartUrl.slice(0, 60)}... end=${falEndUrl.slice(0, 60)}...`);
 
     const prompt = "Smooth cinematic camera transition between two interior spaces. Continuous fluid movement, photorealistic, locked architecture, preserve all visible surfaces exactly. No new elements, no scene morphing, natural camera flow.";
 
@@ -47,13 +71,31 @@ export async function POST(req: NextRequest) {
       logs: true,
     }) as unknown as { data: { video: { url: string } } };
 
-    console.log(`[generate-transition] done! videoUrl=${result.data.video.url.slice(0, 60)}...`);
+    await admin.from("generation_logs").insert({
+      user_id: user.id,
+      generation_type: "transition",
+      duration_seconds: duration,
+      cost: 0.112 * duration,
+      final_positive_prompt: prompt,
+      request_payload: { startImageUrl: falStartUrl, endImageUrl: falEndUrl, duration },
+      response_payload: { videoUrl: result.data.video.url },
+    });
 
     return NextResponse.json({
       videoUrl: result.data.video.url,
       duration,
+      creditsRemaining: newBalance,
     });
   } catch (err) {
+    if (debited) {
+      await admin.rpc("add_credit", {
+        p_user_id: user.id,
+        p_amount: 1,
+        p_reason: "Reembolso: erro na transição",
+        p_admin_id: null,
+      });
+    }
+
     console.error("[generate-transition]", err);
     return NextResponse.json(
       { error: err instanceof Error ? err.message : "Transition generation failed" },

@@ -68,6 +68,6 @@ docs/
 
 ## Estado resumido (atualizar aqui a cada sessao)
 
-**Fase atual:** 3+4 quase completas, pronto pra polish
-**Ultimo deploy:** 12 abril 2026
-**Proximo foco:** Context menu inteligente (+), preset recipe manager/admin, prompt strategy UX, melhorar experiencia de presets
+**Fase atual:** ver `docs/tracking/PROGRESS.md`
+**Ultimo deploy:** ver Vercel dashboard
+**Proximo foco:** ver `docs/tracking/ROADMAP.md`

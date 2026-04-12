@@ -3,8 +3,8 @@
 > Documento-mae do projeto. Visao geral, arquitetura, estado atual, diretrizes.
 > Atualizado: 11 abril 2026.
 >
-> **Arquivos de tracking:** [ROADMAP.md](./ROADMAP.md) (checklist ticavel), [PROGRESS.md](./PROGRESS.md) (snapshot atual), [CHANGELOG.md](./CHANGELOG.md) (historico)
-> **Docs de referencia:** [animov_briefing_v1.md](../animov_briefing_v1.md), [animov_briefing_v2.md](../animov_briefing_v2.md), [animov-prompt-strategy.md](../animov-prompt-strategy.md)
+> **Arquivos de tracking:** [ROADMAP.md](./tracking/ROADMAP.md) (checklist ticavel), [PROGRESS.md](./tracking/PROGRESS.md) (snapshot atual), [CHANGELOG.md](./tracking/CHANGELOG.md) (historico)
+> **Docs de referencia:** [briefing_v1.md](./briefings/animov_briefing_v1.md), [briefing_v2.md](./briefings/animov_briefing_v2.md), [prompt-strategy.md](./strategy/animov-prompt-strategy.md)
 
 ---
 
@@ -206,12 +206,12 @@ Foto → [Camada 1: Vision LLM] → JSON estruturado
 
 | Documento | Conteudo | Quando consultar |
 |-----------|----------|-----------------|
-| [animov_briefing_v1.md](../animov_briefing_v1.md) | Briefing original ImoVid (schema, creditos, UX original) | Referencia historica |
-| [animov_briefing_v2.md](../animov_briefing_v2.md) | Briefing Animov v2 (stack, fases, gates, editor, pipeline) | Arquitetura e fases |
-| [animov-prompt-strategy.md](../animov-prompt-strategy.md) | Estrategia de prompts, 11 presets, 3 camadas, tiers | Antes de mexer em presets/prompts |
-| [ROADMAP.md](./ROADMAP.md) | Checklist ticavel por fase | Antes de cada tarefa |
-| [PROGRESS.md](./PROGRESS.md) | Snapshot do estado atual | Inicio de cada sessao |
-| [CHANGELOG.md](./CHANGELOG.md) | Historico de sessoes | Referencia do que foi feito quando |
+| [animov_briefing_v1.md](./briefings/animov_briefing_v1.md) | Briefing original ImoVid (schema, creditos, UX original) | Referencia historica |
+| [animov_briefing_v2.md](./briefings/animov_briefing_v2.md) | Briefing Animov v2 (stack, fases, gates, editor, pipeline) | Arquitetura e fases |
+| [animov-prompt-strategy.md](./strategy/animov-prompt-strategy.md) | Estrategia de prompts, 11 presets, 3 camadas, tiers | Antes de mexer em presets/prompts |
+| [ROADMAP.md](./tracking/ROADMAP.md) | Checklist ticavel por fase | Antes de cada tarefa |
+| [PROGRESS.md](./tracking/PROGRESS.md) | Snapshot do estado atual | Inicio de cada sessao |
+| [CHANGELOG.md](./tracking/CHANGELOG.md) | Historico de sessoes | Referencia do que foi feito quando |
 
 ---
 

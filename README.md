@@ -47,6 +47,19 @@ src/
 └── types/
 ```
 
-## Development Phases
+## Documentation
 
-See [PROGRESS.md](./PROGRESS.md) for current status.
+```
+docs/
+├── MASTER_PLAN.md              # Project bible
+├── CONTEXT_INDEX.md            # Quick reference map
+├── tracking/
+│   ├── ROADMAP.md              # Tickable checklist per phase
+│   ├── PROGRESS.md             # Current state snapshot
+│   └── CHANGELOG.md            # Session history
+├── briefings/                  # Original project specs
+└── strategy/                   # Prompt engineering docs
+```
+
+See [docs/MASTER_PLAN.md](./docs/MASTER_PLAN.md) for full project overview.
+See [docs/tracking/ROADMAP.md](./docs/tracking/ROADMAP.md) for current status.

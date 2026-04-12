@@ -1,7 +1,6 @@
 # Animov.ai — Progresso
 
-> Snapshot do estado atual do projeto. Atualizado: 11 abril 2026.
-> Checklist detalhado: [ROADMAP.md](./ROADMAP.md) | Biblia: [MASTER_PLAN.md](./MASTER_PLAN.md)
+> Checklist detalhado: [ROADMAP.md](./ROADMAP.md) | Biblia: [MASTER_PLAN.md](../MASTER_PLAN.md)
 
 ---
 

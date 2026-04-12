@@ -1,4 +1,14 @@
-import { Muxer, ArrayBufferTarget } from "mp4-muxer";
+import {
+  Input,
+  Output,
+  Conversion,
+  ALL_FORMATS,
+  BlobSource,
+  BufferTarget,
+  Mp4OutputFormat,
+  CanvasSource,
+  QUALITY_HIGH,
+} from "mediabunny";
 
 type CompositionInput = {
   clipUrls: string[];
@@ -22,114 +32,83 @@ export async function composeVideos({
     return res.blob();
   }
 
-  if (typeof VideoEncoder !== "undefined" && typeof VideoFrame !== "undefined") {
-    return composeWithWebCodecs({ clipUrls, width, height, fps, onProgress });
+  try {
+    return await composeWithMediabunny({ clipUrls, width, height, fps, onProgress });
+  } catch (err) {
+    console.warn("[compose] Mediabunny failed, falling back to MediaRecorder:", err);
+    return composeWithMediaRecorder({ clipUrls, width, height, onProgress });
   }
-
-  return composeWithMediaRecorder({ clipUrls, width, height, onProgress });
 }
 
-async function composeWithWebCodecs({
+async function composeWithMediabunny({
   clipUrls,
   width,
   height,
   fps,
   onProgress,
-}: Required<Omit<CompositionInput, "onProgress">> & { onProgress?: CompositionInput["onProgress"] }): Promise<Blob> {
-  const target = new ArrayBufferTarget();
-  const muxer = new Muxer({
+}: {
+  clipUrls: string[];
+  width: number;
+  height: number;
+  fps: number;
+  onProgress?: CompositionInput["onProgress"];
+}): Promise<Blob> {
+  const target = new BufferTarget();
+  const output = new Output({
+    format: new Mp4OutputFormat(),
     target,
-    video: {
-      codec: "avc",
-      width,
-      height,
-    },
-    fastStart: "in-memory",
   });
 
-  let encodedFrames = 0;
-  const encoder = new VideoEncoder({
-    output: (chunk, meta) => {
-      muxer.addVideoChunk(chunk, meta);
-      encodedFrames++;
-    },
-    error: (err) => console.error("[encoder]", err),
-  });
+  const canvas = new OffscreenCanvas(width, height);
+  const ctx = canvas.getContext("2d")!;
 
-  encoder.configure({
-    codec: "avc1.640028",
-    width,
-    height,
-    bitrate: 10_000_000,
-    framerate: fps,
+  const videoSource = new CanvasSource(canvas, {
+    codec: "avc",
+    bitrate: QUALITY_HIGH,
   });
+  output.addVideoTrack(videoSource);
 
-  const frameDuration = 1_000_000 / fps;
-  let globalTimestamp = 0;
+  await output.start();
 
   for (let i = 0; i < clipUrls.length; i++) {
     onProgress?.(i, clipUrls.length);
-    const frames = await extractFrames(clipUrls[i]!, width, height, fps);
 
-    for (const canvas of frames) {
-      const frame = new VideoFrame(canvas, {
-        timestamp: globalTimestamp,
-        duration: frameDuration,
-      });
-      const keyFrame = globalTimestamp === 0 || encodedFrames % (fps * 2) === 0;
-      encoder.encode(frame, { keyFrame });
-      frame.close();
-      globalTimestamp += frameDuration;
+    const res = await fetch(clipUrls[i]!);
+    const blob = await res.blob();
+
+    const input = new Input({
+      formats: ALL_FORMATS,
+      source: new BlobSource(blob),
+    });
+
+    const videoTrack = await input.getPrimaryVideoTrack();
+    if (!videoTrack) continue;
+
+    const decodable = await videoTrack.canDecode();
+    if (!decodable) continue;
+
+    const { VideoSampleSink } = await import("mediabunny");
+    const sink = new VideoSampleSink(videoTrack);
+    const duration = await videoTrack.computeDuration();
+    const totalFrames = Math.ceil(duration * fps);
+
+    for (let f = 0; f < totalFrames; f++) {
+      const time = f / fps;
+      const sample = await sink.getSample(time);
+      if (!sample) continue;
+
+      ctx.clearRect(0, 0, width, height);
+      sample.draw(ctx, 0, 0, width, height);
+
+      await videoSource.add(1 / fps, 1 / fps);
     }
   }
 
   onProgress?.(clipUrls.length, clipUrls.length);
 
-  await encoder.flush();
-  encoder.close();
-  muxer.finalize();
+  await output.finalize();
 
-  return new Blob([target.buffer], { type: "video/mp4" });
-}
-
-async function extractFrames(
-  url: string,
-  width: number,
-  height: number,
-  fps: number,
-): Promise<HTMLCanvasElement[]> {
-  const video = document.createElement("video");
-  video.crossOrigin = "anonymous";
-  video.muted = true;
-  video.playsInline = true;
-  video.preload = "auto";
-  video.src = url;
-
-  await new Promise<void>((resolve, reject) => {
-    video.onloadeddata = () => resolve();
-    video.onerror = () => reject(new Error(`Failed to load: ${url}`));
-  });
-
-  const duration = video.duration;
-  const totalFrames = Math.ceil(duration * fps);
-  const frames: HTMLCanvasElement[] = [];
-
-  for (let f = 0; f < totalFrames; f++) {
-    const time = f / fps;
-    video.currentTime = time;
-    await new Promise<void>((resolve) => {
-      video.onseeked = () => resolve();
-    });
-
-    const canvas = document.createElement("canvas");
-    canvas.width = width;
-    canvas.height = height;
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(video, 0, 0, width, height);
-    frames.push(canvas);
-  }
-
-  return frames;
+  return new Blob([target.buffer!], { type: "video/mp4" });
 }
 
 async function composeWithMediaRecorder({

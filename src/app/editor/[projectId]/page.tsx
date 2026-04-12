@@ -24,12 +24,17 @@ export default function EditorPage({
   const saveToSupabase = useProjectStore((s) => s.saveToSupabase);
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
+  const [mounted, setMounted] = useState(false);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
   const canvasRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    initProject(params.projectId);
-  }, [params.projectId, initProject]);
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (mounted) initProject(params.projectId);
+  }, [params.projectId, initProject, mounted]);
 
   useEffect(() => {
     if (!isDirty) return;
@@ -62,6 +67,19 @@ export default function EditorPage({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  if (!mounted) {
+    return (
+      <div className="flex h-screen flex-col bg-[#0A0A09]">
+        <div className="flex h-14 shrink-0 items-center border-b border-white/5 px-4">
+          <span className="font-mono text-label-xs text-text-secondary">Carregando...</span>
+        </div>
+        <div className="flex flex-1 items-center justify-center">
+          <span className="font-mono text-label-sm text-text-secondary animate-pulse">Carregando projeto...</span>
+        </div>
+      </div>
+    );
+  }
 
   const isEmpty = scenes.length === 0;
 

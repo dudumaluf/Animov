@@ -70,6 +70,9 @@ async function composeWithMediabunny({
 
   await output.start();
 
+  let globalTime = 0;
+  const frameDuration = 1 / fps;
+
   for (let i = 0; i < clipUrls.length; i++) {
     onProgress?.(i, clipUrls.length);
 
@@ -100,7 +103,8 @@ async function composeWithMediabunny({
       ctx.clearRect(0, 0, width, height);
       sample.draw(ctx, 0, 0, width, height);
 
-      await videoSource.add(1 / fps, 1 / fps);
+      await videoSource.add(globalTime, frameDuration);
+      globalTime += frameDuration;
     }
   }
 

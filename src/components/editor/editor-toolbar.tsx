@@ -86,7 +86,11 @@ export function EditorToolbar() {
           {isSaving && " · Salvando..."}
           {!isSaving && isDirty && " · Não salvo"}
           {!isSaving && !isDirty && scenes.length > 0 && " · Salvo"}
-          {composing && ` · ${composeProgress}`}
+        {composing && (
+          <span className="font-mono text-label-sm text-accent-gold animate-pulse">
+            {composeProgress}
+          </span>
+        )}
         </span>
       </div>
 

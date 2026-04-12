@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, Download, ArrowDownToLine } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine } from "lucide-react";
 import {
   DndContext,
   closestCenter,

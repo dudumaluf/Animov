@@ -50,7 +50,6 @@ export default function EditorPage({
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
-      return;
     }
   }, []);
 
@@ -69,6 +68,24 @@ export default function EditorPage({
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
   }, []);
+
+  const handleExport = useCallback(async () => {
+    const currentScenes = useProjectStore.getState().scenes;
+    const readyScenes = currentScenes.filter((s) => s.status === "ready" && s.videoUrl);
+    if (readyScenes.length < 2 || composing) return;
+    setComposing(true);
+    try {
+      const clipUrls = readyScenes.map((s) => s.videoUrl!);
+      const blob = await composeVideos({ clipUrls });
+      const projectName = useProjectStore.getState().projectName;
+      const safeName = projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
+      downloadBlob(blob, `${safeName}.mp4`);
+    } catch (err) {
+      console.error("[export]", err);
+    } finally {
+      setComposing(false);
+    }
+  }, [composing]);
 
   if (!mounted) {
     return (
@@ -94,23 +111,6 @@ export default function EditorPage({
       </div>
     );
   }
-
-  const handleExport = useCallback(async () => {
-    const readyScenes = scenes.filter((s) => s.status === "ready" && s.videoUrl);
-    if (readyScenes.length < 2 || composing) return;
-    setComposing(true);
-    try {
-      const clipUrls = readyScenes.map((s) => s.videoUrl!);
-      const blob = await composeVideos({ clipUrls });
-      const projectName = useProjectStore.getState().projectName;
-      const safeName = projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
-      downloadBlob(blob, `${safeName}.mp4`);
-    } catch (err) {
-      console.error("[export]", err);
-    } finally {
-      setComposing(false);
-    }
-  }, [scenes, composing]);
 
   const isEmpty = scenes.length === 0;
 

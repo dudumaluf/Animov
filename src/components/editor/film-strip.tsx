@@ -139,7 +139,7 @@ function SortableSceneCard({
             {PRESET_LABELS[scene.presetId] ?? scene.presetId}
           </span>
           <div className="flex items-center gap-2">
-            {scene.videoVersions.length > 1 && (
+            {(scene.videoVersions ?? []).length > 1 && (
               <div className="flex items-center gap-1">
                 <button
                   onClick={(e) => { e.stopPropagation(); setActiveVersion(sceneId, scene.activeVersion - 1); }}
@@ -148,7 +148,7 @@ function SortableSceneCard({
                   ‹
                 </button>
                 <span className="font-mono text-[9px] text-accent-gold">
-                  {scene.activeVersion + 1}/{scene.videoVersions.length}
+                  {(scene.activeVersion ?? 0) + 1}/{(scene.videoVersions ?? []).length}
                 </span>
                 <button
                   onClick={(e) => { e.stopPropagation(); setActiveVersion(sceneId, scene.activeVersion + 1); }}

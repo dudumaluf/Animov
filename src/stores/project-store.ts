@@ -304,8 +304,9 @@ export const useProjectStore = create<ProjectStore>()(
         set((state) => ({
           scenes: state.scenes.map((s) => {
             if (s.id !== sceneId) return s;
-            const clamped = Math.max(0, Math.min(version, s.videoVersions.length - 1));
-            return { ...s, activeVersion: clamped, videoUrl: s.videoVersions[clamped] ?? s.videoUrl };
+            const versions = s.videoVersions ?? [];
+            const clamped = Math.max(0, Math.min(version, versions.length - 1));
+            return { ...s, activeVersion: clamped, videoUrl: versions[clamped] ?? s.videoUrl };
           }),
           isDirty: true,
         }));
@@ -400,7 +401,7 @@ export const useProjectStore = create<ProjectStore>()(
           scenes: state.scenes.map((s) => {
             if (s.id !== sceneId) return s;
             if (videoUrl) {
-              const versions = [...s.videoVersions, videoUrl];
+              const versions = [...(s.videoVersions ?? []), videoUrl];
               return { ...s, status, videoUrl, videoVersions: versions, activeVersion: versions.length - 1 };
             }
             return { ...s, status };

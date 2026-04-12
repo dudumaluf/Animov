@@ -1,9 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useRef } from "react";
+import { useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, ArrowRightLeft, Plus } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Film } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -133,94 +133,134 @@ function SortableSceneCard({
   );
 }
 
-function TransitionCard({ transitionId, insertIndex }: { transitionId: string; insertIndex: number }) {
-  const transition = useProjectStore((s) =>
-    s.transitions.find((t) => t.id === transitionId),
-  );
-  const toggleTransition = useProjectStore((s) => s.toggleTransition);
+type InsertMenuPosition = "between" | "end";
+type InsertMenuAction = "photo" | "crossfade" | "ai-transition";
+
+function InsertMenu({
+  position,
+  insertIndex,
+  hasScenesOnBothSides,
+}: {
+  position: InsertMenuPosition;
+  insertIndex: number;
+  hasScenesOnBothSides: boolean;
+}) {
+  const [open, setOpen] = useState(false);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
+  const addPhotos = useProjectStore((s) => s.addPhotos);
   const inputRef = useRef<HTMLInputElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
 
-  if (!transition) return null;
-
-  const handleFile = (files: FileList | null) => {
-    const file = files?.[0];
-    if (file?.type.startsWith("image/")) {
-      insertPhotoAt(insertIndex, file);
+  const handleAction = (action: InsertMenuAction) => {
+    setOpen(false);
+    if (action === "photo") {
+      inputRef.current?.click();
+    }
+    if (action === "crossfade") {
+      // TODO: implement crossfade node insertion
+      console.log("[insert] crossfade at index", insertIndex);
+    }
+    if (action === "ai-transition") {
+      // TODO: implement AI transition generation
+      console.log("[insert] AI transition at index", insertIndex);
     }
   };
 
+  const handleFile = (files: FileList | null) => {
+    if (!files) return;
+    const images = Array.from(files).filter((f) => f.type.startsWith("image/"));
+    if (images.length === 0) return;
+
+    if (position === "end") {
+      addPhotos(images);
+    } else {
+      images.forEach((file, i) => {
+        insertPhotoAt(insertIndex + i, file);
+      });
+    }
+  };
+
+  const betweenOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
+    { action: "photo", icon: ImagePlus, label: "Inserir foto", desc: "Nova cena nesta posição", ready: true },
+    { action: "crossfade", icon: Blend, label: "Crossfade", desc: "Dissolve suave entre cenas", ready: false },
+    { action: "ai-transition", icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: false },
+  ];
+
+  const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
+    { action: "photo", icon: ImagePlus, label: "Adicionar fotos", desc: "Novas cenas no final", ready: true },
+  ];
+
+  const options = position === "between" && hasScenesOnBothSides
+    ? betweenOptions
+    : endOptions;
+
   return (
-    <div className="group/transition flex shrink-0 flex-col items-center justify-center gap-1 self-center">
+    <div className="relative flex shrink-0 items-center self-center" ref={menuRef}>
       <input
         ref={inputRef}
         type="file"
         accept={ACCEPTED}
+        multiple={position === "end"}
         className="hidden"
         onChange={(e) => {
           handleFile(e.target.files);
           e.target.value = "";
         }}
       />
-      <button
-        onClick={() => toggleTransition(transitionId)}
-        className={`flex h-12 w-8 items-center justify-center rounded-lg border transition-all ${
-          transition.enabled
-            ? "border-white/10 bg-white/5 text-text-secondary hover:border-accent-gold/30"
-            : "border-transparent bg-transparent text-white/10 hover:text-white/20"
-        }`}
-        title={transition.enabled ? "Transição ativa" : "Transição desativada"}
-      >
-        <ArrowRightLeft size={10} />
-      </button>
+
       <button
         onClick={(e) => {
           e.stopPropagation();
-          inputRef.current?.click();
-        }}
-        className="flex h-5 w-5 items-center justify-center rounded-full text-white/0 transition-all group-hover/transition:text-accent-gold/50 hover:!text-accent-gold"
-        title="Inserir foto aqui"
-      >
-        <Plus size={10} />
-      </button>
-    </div>
-  );
-}
-
-function AddSceneButton() {
-  const addPhotos = useProjectStore((s) => s.addPhotos);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  return (
-    <>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ACCEPTED}
-        multiple
-        className="hidden"
-        onChange={(e) => {
-          if (e.target.files) {
-            const images = Array.from(e.target.files).filter((f) => f.type.startsWith("image/"));
-            if (images.length > 0) addPhotos(images);
+          if (options.length === 1 && options[0]!.ready) {
+            handleAction(options[0]!.action);
+          } else {
+            setOpen(!open);
           }
-          e.target.value = "";
         }}
-      />
-      <button
-        onClick={() => inputRef.current?.click()}
-        className="flex h-10 w-10 shrink-0 items-center justify-center self-center rounded-full border border-dashed border-white/10 text-text-secondary transition-all hover:border-accent-gold/40 hover:text-accent-gold"
-        title="Adicionar fotos"
+        className={`flex items-center justify-center rounded-full border border-dashed transition-all ${
+          position === "end"
+            ? "h-10 w-10 border-white/10 text-text-secondary hover:border-accent-gold/40 hover:text-accent-gold"
+            : "h-7 w-7 border-transparent text-white/0 hover:border-accent-gold/30 hover:text-accent-gold/60"
+        }`}
+        title="Inserir"
       >
-        <Plus size={16} />
+        <Plus size={position === "end" ? 16 : 12} />
       </button>
-    </>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-1/2 top-full z-50 mt-2 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
+            {options.map((opt) => (
+              <button
+                key={opt.action}
+                onClick={() => opt.ready && handleAction(opt.action)}
+                className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                  opt.ready
+                    ? "hover:bg-white/5"
+                    : "opacity-30 cursor-not-allowed"
+                }`}
+              >
+                <opt.icon size={14} className={opt.ready ? "text-accent-gold" : "text-text-secondary"} />
+                <div>
+                  <span className="block font-mono text-[11px] font-medium text-[var(--text)]">
+                    {opt.label}
+                  </span>
+                  <span className="block font-mono text-[9px] text-text-secondary">
+                    {opt.ready ? opt.desc : "Em breve"}
+                  </span>
+                </div>
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
 export function FilmStrip({ onPreviewVideo }: { onPreviewVideo?: (url: string) => void }) {
   const scenes = useProjectStore((s) => s.scenes);
-  const transitions = useProjectStore((s) => s.transitions);
   const reorderScenes = useProjectStore((s) => s.reorderScenes);
 
   const sensors = useSensors(
@@ -242,16 +282,24 @@ export function FilmStrip({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={sceneIds} strategy={horizontalListSortingStrategy}>
-        <div className="flex items-start gap-2 py-4">
+        <div className="flex items-start gap-1.5 py-4">
           {scenes.map((scene, i) => (
-            <div key={scene.id} className="flex items-start gap-1">
+            <div key={scene.id} className="flex items-start gap-1.5">
               <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
-              {i < scenes.length - 1 && transitions[i] && (
-                <TransitionCard transitionId={transitions[i]!.id} insertIndex={i + 1} />
+              {i < scenes.length - 1 && (
+                <InsertMenu
+                  position="between"
+                  insertIndex={i + 1}
+                  hasScenesOnBothSides={true}
+                />
               )}
             </div>
           ))}
-          <AddSceneButton />
+          <InsertMenu
+            position="end"
+            insertIndex={scenes.length}
+            hasScenesOnBothSides={false}
+          />
         </div>
       </SortableContext>
     </DndContext>

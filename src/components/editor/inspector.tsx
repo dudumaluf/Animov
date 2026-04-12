@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, Maximize2, ChevronDown, MoveRight, RotateCw, MoveUp, MoveDown, Focus, Sun, Layers } from "lucide-react";
+import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers } from "lucide-react";
 
 const PRESETS = [
   { id: "push_in_serene", label: "Avanço Suave", desc: "Dolly lento em direção ao ponto focal", icon: MoveRight, arrow: "→" },

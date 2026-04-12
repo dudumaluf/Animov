@@ -91,6 +91,38 @@
 
 ---
 
+## Fase 4b — Editor Avancado [PLANEJADO]
+
+### Onda 1 — Core do Edit
+- [x] 4b.1 Context menu "+" inteligente (opcoes por posicao)
+- [x] 4b.2 Preset UX — dropdown com simbolos de direcao
+- [x] 4b.3 Edit node (composicao visual no film strip)
+- [x] 4b.4 Cards full-bleed (info so no hover, video play no hover)
+- [x] 4b.5 Download individual por cena
+- [x] 4b.6 Click canvas fecha inspector
+- [ ] 4b.7 Crossfade client-side entre cenas (sem custo AI)
+- [ ] 4b.8 Transicao AI — last frame + first frame → video intermediario
+- [x] 4b.9 Musica: adapter Minimax Music 2.6 + API route + Edit node inspector
+
+### Onda 2 — Nodes e Versoes
+- [ ] 4b.10 Node de texto/titulo (overlay no video final)
+- [ ] 4b.11 Node de imagem/logo (PNG transparente, overlay)
+- [ ] 4b.12 Multi-version por cena (gerar com presets diferentes, escolher qual usar "1/3")
+- [ ] 4b.13 Connector inteligente entre ultimo video e edit node (hover → "+" com opcoes)
+- [ ] 4b.14 Musica mixada no export final (audio sobre video no Mediabunny)
+
+### Onda 3 — Audio Avancado
+- [ ] 4b.15 Upload de MP3 custom (alem de gerar AI)
+- [ ] 4b.16 Corte no beat da musica (sync cortes de cena com beats)
+- [ ] 4b.17 Volume control / fade in/out na trilha
+
+### Onda 4 — Admin & Debug
+- [ ] 4b.18 Preset Recipe Manager (admin: criar/editar/ver system prompts, vision schemas)
+- [ ] 4b.19 Debug view no inspector (vision data, prompt gerado, custo por cena)
+- [ ] 4b.20 Prompt influenciado por input do usuario (modelo, preset, opcoes afetam estrategia)
+
+---
+
 ## Fase 5 — Admin [NAO INICIADA]
 
 - [ ] 5.1 Rota `/admin` com guard (ja existe placeholder)

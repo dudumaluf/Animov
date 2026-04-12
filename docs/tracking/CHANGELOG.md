@@ -113,3 +113,40 @@
 ### Testes:
 - Geracao de 2 videos (Kling O1 Pro) com Vision LLM
 - Export MP4 com 2 clips concatenados via Mediabunny (funcionando)
+
+---
+
+## Sessao 5 — 12 abril 2026 (tarde)
+
+**Foco: Editor UX polish + Music + Features avancadas**
+
+### Feito:
+- Context menu "+" inteligente entre cenas (Insert Photo, Crossfade soon, AI Transition soon)
+- Context menu "+" no final (Add Photos, Criar Edit)
+- Preset UX: dropdown com simbolos de direcao (→ ↔ ↕ ↻ ⊙ ◐ ⟵)
+- Edit node visual no film strip (composicao, cena count, duracao, export)
+- Edit node clicavel → abre inspector com propriedades (musica)
+- Musica: adapter Minimax Music 2.6 + API route + inspector com prompt/generate/play
+- Cards full-bleed (sem barra preta, preset slide-up no hover)
+- Video playback no hover (nao autoplay)
+- Download individual por cena (icone no hover)
+- Sem numeros nos cards (ordem visual basta)
+- Click canvas fecha inspector
+- Edit node mesmo tamanho dos scene cards
+- Fix hooks order (useCallback antes do early return)
+- Fix hydration (skeleton loading)
+- Fix localStorage quota (safe storage wrapper)
+- Fix Vercel builds (unused imports)
+- Standardize "+" button (mesmo estilo everywhere)
+
+### Ideias capturadas pro ROADMAP (Fase 4b):
+- Node de texto/titulo overlay
+- Node de imagem/logo overlay
+- Multi-version por cena (diferentes presets, escolher qual usar "1/3")
+- Connector inteligente entre video e edit node
+- Musica mixada no export
+- Upload MP3 custom
+- Corte no beat
+- Preset Recipe Manager (admin)
+- Debug view (vision data, prompt, custo)
+- Prompt influenciado por input

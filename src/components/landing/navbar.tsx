@@ -2,8 +2,18 @@
 
 import Link from "next/link";
 import { motion } from "framer-motion";
+import { useControls } from "leva";
 
 export function Navbar() {
+  const labels = useControls("Navbar.Labels", {
+    brand: "Animov",
+    link1: "Início",
+    link2: "Presets",
+    link3: "Como funciona",
+    link4: "Planos",
+    cta: "Começar grátis",
+  });
+
   return (
     <motion.nav
       initial={{ opacity: 0, y: -20 }}
@@ -12,33 +22,39 @@ export function Navbar() {
       className="fixed top-0 z-50 flex w-full items-center justify-between px-6 py-5 md:px-10"
     >
       <Link href="/" className="font-display text-lg tracking-tight">
-        Animo<span className="text-accent-gold">v</span>
+        {labels.brand}
       </Link>
 
       <div className="flex items-center gap-8">
         <a
+          href="#inicio"
+          className="hidden font-mono text-label-sm uppercase tracking-widest text-text-secondary transition-colors hover:text-[var(--text)] md:block"
+        >
+          {labels.link1}
+        </a>
+        <a
           href="#presets"
           className="hidden font-mono text-label-sm uppercase tracking-widest text-text-secondary transition-colors hover:text-[var(--text)] md:block"
         >
-          Presets
+          {labels.link2}
         </a>
         <a
           href="#como-funciona"
           className="hidden font-mono text-label-sm uppercase tracking-widest text-text-secondary transition-colors hover:text-[var(--text)] md:block"
         >
-          Como funciona
+          {labels.link3}
         </a>
         <a
           href="#planos"
           className="hidden font-mono text-label-sm uppercase tracking-widest text-text-secondary transition-colors hover:text-[var(--text)] md:block"
         >
-          Planos
+          {labels.link4}
         </a>
         <Link
           href="/cadastro"
           className="rounded-full bg-[var(--text)] px-5 py-2 font-mono text-label-sm uppercase tracking-widest text-[var(--bg)] transition-opacity hover:opacity-80"
         >
-          Começar grátis
+          {labels.cta}
         </Link>
       </div>
     </motion.nav>

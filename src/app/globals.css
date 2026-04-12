@@ -3,6 +3,10 @@
 @tailwind utilities;
 
 @layer base {
+  html {
+    scroll-behavior: smooth;
+  }
+
   /* ─── Dark mode (default for Animov) ─── */
   :root {
     --bg: #0D0D0B;

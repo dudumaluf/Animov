@@ -71,11 +71,23 @@ export default function EditorPage({
   if (!mounted) {
     return (
       <div className="flex h-screen flex-col bg-[#0A0A09]">
-        <div className="flex h-14 shrink-0 items-center border-b border-white/5 px-4">
-          <span className="font-mono text-label-xs text-text-secondary">Carregando...</span>
-        </div>
-        <div className="flex flex-1 items-center justify-center">
-          <span className="font-mono text-label-sm text-text-secondary animate-pulse">Carregando projeto...</span>
+        <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/5 px-4">
+          <div className="flex items-center gap-3">
+            <div className="h-8 w-8 rounded-lg bg-white/5" />
+            <div className="h-5 w-32 rounded bg-white/5 animate-pulse" />
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="h-4 w-24 rounded bg-white/5" />
+            <div className="h-9 w-28 rounded-full bg-white/5" />
+          </div>
+        </header>
+        <div className="flex flex-1 items-center justify-center gap-4 p-6">
+          {[1, 2, 3].map((i) => (
+            <div key={i} className="flex w-48 flex-col gap-2">
+              <div className="aspect-[16/10] rounded-xl bg-white/[0.03] animate-pulse" style={{ animationDelay: `${i * 150}ms` }} />
+              <div className="h-3 w-20 rounded bg-white/5" />
+            </div>
+          ))}
         </div>
       </div>
     );

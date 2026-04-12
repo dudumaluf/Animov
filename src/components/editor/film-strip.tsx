@@ -558,15 +558,11 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
           )}
           {hasEditNode && onExport && (
             <>
-              <button
-                className="group/eq flex h-8 w-8 shrink-0 items-center justify-center self-center"
-                onClick={(e) => e.stopPropagation()}
-              >
-                <div className="relative flex h-8 w-8 items-center justify-center rounded-full border border-white/10 transition-all group-hover/eq:border-accent-gold/40">
-                  <span className="absolute h-[1.5px] w-3 bg-white/20 transition-all duration-300 group-hover/eq:rotate-90 group-hover/eq:bg-accent-gold" />
-                  <span className="absolute h-[1.5px] w-3 bg-white/20 transition-all duration-300 group-hover/eq:bg-accent-gold" />
-                </div>
-              </button>
+              <InsertMenu
+                position="end"
+                insertIndex={scenes.length}
+                hasScenesOnBothSides={false}
+              />
               <EditNode onExport={onExport} />
             </>
           )}

@@ -167,6 +167,63 @@ function PresetSelector({
   );
 }
 
+function EditPreview({ musicUrl, onClose }: { musicUrl: string | null; onClose: () => void }) {
+  const preview = useProjectStore((s) => s.scenes.find((sc) => sc.status === "ready" && sc.videoUrl));
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const audioRef = useRef<HTMLAudioElement>(null);
+
+  const syncPlay = () => {
+    videoRef.current?.play();
+    if (audioRef.current && musicUrl) {
+      audioRef.current.currentTime = 0;
+      audioRef.current.play();
+    }
+  };
+
+  const syncPause = () => {
+    videoRef.current?.pause();
+    audioRef.current?.pause();
+  };
+
+  return (
+    <div className="relative aspect-video w-full bg-white/5">
+      {preview?.videoUrl ? (
+        <video
+          ref={videoRef}
+          src={preview.videoUrl}
+          className="h-full w-full cursor-pointer object-cover"
+          loop
+          playsInline
+          muted={!musicUrl}
+          onClick={() => {
+            if (videoRef.current?.paused) syncPlay();
+            else syncPause();
+          }}
+        />
+      ) : preview ? (
+        <Image
+          src={preview.photoDataUrl ?? preview.photoUrl}
+          alt="edit"
+          fill
+          className="object-cover"
+          unoptimized
+        />
+      ) : (
+        <div className="flex h-full w-full items-center justify-center">
+          <Clapperboard size={24} className="text-text-secondary" />
+        </div>
+      )}
+      {musicUrl && <audio ref={audioRef} src={musicUrl} loop />}
+      <button
+        onClick={onClose}
+        className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+      >
+        <X size={12} />
+      </button>
+    </div>
+  );
+}
+
 function MusicSection({
   musicUrl,
   musicPrompt,
@@ -418,45 +475,7 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
       )}
       {showEdit && (
         <div className="flex h-full w-80 flex-col">
-          <div className="relative aspect-video w-full bg-white/5">
-            {(() => {
-              const preview = useProjectStore.getState().scenes.find((s) => s.status === "ready" && s.videoUrl);
-              if (preview?.videoUrl) {
-                return (
-                  <video
-                    src={preview.videoUrl}
-                    className="h-full w-full object-cover"
-                    muted
-                    loop
-                    autoPlay
-                    playsInline
-                  />
-                );
-              }
-              if (preview) {
-                return (
-                  <Image
-                    src={preview.photoDataUrl ?? preview.photoUrl}
-                    alt="edit"
-                    fill
-                    className="object-cover"
-                    unoptimized
-                  />
-                );
-              }
-              return (
-                <div className="flex h-full w-full items-center justify-center">
-                  <Clapperboard size={24} className="text-text-secondary" />
-                </div>
-              );
-            })()}
-            <button
-              onClick={() => useProjectStore.setState({ editNodeSelected: false })}
-              className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-            >
-              <X size={12} />
-            </button>
-          </div>
+          <EditPreview musicUrl={musicUrl} onClose={() => useProjectStore.setState({ editNodeSelected: false })} />
 
           <div className="flex-1 overflow-y-auto p-4">
             <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">

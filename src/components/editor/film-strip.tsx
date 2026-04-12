@@ -178,12 +178,14 @@ function InsertMenu({
   hasScenesOnBothSides,
   fromSceneId,
   toSceneId,
+  variant = "plus",
 }: {
   position: InsertMenuPosition;
   insertIndex: number;
   hasScenesOnBothSides: boolean;
   fromSceneId?: string;
   toSceneId?: string;
+  variant?: "plus" | "equals";
 }) {
   const [open, setOpen] = useState(false);
   const [showDurationPicker, setShowDurationPicker] = useState(false);
@@ -278,10 +280,17 @@ function InsertMenu({
             setOpen(!open);
           }
         }}
-        className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 text-text-secondary transition-all hover:border-accent-gold/40 hover:text-accent-gold"
+        className="group/btn flex h-8 w-8 items-center justify-center rounded-full border border-white/10 transition-all hover:border-accent-gold/40"
         title="Inserir"
       >
-        <Plus size={14} />
+        {variant === "equals" ? (
+          <div className="relative flex h-4 w-4 items-center justify-center">
+            <span className="absolute h-[1.5px] w-3 -translate-y-[2.5px] rounded-full bg-white/20 transition-all duration-300 group-hover/btn:translate-y-0 group-hover/btn:rotate-90 group-hover/btn:bg-accent-gold" />
+            <span className="absolute h-[1.5px] w-3 translate-y-[2.5px] rounded-full bg-white/20 transition-all duration-300 group-hover/btn:translate-y-0 group-hover/btn:bg-accent-gold" />
+          </div>
+        ) : (
+          <Plus size={14} className="text-text-secondary transition-colors group-hover/btn:text-accent-gold" />
+        )}
       </button>
 
       {open && (
@@ -562,6 +571,7 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
                 position="end"
                 insertIndex={scenes.length}
                 hasScenesOnBothSides={false}
+                variant="equals"
               />
               <EditNode onExport={onExport} />
             </>

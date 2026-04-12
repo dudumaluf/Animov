@@ -1,8 +1,10 @@
 "use client";
 
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { useControls } from "leva";
+import { createClient } from "@/lib/supabase/client";
 
 export function Navbar() {
   const labels = useControls("Navbar.Labels", {
@@ -13,6 +15,15 @@ export function Navbar() {
     link4: "Planos",
     cta: "Começar grátis",
   });
+
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      setIsLoggedIn(!!data.user);
+    });
+  }, []);
 
   return (
     <motion.nav
@@ -51,10 +62,10 @@ export function Navbar() {
           {labels.link4}
         </a>
         <Link
-          href="/cadastro"
+          href={isLoggedIn ? "/dashboard" : "/cadastro"}
           className="rounded-full bg-[var(--text)] px-5 py-2 font-mono text-label-sm uppercase tracking-widest text-[var(--bg)] transition-opacity hover:opacity-80"
         >
-          {labels.cta}
+          {isLoggedIn ? "Meus projetos" : labels.cta}
         </Link>
       </div>
     </motion.nav>

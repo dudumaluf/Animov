@@ -17,6 +17,14 @@ const PRESETS = [
 
 const DURATIONS = [3, 5, 7, 10];
 
+const MUSIC_PRESETS = [
+  { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
+  { id: "modern", label: "Modern Luxury", desc: "Ambient electronic", prompt: "Modern luxury ambient instrumental, warm synth pads, subtle electronic beats, sophisticated and inviting, 95 BPM, high-end real estate" },
+  { id: "upbeat", label: "Upbeat Energy", desc: "Positive, rhythmic", prompt: "Upbeat positive instrumental, light acoustic guitar, gentle percussion, optimistic and welcoming, 110 BPM, bright real estate tour" },
+  { id: "cinematic", label: "Cinematic Drama", desc: "Orchestral, building", prompt: "Cinematic orchestral instrumental, building strings, dramatic piano, sweeping and grand, 75 BPM, luxury property reveal" },
+  { id: "natural", label: "Natural Light", desc: "Acoustic, soft", prompt: "Natural light acoustic instrumental, fingerpicked guitar, soft ambient textures, peaceful and airy, 90 BPM, serene home atmosphere" },
+];
+
 function PresetSelector({
   selectedId,
   onSelect,
@@ -258,22 +266,31 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <textarea
-                    value={musicPrompt}
-                    onChange={(e) => setMusicPrompt(e.target.value)}
-                    placeholder="Descreva o estilo da música..."
-                    rows={3}
-                    className="w-full resize-none rounded-lg border border-white/10 bg-transparent px-3 py-2 font-mono text-[11px] text-[var(--text)] placeholder:text-text-secondary focus:border-accent-gold/30 focus:outline-none"
-                  />
+                  <div className="grid grid-cols-2 gap-1.5">
+                    {MUSIC_PRESETS.map((mp) => (
+                      <button
+                        key={mp.id}
+                        onClick={() => setMusicPrompt(mp.prompt)}
+                        className={`rounded-lg border px-2 py-1.5 text-left transition-all ${
+                          musicPrompt === mp.prompt
+                            ? "border-accent-gold/40 bg-accent-gold/5"
+                            : "border-white/5 hover:border-white/10"
+                        }`}
+                      >
+                        <span className="block font-mono text-[10px] font-medium">{mp.label}</span>
+                        <span className="block font-mono text-[8px] text-text-secondary">{mp.desc}</span>
+                      </button>
+                    ))}
+                  </div>
                   <button
                     onClick={generateMusicAction}
                     disabled={isMusicGenerating || !musicPrompt.trim()}
                     className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:opacity-30 disabled:cursor-not-allowed"
                   >
-                    {isMusicGenerating ? "Gerando trilha..." : "Gerar trilha sonora"}
+                    {isMusicGenerating ? "Gerando trilha..." : "Gerar trilha"}
                   </button>
                   <p className="font-mono text-[9px] text-text-secondary">
-                    $0.15 por geração · Instrumental · ~30s de duração
+                    $0.15 · Instrumental · ~30s
                   </p>
                 </div>
               )}

@@ -49,6 +49,7 @@ function SortableSceneCard({
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const selectScene = useProjectStore((s) => s.selectScene);
   const removeScene = useProjectStore((s) => s.removeScene);
+  const setActiveVersion = useProjectStore((s) => s.setActiveVersion);
   const sceneIndex = useProjectStore((s) => s.scenes.findIndex((sc) => sc.id === sceneId));
 
   if (!scene) return null;
@@ -97,14 +98,6 @@ function SortableSceneCard({
             unoptimized
           />
         )}
-        <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px] text-white opacity-0 transition-opacity group-hover:opacity-100">
-          {scene.status === "ready" && (
-            <span className="text-green-400">✓</span>
-          )}
-          {scene.status === "failed" && (
-            <span className="text-red-400">✗</span>
-          )}
-        </div>
         {scene.status === "generating" && (
           <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px]">
             <span className="animate-pulse text-accent-gold">●</span>
@@ -112,14 +105,24 @@ function SortableSceneCard({
         )}
         <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {scene.status === "ready" && scene.videoUrl && (
-            <a
-              href={scene.videoUrl}
-              download
-              onClick={(e) => e.stopPropagation()}
+            <button
+              onClick={async (e) => {
+                e.stopPropagation();
+                try {
+                  const res = await fetch(scene.videoUrl!);
+                  const blob = await res.blob();
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  a.href = url;
+                  a.download = `cena-${sceneIndex + 1}.mp4`;
+                  a.click();
+                  URL.revokeObjectURL(url);
+                } catch { /* ignore */ }
+              }}
               className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
             >
               <ArrowDownToLine size={10} />
-            </a>
+            </button>
           )}
           <button
             onClick={(e) => {
@@ -136,6 +139,25 @@ function SortableSceneCard({
             {PRESET_LABELS[scene.presetId] ?? scene.presetId}
           </span>
           <div className="flex items-center gap-2">
+            {scene.videoVersions.length > 1 && (
+              <div className="flex items-center gap-1">
+                <button
+                  onClick={(e) => { e.stopPropagation(); setActiveVersion(sceneId, scene.activeVersion - 1); }}
+                  className="font-mono text-[10px] text-white/40 hover:text-white"
+                >
+                  ‹
+                </button>
+                <span className="font-mono text-[9px] text-accent-gold">
+                  {scene.activeVersion + 1}/{scene.videoVersions.length}
+                </span>
+                <button
+                  onClick={(e) => { e.stopPropagation(); setActiveVersion(sceneId, scene.activeVersion + 1); }}
+                  className="font-mono text-[10px] text-white/40 hover:text-white"
+                >
+                  ›
+                </button>
+              </div>
+            )}
             <span className="font-mono text-[10px] text-white/60">{scene.duration}s</span>
             <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
               <GripVertical size={10} className="text-white/40 hover:text-white/70" />
@@ -154,16 +176,21 @@ function InsertMenu({
   position,
   insertIndex,
   hasScenesOnBothSides,
+  fromSceneId,
+  toSceneId,
 }: {
   position: InsertMenuPosition;
   insertIndex: number;
   hasScenesOnBothSides: boolean;
+  fromSceneId?: string;
+  toSceneId?: string;
 }) {
   const [open, setOpen] = useState(false);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
   const addPhotos = useProjectStore((s) => s.addPhotos);
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
+  const generateTransition = useProjectStore((s) => s.generateTransition);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
 
@@ -177,8 +204,9 @@ function InsertMenu({
       console.log("[insert] crossfade at index", insertIndex);
     }
     if (action === "ai-transition") {
-      // TODO: implement AI transition generation
-      console.log("[insert] AI transition at index", insertIndex);
+      if (fromSceneId && toSceneId) {
+        generateTransition(fromSceneId, toSceneId);
+      }
     }
     if (action === "edit") {
       setHasEditNode(true);
@@ -202,7 +230,7 @@ function InsertMenu({
   const betweenOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Inserir foto", desc: "Nova cena nesta posição", ready: true },
     { action: "crossfade", icon: Blend, label: "Crossfade", desc: "Dissolve suave entre cenas", ready: false },
-    { action: "ai-transition", icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: false },
+    { action: "ai-transition", icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: true },
   ];
 
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
@@ -355,6 +383,8 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
                   position="between"
                   insertIndex={i + 1}
                   hasScenesOnBothSides={true}
+                  fromSceneId={scene.id}
+                  toSceneId={scenes[i + 1]?.id}
                 />
               )}
             </div>

@@ -10,6 +10,8 @@ export type Scene = {
   duration: number;
   status: "idle" | "generating" | "ready" | "failed";
   videoUrl?: string;
+  videoVersions: string[];
+  activeVersion: number;
   costCredits: number;
 };
 
@@ -53,8 +55,10 @@ export type ProjectStore = {
   reorderScenes: (fromIndex: number, toIndex: number) => void;
   setScenePreset: (sceneId: string, presetId: string) => void;
   setSceneDuration: (sceneId: string, duration: number) => void;
+  setActiveVersion: (sceneId: string, version: number) => void;
 
   toggleTransition: (transitionId: string) => void;
+  generateTransition: (fromSceneId: string, toSceneId: string) => Promise<void>;
   setHasEditNode: (has: boolean) => void;
   selectEditNode: () => void;
   setMusicPrompt: (prompt: string) => void;
@@ -150,6 +154,8 @@ export const useProjectStore = create<ProjectStore>()(
           presetId: "push_in_serene",
           duration: 5,
           status: "idle" as const,
+          videoVersions: [],
+          activeVersion: 0,
           costCredits: 1,
         }));
 
@@ -205,6 +211,8 @@ export const useProjectStore = create<ProjectStore>()(
           presetId: "push_in_serene",
           duration: 5,
           status: "idle",
+          videoVersions: [],
+          activeVersion: 0,
           costCredits: 1,
         };
         set((state) => {
@@ -292,6 +300,17 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
+      setActiveVersion: (sceneId, version) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            const clamped = Math.max(0, Math.min(version, s.videoVersions.length - 1));
+            return { ...s, activeVersion: clamped, videoUrl: s.videoVersions[clamped] ?? s.videoUrl };
+          }),
+          isDirty: true,
+        }));
+      },
+
       toggleTransition: (transitionId) => {
         set((state) => ({
           transitions: state.transitions.map((t) =>
@@ -299,6 +318,53 @@ export const useProjectStore = create<ProjectStore>()(
           ),
           isDirty: true,
         }));
+      },
+
+      generateTransition: async (fromSceneId, toSceneId) => {
+        const state = get();
+        const fromScene = state.scenes.find((s) => s.id === fromSceneId);
+        const toScene = state.scenes.find((s) => s.id === toSceneId);
+        if (!fromScene || !toScene) return;
+
+        const startImageUrl = fromScene.photoUrl.startsWith("blob:") ? fromScene.photoDataUrl : fromScene.photoUrl;
+        const endImageUrl = toScene.photoUrl.startsWith("blob:") ? toScene.photoDataUrl : toScene.photoUrl;
+        if (!startImageUrl || !endImageUrl) return;
+
+        const transitionId = `t-${fromSceneId}-${toSceneId}`;
+
+        set((state) => ({
+          transitions: state.transitions.map((t) =>
+            t.id === transitionId ? { ...t, status: "generating" as const, enabled: true } : t,
+          ),
+        }));
+
+        try {
+          const res = await fetch("/api/generate-transition", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ startImageUrl, endImageUrl, duration: 3 }),
+          });
+
+          if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error ?? "Failed");
+          }
+
+          const data = await res.json();
+          set((state) => ({
+            transitions: state.transitions.map((t) =>
+              t.id === transitionId ? { ...t, status: "ready" as const, videoUrl: data.videoUrl } : t,
+            ),
+            isDirty: true,
+          }));
+        } catch (err) {
+          console.error(`[generateTransition] ${transitionId}:`, err);
+          set((state) => ({
+            transitions: state.transitions.map((t) =>
+              t.id === transitionId ? { ...t, status: "failed" as const } : t,
+            ),
+          }));
+        }
       },
 
       setHasEditNode: (has) => set({ hasEditNode: has, editNodeSelected: has, isDirty: true }),
@@ -331,11 +397,14 @@ export const useProjectStore = create<ProjectStore>()(
 
       updateSceneStatus: (sceneId, status, videoUrl) => {
         set((state) => ({
-          scenes: state.scenes.map((s) =>
-            s.id === sceneId
-              ? { ...s, status, videoUrl: videoUrl ?? s.videoUrl }
-              : s,
-          ),
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            if (videoUrl) {
+              const versions = [...s.videoVersions, videoUrl];
+              return { ...s, status, videoUrl, videoVersions: versions, activeVersion: versions.length - 1 };
+            }
+            return { ...s, status };
+          }),
           isDirty: true,
         }));
       },

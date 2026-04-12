@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
+import { persist, type StorageValue } from "zustand/middleware";
 import { nanoid } from "nanoid";
 
 export type Scene = {
@@ -514,6 +514,27 @@ export const useProjectStore = create<ProjectStore>()(
     }),
     {
       name: "animov-project",
+      storage: {
+        getItem: (name): StorageValue<ProjectStore> | null => {
+          try {
+            const val = localStorage.getItem(name);
+            return val ? JSON.parse(val) : null;
+          } catch {
+            localStorage.removeItem(name);
+            return null;
+          }
+        },
+        setItem: (name: string, value: StorageValue<ProjectStore>) => {
+          try {
+            localStorage.setItem(name, JSON.stringify(value));
+          } catch {
+            // Quota exceeded — silently skip, Supabase is the source of truth
+          }
+        },
+        removeItem: (name: string) => {
+          localStorage.removeItem(name);
+        },
+      },
       partialize: (state) => ({
         projectId: state.projectId,
         supabaseProjectId: state.supabaseProjectId,
@@ -529,7 +550,7 @@ export const useProjectStore = create<ProjectStore>()(
           costCredits: s.costCredits,
         })),
         transitions: state.transitions,
-      }),
+      }) as unknown as ProjectStore,
     },
   ),
 );

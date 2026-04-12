@@ -6,6 +6,7 @@ import {
   BufferTarget,
   Mp4OutputFormat,
   CanvasSource,
+  AudioBufferSource,
   QUALITY_HIGH,
 } from "mediabunny";
 
@@ -33,16 +34,39 @@ export async function composeVideos({
     return res.blob();
   }
 
-  if (audioUrl) {
-    return composeWithMediaRecorder({ clipUrls, audioUrl, width, height, onProgress });
-  }
-
   try {
     return await composeWithMediabunny({ clipUrls, audioUrl, width, height, fps, onProgress });
   } catch (err) {
     console.warn("[compose] Mediabunny failed, falling back to MediaRecorder:", err);
-    return composeWithMediaRecorder({ clipUrls, width, height, onProgress });
+    return composeWithMediaRecorder({ clipUrls, audioUrl, width, height, onProgress });
   }
+}
+
+async function decodeAudioToBuffers(url: string): Promise<AudioBuffer[]> {
+  const res = await fetch(url);
+  const arrayBuffer = await res.arrayBuffer();
+  const audioCtx = new OfflineAudioContext(2, 1, 44100);
+  const fullBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+
+  const chunkDuration = 1;
+  const sampleRate = fullBuffer.sampleRate;
+  const channels = fullBuffer.numberOfChannels;
+  const totalSamples = fullBuffer.length;
+  const chunkSamples = Math.floor(chunkDuration * sampleRate);
+  const buffers: AudioBuffer[] = [];
+
+  for (let offset = 0; offset < totalSamples; offset += chunkSamples) {
+    const length = Math.min(chunkSamples, totalSamples - offset);
+    const chunk = new AudioBuffer({ length, sampleRate, numberOfChannels: channels });
+    for (let ch = 0; ch < channels; ch++) {
+      const src = fullBuffer.getChannelData(ch);
+      const dst = chunk.getChannelData(ch);
+      dst.set(src.subarray(offset, offset + length));
+    }
+    buffers.push(chunk);
+  }
+
+  return buffers;
 }
 
 async function composeWithMediabunny({
@@ -75,10 +99,23 @@ async function composeWithMediabunny({
   });
   output.addVideoTrack(videoSource);
 
+  let audioSource: AudioBufferSource | null = null;
+  let audioBuffers: AudioBuffer[] = [];
+
+  if (audioUrl) {
+    audioBuffers = await decodeAudioToBuffers(audioUrl);
+    audioSource = new AudioBufferSource({
+      codec: "aac",
+      bitrate: QUALITY_HIGH,
+    });
+    output.addAudioTrack(audioSource);
+  }
+
   await output.start();
 
   let globalTime = 0;
   const frameDuration = 1 / fps;
+  let audioBufferIndex = 0;
 
   for (let i = 0; i < clipUrls.length; i++) {
     onProgress?.(i, clipUrls.length);
@@ -111,7 +148,24 @@ async function composeWithMediabunny({
       sample.draw(ctx, 0, 0, width, height);
 
       await videoSource.add(globalTime, frameDuration);
+
+      if (audioSource && audioBufferIndex < audioBuffers.length) {
+        const audioTime = globalTime;
+        const audioDuration = audioBuffers[audioBufferIndex]!.duration;
+        if (audioTime >= audioBufferIndex * audioDuration) {
+          await audioSource.add(audioBuffers[audioBufferIndex]!);
+          audioBufferIndex++;
+        }
+      }
+
       globalTime += frameDuration;
+    }
+  }
+
+  if (audioSource) {
+    while (audioBufferIndex < audioBuffers.length && audioBufferIndex * 1 <= globalTime) {
+      await audioSource.add(audioBuffers[audioBufferIndex]!);
+      audioBufferIndex++;
     }
   }
 

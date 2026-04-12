@@ -1,9 +1,9 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
+import { useState, useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers, Music, Trash2 } from "lucide-react";
+import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers, Music, Trash2, Upload } from "lucide-react";
 
 const PRESETS = [
   { id: "push_in_serene", label: "Avanço Suave", desc: "Dolly lento em direção ao ponto focal", icon: MoveRight, arrow: "→" },
@@ -167,6 +167,121 @@ function PresetSelector({
   );
 }
 
+function MusicSection({
+  musicUrl,
+  musicPrompt,
+  isMusicGenerating,
+  setMusicPrompt,
+  generateMusic,
+  clearMusic,
+  setMusicUrl,
+}: {
+  musicUrl: string | null;
+  musicPrompt: string;
+  isMusicGenerating: boolean;
+  setMusicPrompt: (p: string) => void;
+  generateMusic: () => void;
+  clearMusic: () => void;
+  setMusicUrl: (url: string) => void;
+}) {
+  const [tab, setTab] = useState<"ai" | "upload">("ai");
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  if (musicUrl) {
+    return (
+      <div>
+        <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+          Trilha Sonora
+        </label>
+        <div className="space-y-2">
+          <audio src={musicUrl} controls className="w-full h-8 opacity-80" />
+          <button
+            onClick={clearMusic}
+            className="flex items-center gap-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:text-red-400"
+          >
+            <Trash2 size={10} />
+            Remover trilha
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div>
+      <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+        Trilha Sonora
+      </label>
+      <div className="mb-3 flex rounded-lg border border-white/10 p-0.5">
+        <button
+          onClick={() => setTab("ai")}
+          className={`flex-1 rounded-md py-1.5 font-mono text-[10px] transition-all ${
+            tab === "ai" ? "bg-white/5 text-accent-gold" : "text-text-secondary hover:text-[var(--text)]"
+          }`}
+        >
+          Gerar com AI
+        </button>
+        <button
+          onClick={() => setTab("upload")}
+          className={`flex-1 rounded-md py-1.5 font-mono text-[10px] transition-all ${
+            tab === "upload" ? "bg-white/5 text-accent-gold" : "text-text-secondary hover:text-[var(--text)]"
+          }`}
+        >
+          Upload MP3
+        </button>
+      </div>
+
+      {tab === "ai" ? (
+        <div className="space-y-3">
+          <MusicPresetSelector
+            selectedPrompt={musicPrompt}
+            onSelect={setMusicPrompt}
+          />
+          <button
+            onClick={generateMusic}
+            disabled={isMusicGenerating || !musicPrompt.trim()}
+            className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:opacity-30 disabled:cursor-not-allowed"
+          >
+            {isMusicGenerating ? "Gerando trilha..." : "Gerar trilha"}
+          </button>
+          <p className="font-mono text-[9px] text-text-secondary">
+            $0.15 · Instrumental · ~30s
+          </p>
+        </div>
+      ) : (
+        <div className="space-y-3">
+          <input
+            ref={fileRef}
+            type="file"
+            accept=".mp3,.wav,.ogg,.m4a"
+            className="hidden"
+            onChange={(e) => {
+              const file = e.target.files?.[0];
+              if (file) {
+                const url = URL.createObjectURL(file);
+                setMusicUrl(url);
+              }
+              e.target.value = "";
+            }}
+          />
+          <button
+            onClick={() => fileRef.current?.click()}
+            className="flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 py-6 transition-colors hover:border-accent-gold/30"
+          >
+            <Upload size={16} className="text-text-secondary" />
+            <span className="font-mono text-[10px] text-text-secondary">
+              Arraste ou clique pra enviar
+            </span>
+            <span className="font-mono text-[8px] text-text-secondary">
+              MP3, WAV, OGG, M4A
+            </span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) => void }) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
@@ -319,41 +434,15 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
           </div>
 
           <div className="flex-1 overflow-y-auto p-4">
-            <div>
-              <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                Trilha Sonora
-              </label>
-
-              {musicUrl ? (
-                <div className="space-y-2">
-                  <audio src={musicUrl} controls className="w-full h-8 opacity-80" />
-                  <button
-                    onClick={clearMusic}
-                    className="flex items-center gap-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:text-red-400"
-                  >
-                    <Trash2 size={10} />
-                    Remover trilha
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-3">
-                  <MusicPresetSelector
-                    selectedPrompt={musicPrompt}
-                    onSelect={setMusicPrompt}
-                  />
-                  <button
-                    onClick={generateMusicAction}
-                    disabled={isMusicGenerating || !musicPrompt.trim()}
-                    className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:opacity-30 disabled:cursor-not-allowed"
-                  >
-                    {isMusicGenerating ? "Gerando trilha..." : "Gerar trilha"}
-                  </button>
-                  <p className="font-mono text-[9px] text-text-secondary">
-                    $0.15 · Instrumental · ~30s
-                  </p>
-                </div>
-              )}
-            </div>
+            <MusicSection
+              musicUrl={musicUrl}
+              musicPrompt={musicPrompt}
+              isMusicGenerating={isMusicGenerating}
+              setMusicPrompt={setMusicPrompt}
+              generateMusic={generateMusicAction}
+              clearMusic={clearMusic}
+              setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
+            />
 
             <div className="mt-6 rounded-lg border border-white/5 p-3">
               <span className="block font-mono text-[9px] uppercase text-text-secondary">Composição</span>

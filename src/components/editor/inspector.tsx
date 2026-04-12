@@ -18,12 +18,83 @@ const PRESETS = [
 const DURATIONS = [3, 5, 7, 10];
 
 const MUSIC_PRESETS = [
-  { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
-  { id: "modern", label: "Modern Luxury", desc: "Ambient electronic", prompt: "Modern luxury ambient instrumental, warm synth pads, subtle electronic beats, sophisticated and inviting, 95 BPM, high-end real estate" },
-  { id: "upbeat", label: "Upbeat Energy", desc: "Positive, rhythmic", prompt: "Upbeat positive instrumental, light acoustic guitar, gentle percussion, optimistic and welcoming, 110 BPM, bright real estate tour" },
-  { id: "cinematic", label: "Cinematic Drama", desc: "Orchestral, building", prompt: "Cinematic orchestral instrumental, building strings, dramatic piano, sweeping and grand, 75 BPM, luxury property reveal" },
-  { id: "natural", label: "Natural Light", desc: "Acoustic, soft", prompt: "Natural light acoustic instrumental, fingerpicked guitar, soft ambient textures, peaceful and airy, 90 BPM, serene home atmosphere" },
+  { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
+  { id: "modern", label: "Modern Luxury", desc: "Ambient electronic", icon: "◈", prompt: "Modern luxury ambient instrumental, warm synth pads, subtle electronic beats, sophisticated and inviting, 95 BPM, high-end real estate" },
+  { id: "upbeat", label: "Upbeat Energy", desc: "Positive, rhythmic", icon: "△", prompt: "Upbeat positive instrumental, light acoustic guitar, gentle percussion, optimistic and welcoming, 110 BPM, bright real estate tour" },
+  { id: "cinematic", label: "Cinematic Drama", desc: "Orchestral, building", icon: "◐", prompt: "Cinematic orchestral instrumental, building strings, dramatic piano, sweeping and grand, 75 BPM, luxury property reveal" },
+  { id: "natural", label: "Natural Light", desc: "Acoustic, soft", icon: "○", prompt: "Natural light acoustic instrumental, fingerpicked guitar, soft ambient textures, peaceful and airy, 90 BPM, serene home atmosphere" },
 ];
+
+function MusicPresetSelector({
+  selectedPrompt,
+  onSelect,
+}: {
+  selectedPrompt: string;
+  onSelect: (prompt: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = MUSIC_PRESETS.find((p) => p.prompt === selectedPrompt) ?? MUSIC_PRESETS[0]!;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between rounded-lg border border-white/10 px-3 py-2.5 text-left transition-all hover:border-accent-gold/30"
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent-gold/10 font-mono text-sm text-accent-gold">
+            {selected.icon}
+          </span>
+          <div>
+            <span className="block font-mono text-[12px] font-medium">{selected.label}</span>
+            <span className="block font-mono text-[9px] text-text-secondary">{selected.desc}</span>
+          </div>
+        </div>
+        <ChevronDown size={14} className={`text-text-secondary transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
+            {MUSIC_PRESETS.map((preset) => {
+              const isSelected = preset.prompt === selectedPrompt;
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => {
+                    onSelect(preset.prompt);
+                    setOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                    isSelected ? "bg-accent-gold/5" : "hover:bg-white/5"
+                  }`}
+                >
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-sm ${
+                    isSelected ? "bg-accent-gold/20 text-accent-gold" : "bg-white/5 text-text-secondary"
+                  }`}>
+                    {preset.icon}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span className={`block font-mono text-[11px] font-medium ${isSelected ? "text-accent-gold" : ""}`}>
+                      {preset.label}
+                    </span>
+                    <span className="block truncate font-mono text-[9px] text-text-secondary">
+                      {preset.desc}
+                    </span>
+                  </div>
+                  {isSelected && (
+                    <span className="text-accent-gold font-mono text-[10px]">✓</span>
+                  )}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function PresetSelector({
   selectedId,
@@ -266,22 +337,10 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
                 </div>
               ) : (
                 <div className="space-y-3">
-                  <div className="grid grid-cols-2 gap-1.5">
-                    {MUSIC_PRESETS.map((mp) => (
-                      <button
-                        key={mp.id}
-                        onClick={() => setMusicPrompt(mp.prompt)}
-                        className={`rounded-lg border px-2 py-1.5 text-left transition-all ${
-                          musicPrompt === mp.prompt
-                            ? "border-accent-gold/40 bg-accent-gold/5"
-                            : "border-white/5 hover:border-white/10"
-                        }`}
-                      >
-                        <span className="block font-mono text-[10px] font-medium">{mp.label}</span>
-                        <span className="block font-mono text-[8px] text-text-secondary">{mp.desc}</span>
-                      </button>
-                    ))}
-                  </div>
+                  <MusicPresetSelector
+                    selectedPrompt={musicPrompt}
+                    onSelect={setMusicPrompt}
+                  />
                   <button
                     onClick={generateMusicAction}
                     disabled={isMusicGenerating || !musicPrompt.trim()}

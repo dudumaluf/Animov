@@ -339,7 +339,7 @@ function MusicSection({
   );
 }
 
-export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) => void }) {
+export function Inspector({ onPreviewVideo, onExport }: { onPreviewVideo?: (url: string) => void; onExport?: () => void }) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) =>
@@ -470,6 +470,26 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
             >
               {scene.status === "ready" ? "Regenerar cena" : scene.status === "generating" ? "Gerando..." : "Gerar esta cena"}
             </button>
+
+            {scene.status === "ready" && scene.videoUrl && (
+              <button
+                onClick={async () => {
+                  try {
+                    const res = await fetch(scene.videoUrl!);
+                    const blob = await res.blob();
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement("a");
+                    a.href = url;
+                    a.download = `cena.mp4`;
+                    a.click();
+                    URL.revokeObjectURL(url);
+                  } catch { /* ignore */ }
+                }}
+                className="mt-2 w-full rounded-lg border border-white/10 py-2.5 font-mono text-label-sm text-text-secondary transition-all hover:border-white/20 hover:text-[var(--text)]"
+              >
+                Baixar cena
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -511,6 +531,16 @@ export function Inspector({ onPreviewVideo }: { onPreviewVideo?: (url: string) =
                 </div>
               </div>
             </div>
+
+            {onExport && (
+              <button
+                onClick={onExport}
+                disabled={useProjectStore.getState().scenes.filter((s) => s.status === "ready").length < 1}
+                className="mt-4 w-full rounded-lg bg-accent-gold py-2.5 font-mono text-label-sm uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                Baixar Edit Final
+              </button>
+            )}
           </div>
         </div>
       )}

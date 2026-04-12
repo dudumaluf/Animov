@@ -173,7 +173,7 @@ export default function EditorPage({
               </button>
             </div>
           </div>
-          <Inspector onPreviewVideo={setPreviewVideoUrl} />
+          <Inspector onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} />
         </div>
       )}
 

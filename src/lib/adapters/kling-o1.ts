@@ -10,13 +10,6 @@ fal.config({ credentials: process.env.FAL_KEY! });
 
 const MODEL_ID = "fal-ai/kling-video/o1/image-to-video";
 
-type KlingInput = {
-  prompt: string;
-  start_image_url: string;
-  end_image_url?: string;
-  duration?: string;
-};
-
 type KlingOutput = {
   video: {
     url: string;

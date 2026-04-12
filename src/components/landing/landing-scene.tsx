@@ -498,9 +498,9 @@ function Card({
     const totalRows = Math.ceil(totalCards / cols);
     const totalSpanY = totalRows * layout.spreadY;
 
-    let targetX = baseX;
+    const targetX = baseX;
     let targetY = baseY;
-    let targetZ = baseZ;
+    const targetZ = baseZ;
 
     if (loop.enable) {
       const drift = loopElapsed.current * loop.speed;

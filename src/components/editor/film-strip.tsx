@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useCallback } from "react";
+import { useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { X, GripVertical, ArrowRightLeft, Plus } from "lucide-react";
 
@@ -96,45 +96,6 @@ function SceneCard({ sceneId, onPreviewVideo }: { sceneId: string; onPreviewVide
         </span>
       </div>
     </div>
-  );
-}
-
-function InsertButton({ insertIndex }: { insertIndex: number }) {
-  const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
-  const inputRef = useRef<HTMLInputElement>(null);
-
-  const handleFile = useCallback(
-    (files: FileList | null) => {
-      const file = files?.[0];
-      if (file?.type.startsWith("image/")) {
-        insertPhotoAt(insertIndex, file);
-      }
-    },
-    [insertPhotoAt, insertIndex],
-  );
-
-  return (
-    <>
-      <input
-        ref={inputRef}
-        type="file"
-        accept={ACCEPTED}
-        className="hidden"
-        onChange={(e) => {
-          handleFile(e.target.files);
-          e.target.value = "";
-        }}
-      />
-      <button
-        onClick={(e) => {
-          e.stopPropagation();
-          inputRef.current?.click();
-        }}
-        className="flex h-16 w-8 shrink-0 items-center justify-center self-center rounded-lg border border-dashed border-transparent text-white/0 transition-all hover:border-accent-gold/30 hover:text-accent-gold/60"
-      >
-        <Plus size={12} />
-      </button>
-    </>
   );
 }
 

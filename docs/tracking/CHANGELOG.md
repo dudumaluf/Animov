@@ -150,3 +150,40 @@
 - Preset Recipe Manager (admin)
 - Debug view (vision data, prompt, custo)
 - Prompt influenciado por input
+
+---
+
+## Sessao 6 — 12 abril 2026 (noite)
+
+**Foco: Features + fixes + muitos patches rapidos**
+
+### Feito:
+- Download fix (fetch blob, nao redireciona)
+- Smart CTA navbar (logado → "Meus projetos")
+- Removeu badges de status dos cards
+- Music presets (5 opcoes) com dropdown selector
+- AI transition: API route, store, context menu com duration picker (3/5/7s)
+- Multi-version por cena (videoVersions array, switcher "1/3" no hover)
+- TransitionNode visual (mesmo tamanho, loading state, video preview)
+- Edit node segue padrao visual dos scene nodes (full bleed, hover info)
+- "=" antes do edit node (morph → "+" no hover, abre context menu)
+- Composer node placeholder no context menu
+- Music tabs (AI generate / Upload MP3)
+- Audio no export (Mediabunny AudioBufferSource H.264+AAC ou MediaRecorder fallback)
+- Ctrl+S save, persistencia do edit node + music
+- Video+audio synced preview no inspector do edit
+- Download buttons nos inspectors (scene + edit)
+- Toolbar simplificada (removeu Exportar confuso)
+- Admin credits API + dev refill endpoint
+- Fix hydration, hooks order, localStorage quota, videoVersions undefined
+- Fix transition state preservation (rebuildTransitions preserva status)
+- Fix transition URLs (upload to fal.ai storage pra data/blob URLs)
+
+### Problemas identificados (debt tecnico):
+- Muitos patches rapidos acumulados
+- Admin panel ainda placeholder
+- Preset que falhou sem debug view
+- Creditos so via API dev (sem admin UI)
+- Composer node nao implementado
+- Crossfade entre cenas nao implementado
+- Hacks e fixes pontuais que precisam revisao

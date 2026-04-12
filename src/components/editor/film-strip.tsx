@@ -223,14 +223,10 @@ function InsertMenu({
             setOpen(!open);
           }
         }}
-        className={`flex items-center justify-center rounded-full border transition-all ${
-          position === "end"
-            ? "h-10 w-10 border-dashed border-white/10 text-text-secondary hover:border-accent-gold/40 hover:text-accent-gold"
-            : "h-8 w-8 border border-white/10 text-text-secondary hover:border-accent-gold/40 hover:text-accent-gold"
-        }`}
+        className="flex h-8 w-8 items-center justify-center rounded-full border border-white/10 text-text-secondary transition-all hover:border-accent-gold/40 hover:text-accent-gold"
         title="Inserir"
       >
-        <Plus size={position === "end" ? 16 : 12} />
+        <Plus size={14} />
       </button>
 
       {open && (

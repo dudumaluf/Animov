@@ -6,7 +6,7 @@
 
 - 1.1 Repo + Next.js 14 + Tailwind + shadcn/ui + TS strict
 - 1.2 Supabase schema + RLS + seed (projeto: yhnbxrfcofjjyvuyxner)
-- 1.3 Auth email/password + layout protegido + admin auto (ddmaluf@gmail.com)
+- 1.3 Auth email/password + layout protegido + admin auto ([ddmaluf@gmail.com](mailto:ddmaluf@gmail.com))
 - 2.1 Estrutura one-pager completa (hero, como funciona, pricing, footer, navbar)
 - 2.2 R3F scene com scroll nativo unico (canvas sticky em section 400vh)
 - 2.3 Geometria ribbon/spiral com toggle entre os dois modos
@@ -45,7 +45,7 @@
 - **R3F v8 + drei v9** (compativel com React 18 / Next.js 14)
 - **Framer Motion** pra animacoes DOM (nao GSAP — evitar licenca comercial)
 - **Supabase**: Auth email/password agora, Google OAuth depois
-- **Admin**: ddmaluf@gmail.com promovido automaticamente via trigger SQL
+- **Admin**: [ddmaluf@gmail.com](mailto:ddmaluf@gmail.com) promovido automaticamente via trigger SQL
 
 ## Estado do R3F Landing
 
@@ -179,3 +179,4 @@ src/
 - Mobile app nativo
 - Presets customizados pelo usuario
 - Prompts multilingues
+

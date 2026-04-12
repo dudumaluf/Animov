@@ -37,7 +37,7 @@ export function EditorToolbar() {
       });
 
       const safeName = projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
-      downloadBlob(blob, `${safeName}.webm`);
+      downloadBlob(blob, `${safeName}.mp4`);
       setComposeProgress("");
     } catch (err) {
       console.error("[compose]", err);

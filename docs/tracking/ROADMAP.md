@@ -57,19 +57,21 @@
 - [x] 3.12 `/editor/new` cria projeto no Supabase e redireciona
 
 ### Faltando na Fase 3:
-- [ ] 3.13 Drag-drop reorder visual com dnd-kit
-- [ ] 3.14 Regenerar cena individual (botao no inspector)
-- [ ] 3.15 Deletar projeto (dashboard)
+- [x] 3.13 Drag-drop reorder visual com dnd-kit
+- [x] 3.14 Regenerar cena individual (botao no inspector)
+- [x] 3.15 Deletar projeto (dashboard)
 - [ ] 3.16 Duplicar projeto
 - [ ] 3.17 Thumbnails de projetos no dashboard (primeira foto)
+- [x] 3.18 Zoom controls no canvas (+/- buttons, keyboard shortcuts)
+- [x] 3.19 Context menu "+" entre cenas e no final (inserir foto)
 
 ---
 
 ## Fase 4 — Pipeline de Geracao [EM ANDAMENTO]
 
 - [x] 4.1 API route `/api/generate-scene`
-- [ ] 4.1b Auth check no generate-scene (removido pra teste, nunca voltou)
-- [ ] 4.1c Validacao e deducao de creditos na geracao
+- [x] 4.1b Auth check no generate-scene
+- [x] 4.1c Validacao e deducao de creditos na geracao
 - [x] 4.2 Vision LLM via fal.ai OpenRouter (fast/smart tiers)
 - [x] 4.3 VideoModelAdapter interface + registry
 - [x] 4.4 Adapter Kling O1 Pro (first-last frame)
@@ -81,8 +83,8 @@
 - [x] 4.10 Prompt builder 3 camadas (Vision → JSON → Template)
 - [ ] 4.11 4 presets dual-image (transicoes) — schemas + templates
 - [ ] 4.12 Geracao de transicoes com start/end frame
-- [ ] 4.13 Composicao client-side (WebCodecs + mp4-muxer)
-- [ ] 4.14 Fallback composicao (MediaRecorder)
+- [x] 4.13 Composicao client-side (Mediabunny — WebCodecs + H.264 MP4)
+- [x] 4.14 Fallback composicao (MediaRecorder)
 - [ ] 4.15 Upload render final → Supabase Storage + tabela `final_renders`
 - [ ] 4.16 Gravar `generation_logs` em cada geracao (debug)
 - [ ] 4.17 Google OAuth (alem de email/password)

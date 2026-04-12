@@ -84,3 +84,32 @@
 - ROADMAP.md criado (checklist ticavel por fase)
 - PROGRESS.md atualizado (reflete estado real)
 - CHANGELOG.md criado (este arquivo)
+
+---
+
+## Sessao 4 — 12 abril 2026
+
+**Foco: Seguranca, UX, composicao de video, documentacao**
+
+### Feito:
+- Auth check + credit validation/deduction no generate-scene API
+- Drag-drop reorder de cenas com dnd-kit (grab handle)
+- Regenerar cena individual (botao no inspector)
+- Deletar projeto do dashboard (trash icon + confirm)
+- Fix localStorage quota (safe storage wrapper, nunca crashs)
+- Zoom controls no canvas (+/- buttons, keyboard +/-/0)
+- Fix zoom pinch conflict (removido Ctrl+scroll)
+- Fix hydration error (defer render until mount)
+- Video composition com Mediabunny (WebCodecs + H.264 MP4 output, 1920x1080)
+- Fallback MediaRecorder pra browsers sem WebCodecs
+- Fix timestamps da composicao (globalTime acumulado)
+- Progress indicator visivel na toolbar durante export
+- Docs organizados em docs/ hierarchy
+- Visual Design System v2 criado
+- CONTEXT_INDEX.md criado (manifest pra sessoes)
+- .env.local.example atualizado com Stripe keys
+- Stripe test keys configuradas
+
+### Testes:
+- Geracao de 2 videos (Kling O1 Pro) com Vision LLM
+- Export MP4 com 2 clips concatenados via Mediabunny (funcionando)

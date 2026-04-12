@@ -68,6 +68,6 @@ docs/
 
 ## Estado resumido (atualizar aqui a cada sessao)
 
-**Fase atual:** 3+4 em andamento
-**Ultimo deploy:** 11 abril 2026
-**Proximo foco:** Testar editor local, ajustar UX, fechar gaps criticos (creditos, auth, drag-drop)
+**Fase atual:** 3+4 quase completas, pronto pra polish
+**Ultimo deploy:** 12 abril 2026
+**Proximo foco:** Context menu inteligente (+), preset recipe manager/admin, prompt strategy UX, melhorar experiencia de presets

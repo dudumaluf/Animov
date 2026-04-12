@@ -16,17 +16,19 @@
 
 ## Documentos — Quando ler cada um
 
-| Documento | Caminho | Quando ler |
-|-----------|---------|------------|
-| **MASTER_PLAN.md** | `docs/MASTER_PLAN.md` | Inicio de sessao (visao geral, arquitetura, diretrizes) |
-| **ROADMAP.md** | `docs/tracking/ROADMAP.md` | Antes de escolher proxima tarefa (checklist ticavel) |
-| **PROGRESS.md** | `docs/tracking/PROGRESS.md` | Saber o estado atual rapido (snapshot) |
-| **CHANGELOG.md** | `docs/tracking/CHANGELOG.md` | Saber o que foi feito em sessoes anteriores |
-| **Prompt Strategy** | `docs/strategy/animov-prompt-strategy.md` | Antes de mexer em presets, prompts, ou vision |
-| **Visual Design System** | `docs/strategy/visual-design-system.md` | Antes de criar telas, componentes, ou assets visuais |
-| **Briefing v2** | `docs/briefings/animov_briefing_v2.md` | Referencia de fases, gates, user flows |
-| **Briefing v1** | `docs/briefings/animov_briefing_v1.md` | Referencia historica (schema original, regras) |
-| **Stitch Briefing** | `docs/briefings/animov-stitch-briefing.md` | Branding, identidade visual, tom de voz, UI/UX guidelines |
+
+| Documento                | Caminho                                    | Quando ler                                                |
+| ------------------------ | ------------------------------------------ | --------------------------------------------------------- |
+| **MASTER_PLAN.md**       | `docs/MASTER_PLAN.md`                      | Inicio de sessao (visao geral, arquitetura, diretrizes)   |
+| **ROADMAP.md**           | `docs/tracking/ROADMAP.md`                 | Antes de escolher proxima tarefa (checklist ticavel)      |
+| **PROGRESS.md**          | `docs/tracking/PROGRESS.md`                | Saber o estado atual rapido (snapshot)                    |
+| **CHANGELOG.md**         | `docs/tracking/CHANGELOG.md`               | Saber o que foi feito em sessoes anteriores               |
+| **Prompt Strategy**      | `docs/strategy/animov-prompt-strategy.md`  | Antes de mexer em presets, prompts, ou vision             |
+| **Visual Design System** | `docs/strategy/visual-design-system.md`    | Antes de criar telas, componentes, ou assets visuais      |
+| **Briefing v2**          | `docs/briefings/animov_briefing_v2.md`     | Referencia de fases, gates, user flows                    |
+| **Briefing v1**          | `docs/briefings/animov_briefing_v1.md`     | Referencia historica (schema original, regras)            |
+| **Stitch Briefing**      | `docs/briefings/animov-stitch-briefing.md` | Branding, identidade visual, tom de voz, UI/UX guidelines |
+
 
 ---
 

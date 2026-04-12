@@ -41,9 +41,26 @@ export default function EditorPage({
   }, [isDirty, scenes, saveToSupabase]);
 
   const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (!e.ctrlKey && !e.metaKey) return;
-    e.preventDefault();
-    setZoom((z) => Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, z - e.deltaY * 0.005)));
+    if (e.ctrlKey || e.metaKey) {
+      e.preventDefault();
+      return;
+    }
+  }, []);
+
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (e.key === "=" || e.key === "+") {
+        e.preventDefault();
+        setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP));
+      } else if (e.key === "-") {
+        e.preventDefault();
+        setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP));
+      } else if (e.key === "0") {
+        setZoom(1);
+      }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
   }, []);
 
   const isEmpty = scenes.length === 0;

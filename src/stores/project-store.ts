@@ -334,8 +334,13 @@ export const useProjectStore = create<ProjectStore>()(
         const toScene = state.scenes.find((s) => s.id === toSceneId);
         if (!fromScene || !toScene) return;
 
-        const startImageUrl = fromScene.photoUrl.startsWith("blob:") ? fromScene.photoDataUrl : fromScene.photoUrl;
-        const endImageUrl = toScene.photoUrl.startsWith("blob:") ? toScene.photoDataUrl : toScene.photoUrl;
+        const getPhotoUrl = (scene: typeof fromScene) => {
+          if (scene.photoUrl && scene.photoUrl.startsWith("http")) return scene.photoUrl;
+          if (scene.photoDataUrl) return scene.photoDataUrl;
+          return scene.photoUrl;
+        };
+        const startImageUrl = getPhotoUrl(fromScene);
+        const endImageUrl = getPhotoUrl(toScene);
         if (!startImageUrl || !endImageUrl) return;
 
         const transitionId = `t-${fromSceneId}-${toSceneId}`;

@@ -25,6 +25,7 @@
 | **Prompt Strategy** | `docs/strategy/animov-prompt-strategy.md` | Antes de mexer em presets, prompts, ou vision |
 | **Briefing v2** | `docs/briefings/animov_briefing_v2.md` | Referencia de fases, gates, user flows |
 | **Briefing v1** | `docs/briefings/animov_briefing_v1.md` | Referencia historica (schema original, regras) |
+| **Stitch Briefing** | `docs/briefings/animov-stitch-briefing.md` | Branding, identidade visual, tom de voz, UI/UX guidelines |
 
 ---
 
@@ -40,7 +41,8 @@ docs/
 │   └── CHANGELOG.md            -- Historico de sessoes
 ├── briefings/
 │   ├── animov_briefing_v1.md   -- Briefing original ImoVid
-│   └── animov_briefing_v2.md   -- Briefing Animov v2
+│   ├── animov_briefing_v2.md   -- Briefing Animov v2
+│   └── animov-stitch-briefing.md -- Branding, identidade visual, UX/UI
 └── strategy/
     └── animov-prompt-strategy.md -- Presets, 3 camadas, anti-alucinacao
 ```

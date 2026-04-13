@@ -553,6 +553,8 @@ export const useProjectStore = create<ProjectStore>()(
             duration: Number(s.duration) || 5,
             status: s.status === "pending" ? "idle" : s.status,
             videoUrl: s.video_url ?? undefined,
+            videoVersions: s.video_url ? [s.video_url] : [],
+            activeVersion: 0,
             costCredits: s.cost_credits,
           }));
 
@@ -578,22 +580,36 @@ export const useProjectStore = create<ProjectStore>()(
         set({ isSaving: true });
 
         try {
-          await fetch(`/api/projects/${state.supabaseProjectId}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: state.projectName,
-              scenes: state.scenes.map((s) => ({
-                photo_url: s.photoUrl.startsWith("blob:") ? (s.photoDataUrl ?? s.photoUrl) : s.photoUrl,
+          const scenesPayload = state.scenes
+            .map((s) => {
+              const photoUrl = s.photoUrl.startsWith("http") ? s.photoUrl : undefined;
+              if (!photoUrl) return null;
+              return {
+                id: s.id,
+                photo_url: photoUrl,
                 preset_key: s.presetId,
                 duration: s.duration,
                 status: s.status,
                 video_url: s.videoUrl,
                 cost_credits: s.costCredits,
-              })),
+              };
+            })
+            .filter(Boolean);
+
+          const res = await fetch(`/api/projects/${state.supabaseProjectId}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              name: state.projectName,
+              scenes: scenesPayload,
             }),
           });
-          set({ isDirty: false });
+
+          if (!res.ok) {
+            console.error("[saveToSupabase] HTTP", res.status, await res.text().catch(() => ""));
+          } else {
+            set({ isDirty: false });
+          }
         } catch (err) {
           console.error("[saveToSupabase]", err);
         } finally {

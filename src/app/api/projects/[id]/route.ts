@@ -52,9 +52,8 @@ export async function PATCH(
   }
 
   if (body.scenes) {
-    await supabase.from("scenes").delete().eq("project_id", params.id);
-
-    const scenesToInsert = body.scenes.map((s: { photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number }, i: number) => ({
+    const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number }, i: number) => ({
+      ...(s.id ? { id: s.id } : {}),
       project_id: params.id,
       order_index: i,
       photo_url: s.photo_url,
@@ -65,8 +64,18 @@ export async function PATCH(
       cost_credits: s.cost_credits,
     }));
 
-    if (scenesToInsert.length > 0) {
-      const { error } = await supabase.from("scenes").insert(scenesToInsert);
+    const existingIds = scenesToUpsert.filter((s: { id?: string }) => s.id).map((s: { id: string }) => s.id);
+
+    await supabase
+      .from("scenes")
+      .delete()
+      .eq("project_id", params.id)
+      .not("id", "in", `(${existingIds.join(",")})`);
+
+    if (scenesToUpsert.length > 0) {
+      const { error } = await supabase.from("scenes").upsert(scenesToUpsert, {
+        onConflict: "id",
+      });
       if (error) console.error("[projects/save-scenes]", error);
     }
   }

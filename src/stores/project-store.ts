@@ -141,6 +141,29 @@ async function dataUrlToFile(dataUrl: string, name: string): Promise<File> {
   return new File([blob], name, { type: blob.type });
 }
 
+async function persistVideoToStorage(
+  falUrl: string,
+  projectId: string,
+  sceneId: string,
+): Promise<string | null> {
+  try {
+    const res = await fetch("/api/persist-video", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ videoUrl: falUrl, projectId, sceneId }),
+    });
+    if (!res.ok) {
+      console.error("[persist-video] HTTP", res.status);
+      return null;
+    }
+    const data = await res.json();
+    return data.url as string;
+  } catch (err) {
+    console.error("[persist-video]", err);
+    return null;
+  }
+}
+
 async function uploadPhoto(file: File, projectId: string): Promise<string> {
   const formData = new FormData();
   formData.append("file", file);
@@ -453,6 +476,17 @@ export const useProjectStore = create<ProjectStore>()(
             ),
             isDirty: true,
           }));
+
+          const pid = get().supabaseProjectId ?? get().projectId;
+          persistVideoToStorage(data.videoUrl, pid, transitionId).then((permUrl) => {
+            if (!permUrl) return;
+            set((state) => ({
+              transitions: state.transitions.map((t) =>
+                t.id === transitionId ? { ...t, videoUrl: permUrl } : t,
+              ),
+              isDirty: true,
+            }));
+          });
         } catch (err) {
           console.error(`[generateTransition] ${transitionId}:`, err);
           set((state) => ({
@@ -712,6 +746,11 @@ export const useProjectStore = create<ProjectStore>()(
 
             const data = await res.json();
             get().updateSceneStatus(scene.id, "ready", data.videoUrl);
+
+            const pid = get().supabaseProjectId ?? get().projectId;
+            persistVideoToStorage(data.videoUrl, pid, scene.id).then((permUrl) => {
+              if (permUrl) get().updateSceneStatus(scene.id, "ready", permUrl);
+            });
           } catch (err) {
             console.error(`[generate] scene ${scene.id}:`, err);
             get().updateSceneStatus(scene.id, "failed");
@@ -761,6 +800,11 @@ export const useProjectStore = create<ProjectStore>()(
 
           const data = await res.json();
           get().updateSceneStatus(sceneId, "ready", data.videoUrl);
+
+          const pid = get().supabaseProjectId ?? get().projectId;
+          persistVideoToStorage(data.videoUrl, pid, sceneId).then((permUrl) => {
+            if (permUrl) get().updateSceneStatus(sceneId, "ready", permUrl);
+          });
         } catch (err) {
           console.error(`[generate] scene ${sceneId}:`, err);
           get().updateSceneStatus(sceneId, "failed");

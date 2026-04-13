@@ -10,14 +10,43 @@ import {
   QUALITY_HIGH,
 } from "mediabunny";
 
+/** Progress for the export overlay (0–100). */
+export type ComposeProgress = {
+  message: string;
+  percent: number;
+};
+
 type CompositionInput = {
   clipUrls: string[];
   audioUrl?: string;
   width?: number;
   height?: number;
   fps?: number;
-  onProgress?: (current: number, total: number) => void;
+  onProgress?: (p: ComposeProgress) => void;
 };
+
+function clampPct(n: number) {
+  return Math.min(100, Math.max(0, n));
+}
+
+async function fetchBlobWithRetry(url: string, onRetry?: (attempt: number) => void): Promise<Blob> {
+  const maxAttempts = 3;
+  let lastErr: unknown;
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const res = await fetch(url);
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      return await res.blob();
+    } catch (e) {
+      lastErr = e;
+      onRetry?.(attempt + 1);
+      if (attempt < maxAttempts - 1) {
+        await new Promise((r) => setTimeout(r, 400 * (attempt + 1)));
+      }
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
 
 export async function composeVideos({
   clipUrls,
@@ -30,14 +59,19 @@ export async function composeVideos({
   if (clipUrls.length === 0) throw new Error("No clips to compose");
 
   if (clipUrls.length === 1 && !audioUrl) {
-    const res = await fetch(clipUrls[0]!);
-    return res.blob();
+    onProgress?.({ message: "Baixando vídeo...", percent: 30 });
+    const blob = await fetchBlobWithRetry(clipUrls[0]!, (a) => {
+      onProgress?.({ message: `Reconectando (${a}/3)...`, percent: 20 + a * 5 });
+    });
+    onProgress?.({ message: "Pronto", percent: 100 });
+    return blob;
   }
 
   try {
     return await composeWithMediabunny({ clipUrls, audioUrl, width, height, fps, onProgress });
   } catch (err) {
     console.warn("[compose] Mediabunny failed, falling back to MediaRecorder:", err);
+    onProgress?.({ message: "Usando modo alternativo de gravação...", percent: 5 });
     return composeWithMediaRecorder({ clipUrls, audioUrl, width, height, onProgress });
   }
 }
@@ -84,6 +118,9 @@ async function composeWithMediabunny({
   fps: number;
   onProgress?: CompositionInput["onProgress"];
 }): Promise<Blob> {
+  const report = (message: string, percent: number) =>
+    onProgress?.({ message, percent: clampPct(percent) });
+
   const target = new BufferTarget();
   const output = new Output({
     format: new Mp4OutputFormat(),
@@ -103,6 +140,7 @@ async function composeWithMediabunny({
   let audioBuffers: AudioBuffer[] = [];
 
   if (audioUrl) {
+    report("Decodificando áudio...", 3);
     audioBuffers = await decodeAudioToBuffers(audioUrl);
     audioSource = new AudioBufferSource({
       codec: "aac",
@@ -117,11 +155,18 @@ async function composeWithMediabunny({
   const frameDuration = 1 / fps;
   let audioBufferIndex = 0;
 
-  for (let i = 0; i < clipUrls.length; i++) {
-    onProgress?.(i, clipUrls.length);
+  const n = clipUrls.length;
+  const spanEncode = audioUrl ? 88 : 92;
+  const basePct = audioUrl ? 8 : 4;
 
-    const res = await fetch(clipUrls[i]!);
-    const blob = await res.blob();
+  for (let i = 0; i < n; i++) {
+    report(`Baixando clipe ${i + 1} de ${n}...`, basePct + (i / n) * 6);
+
+    const blob = await fetchBlobWithRetry(clipUrls[i]!, (attempt) => {
+      report(`Clipe ${i + 1}: reconectando (${attempt}/3)...`, basePct + (i / n) * 6);
+    });
+
+    report(`Abrindo clipe ${i + 1} de ${n}...`, basePct + 6 + (i / n) * 4);
 
     const input = new Input({
       formats: ALL_FORMATS,
@@ -144,21 +189,33 @@ async function composeWithMediabunny({
       const sample = await sink.getSample(time);
       if (!sample) continue;
 
-      ctx.clearRect(0, 0, width, height);
-      sample.draw(ctx, 0, 0, width, height);
+      try {
+        ctx.clearRect(0, 0, width, height);
+        sample.draw(ctx, 0, 0, width, height);
 
-      await videoSource.add(globalTime, frameDuration);
+        await videoSource.add(globalTime, frameDuration);
 
-      if (audioSource && audioBufferIndex < audioBuffers.length) {
-        const audioTime = globalTime;
-        const audioDuration = audioBuffers[audioBufferIndex]!.duration;
-        if (audioTime >= audioBufferIndex * audioDuration) {
-          await audioSource.add(audioBuffers[audioBufferIndex]!);
-          audioBufferIndex++;
+        if (audioSource && audioBufferIndex < audioBuffers.length) {
+          const audioTime = globalTime;
+          const audioDuration = audioBuffers[audioBufferIndex]!.duration;
+          if (audioTime >= audioBufferIndex * audioDuration) {
+            await audioSource.add(audioBuffers[audioBufferIndex]!);
+            audioBufferIndex++;
+          }
         }
+
+        globalTime += frameDuration;
+      } finally {
+        sample.close();
       }
 
-      globalTime += frameDuration;
+      if (f === 0 || f === totalFrames - 1 || f % Math.max(1, Math.floor(totalFrames / 25)) === 0) {
+        const inner = (f + 1) / totalFrames;
+        report(
+          `Codificando clipe ${i + 1}/${n} — quadro ${f + 1} de ${totalFrames}`,
+          basePct + 10 + (i + inner) / n * spanEncode,
+        );
+      }
     }
   }
 
@@ -169,10 +226,10 @@ async function composeWithMediabunny({
     }
   }
 
-  onProgress?.(clipUrls.length, clipUrls.length);
-
+  report("Finalizando arquivo MP4...", 97);
   await output.finalize();
 
+  report("Concluído", 100);
   return new Blob([target.buffer!], { type: "video/mp4" });
 }
 
@@ -189,6 +246,9 @@ async function composeWithMediaRecorder({
   height: number;
   onProgress?: CompositionInput["onProgress"];
 }): Promise<Blob> {
+  const report = (message: string, percent: number) =>
+    onProgress?.({ message, percent: clampPct(percent) });
+
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
@@ -200,6 +260,7 @@ async function composeWithMediaRecorder({
   let audioEl: HTMLAudioElement | null = null;
 
   if (audioUrl) {
+    report("Carregando áudio (modo alternativo)...", 8);
     audioEl = document.createElement("audio");
     audioEl.crossOrigin = "anonymous";
     audioEl.src = audioUrl;
@@ -232,14 +293,15 @@ async function composeWithMediaRecorder({
   };
 
   recorder.start();
-  if (audioEl) audioEl.play();
+  if (audioEl) void audioEl.play().catch(() => {});
 
-  for (let i = 0; i < clipUrls.length; i++) {
-    onProgress?.(i, clipUrls.length);
+  const nc = clipUrls.length;
+  for (let i = 0; i < nc; i++) {
+    report(`Gravando clipe ${i + 1} de ${nc}...`, 15 + (i / nc) * 75);
     await playClipToCanvas(clipUrls[i]!, ctx, width, height);
   }
 
-  onProgress?.(clipUrls.length, clipUrls.length);
+  report("Finalizando gravação...", 95);
 
   if (audioEl) { audioEl.pause(); audioEl.currentTime = 0; }
   recorder.stop();
@@ -264,7 +326,9 @@ function playClipToCanvas(
     video.preload = "auto";
 
     video.onloadeddata = () => {
-      video.play().catch(reject);
+      video.play().catch(() => {
+        /* play() can abort if pause() runs (e.g. tab background); draw loop still runs from onplay */
+      });
     };
 
     video.onplay = () => {

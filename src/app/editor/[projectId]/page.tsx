@@ -8,7 +8,7 @@ import { Inspector } from "@/components/editor/inspector";
 import { DropZone } from "@/components/editor/drop-zone";
 import { VideoPreviewModal } from "@/components/editor/video-preview-modal";
 import { ImageEditModal } from "@/components/editor/image-edit-modal";
-import { composeVideos, downloadBlob } from "@/lib/composition/compose";
+import { composeVideos, downloadBlob, type ComposeProgress } from "@/lib/composition/compose";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 
 const ZOOM_MIN = 0.3;
@@ -34,6 +34,7 @@ export default function EditorPage({
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
   const [composing, setComposing] = useState(false);
+  const [exportProgress, setExportProgress] = useState<ComposeProgress | null>(null);
 
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("fit");
   const [zoom, setZoom] = useState(1);
@@ -214,15 +215,21 @@ export default function EditorPage({
     const readyScenes = state.scenes.filter((s) => s.status === "ready" && s.videoUrl);
     if (readyScenes.length < 1 || composing) return;
     setComposing(true);
+    setExportProgress({ message: "Iniciando...", percent: 0 });
     try {
       const clipUrls = readyScenes.map((s) => s.videoUrl!);
-      const blob = await composeVideos({ clipUrls, audioUrl: state.musicUrl ?? undefined });
+      const blob = await composeVideos({
+        clipUrls,
+        audioUrl: state.musicUrl ?? undefined,
+        onProgress: setExportProgress,
+      });
       const safeName = state.projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
       downloadBlob(blob, `${safeName}.mp4`);
     } catch (err) {
       console.error("[export]", err);
     } finally {
       setComposing(false);
+      setExportProgress(null);
     }
   }, [composing]);
 
@@ -385,12 +392,27 @@ export default function EditorPage({
 
       {composing && (
         <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
-          <div className="flex flex-col items-center gap-4 rounded-2xl border border-white/10 bg-[#141413] px-10 py-8 shadow-2xl">
-            <div className="h-10 w-10 animate-spin rounded-full border-[3px] border-white/10 border-t-accent-gold" />
-            <p className="font-mono text-label-sm uppercase tracking-widest text-white/70">
-              Exportando vídeo...
+          <div className="flex w-[min(92vw,26rem)] flex-col gap-4 rounded-2xl border border-white/10 bg-[#141413] px-8 py-7 shadow-2xl">
+            <div className="flex items-center gap-3">
+              <div className="h-9 w-9 shrink-0 animate-spin rounded-full border-[3px] border-white/10 border-t-accent-gold" />
+              <div className="min-w-0 flex-1">
+                <p className="font-mono text-label-sm uppercase tracking-widest text-white/80">
+                  Exportando vídeo
+                </p>
+                <p className="mt-1 line-clamp-2 text-xs leading-snug text-white/45">
+                  {exportProgress?.message ?? "Preparando..."}
+                </p>
+              </div>
+            </div>
+            <div className="h-1.5 w-full overflow-hidden rounded-full bg-white/10">
+              <div
+                className="h-full rounded-full bg-accent-gold transition-[width] duration-300 ease-out"
+                style={{ width: `${exportProgress?.percent ?? 0}%` }}
+              />
+            </div>
+            <p className="text-center text-[11px] text-white/25">
+              Baixas de rede no CDN dos vídeos podem gerar avisos no console; o export tenta reconectar automaticamente.
             </p>
-            <p className="text-xs text-white/30">Isso pode levar alguns segundos</p>
           </div>
         </div>
       )}

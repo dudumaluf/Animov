@@ -109,7 +109,8 @@ export default function EditorPage({
 
   // Pan handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    if (e.target !== e.currentTarget && !(e.target as HTMLElement).closest("[data-canvas-bg]")) return;
+    const target = e.target as HTMLElement;
+    if (target !== viewportRef.current && !target.hasAttribute("data-canvas-bg")) return;
     e.preventDefault();
     setIsPanning(true);
     panStart.current = { x: e.clientX, y: e.clientY, panX, panY };
@@ -219,9 +220,8 @@ export default function EditorPage({
             <div
               ref={viewportRef}
               data-canvas-bg="true"
-              className={`flex h-full w-full items-center justify-center overflow-hidden ${
-                isPanning ? "cursor-grabbing" : "cursor-grab"
-              }`}
+              className="flex h-full w-full items-center justify-center overflow-hidden"
+              style={isPanning ? { cursor: "grabbing" } : undefined}
               onWheel={handleWheel}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}

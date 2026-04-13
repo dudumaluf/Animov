@@ -6,6 +6,15 @@ import { getAdapter, DEFAULT_MODEL_ID } from "@/lib/adapters";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
+async function fetchAndUploadToFal(url: string): Promise<string> {
+  if (url.includes("fal.media") || url.includes("fal-cdn")) return url;
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch image: ${res.status} ${url}`);
+  const blob = await res.blob();
+  const file = new File([blob], "image.jpg", { type: blob.type || "image/jpeg" });
+  return fal.storage.upload(file);
+}
+
 export async function POST(req: NextRequest) {
   const supabase = createClient();
   const { data: { user } } = await supabase.auth.getUser();
@@ -14,15 +23,14 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const formData = await req.formData();
-  const startImage = formData.get("startImage") as File | null;
-  const endImage = formData.get("endImage") as File | null;
-  const duration = Number(formData.get("duration") ?? "5") || 5;
-  const modelId = (formData.get("modelId") as string) || DEFAULT_MODEL_ID;
+  const body = await req.json();
+  const { startImageUrl, endImageUrl } = body;
+  const duration = Number(body.duration ?? 5) || 5;
+  const modelId = (body.modelId as string) || DEFAULT_MODEL_ID;
 
-  if (!startImage || !endImage) {
+  if (!startImageUrl || !endImageUrl) {
     return NextResponse.json(
-      { error: "startImage and endImage files are required" },
+      { error: "startImageUrl and endImageUrl are required" },
       { status: 400 },
     );
   }
@@ -50,8 +58,8 @@ export async function POST(req: NextRequest) {
     debited = true;
 
     const [falStartUrl, falEndUrl] = await Promise.all([
-      fal.storage.upload(startImage),
-      fal.storage.upload(endImage),
+      fetchAndUploadToFal(startImageUrl),
+      fetchAndUploadToFal(endImageUrl),
     ]);
 
     const prompt =

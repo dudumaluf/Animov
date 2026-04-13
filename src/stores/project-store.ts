@@ -208,6 +208,24 @@ async function resolveSceneFile(
   return file ?? null;
 }
 
+async function resolveSceneHttpsUrl(
+  scene: Scene,
+  photoFiles: Record<string, File>,
+  projectId: string,
+): Promise<string | null> {
+  if (scene.photoUrl && scene.photoUrl.startsWith("https://")) {
+    if (!photoFiles[scene.id]) return scene.photoUrl;
+  }
+  const file = await resolveSceneFile(scene, photoFiles);
+  if (!file) return scene.photoUrl?.startsWith("https://") ? scene.photoUrl : null;
+  try {
+    return await uploadPhoto(file, projectId);
+  } catch (e) {
+    console.error("[resolveSceneHttpsUrl] upload failed", e);
+    return scene.photoUrl?.startsWith("https://") ? scene.photoUrl : null;
+  }
+}
+
 export const useProjectStore = create<ProjectStore>()(
   persist(
     (set, get) => ({
@@ -551,12 +569,13 @@ export const useProjectStore = create<ProjectStore>()(
         const toScene = state.scenes.find((s) => s.id === toSceneId);
         if (!fromScene || !toScene) return;
 
-        const [startFile, endFile] = await Promise.all([
-          resolveSceneFile(fromScene, state._photoFiles),
-          resolveSceneFile(toScene, state._photoFiles),
+        const pid = state.supabaseProjectId ?? state.projectId;
+        const [startUrl, endUrl] = await Promise.all([
+          resolveSceneHttpsUrl(fromScene, state._photoFiles, pid),
+          resolveSceneHttpsUrl(toScene, state._photoFiles, pid),
         ]);
-        if (!startFile || !endFile) {
-          console.error("[generateTransition] Could not resolve image files");
+        if (!startUrl || !endUrl) {
+          console.error("[generateTransition] Could not resolve image URLs");
           return;
         }
 
@@ -569,15 +588,15 @@ export const useProjectStore = create<ProjectStore>()(
         }));
 
         try {
-          const formData = new FormData();
-          formData.append("startImage", startFile);
-          formData.append("endImage", endFile);
-          formData.append("duration", String(duration));
-          formData.append("modelId", state.modelId);
-
           const res = await fetch("/api/generate-transition", {
             method: "POST",
-            body: formData,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              startImageUrl: startUrl,
+              endImageUrl: endUrl,
+              duration,
+              modelId: state.modelId,
+            }),
           });
 
           if (!res.ok) {

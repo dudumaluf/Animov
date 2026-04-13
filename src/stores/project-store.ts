@@ -565,13 +565,7 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       initProject: async (urlProjectId) => {
-        const state = get();
-        if (state.isLoading) return;
-        const isAlreadyLoaded =
-          state.supabaseProjectId === urlProjectId &&
-          state.projectName !== "" &&
-          state.projectName !== "Novo Projeto";
-        if (isAlreadyLoaded) return;
+        if (get().isLoading) return;
 
         set({
           isLoading: true,
@@ -722,13 +716,18 @@ export const useProjectStore = create<ProjectStore>()(
             })
             .filter(Boolean);
 
+          const payload: Record<string, unknown> = { name: state.projectName };
+
+          if (scenesPayload.length > 0) {
+            payload.scenes = scenesPayload;
+          } else if (state.scenes.length > 0) {
+            console.warn("[saveToSupabase] Skipping scenes — no uploadable URLs yet");
+          }
+
           const res = await fetch(`/api/projects/${state.supabaseProjectId}`, {
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              name: state.projectName,
-              scenes: scenesPayload,
-            }),
+            body: JSON.stringify(payload),
           });
 
           if (!res.ok) {

@@ -7,7 +7,6 @@ import { getAdapter, DEFAULT_MODEL_ID } from "@/lib/adapters";
 fal.config({ credentials: process.env.FAL_KEY! });
 
 async function fetchAndUploadToFal(url: string): Promise<string> {
-  if (url.includes("fal.media") || url.includes("fal-cdn")) return url;
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch image: ${res.status} ${url}`);
   const blob = await res.blob();
@@ -103,6 +102,7 @@ export async function POST(req: NextRequest) {
     const falBody = (err as Record<string, unknown>)?.body;
     const detail = falBody && typeof falBody === "object" ? JSON.stringify(falBody) : undefined;
     console.error("[generate-transition]", err, detail ? `fal body: ${detail}` : "");
+    console.error("[generate-transition] input URLs:", { startImageUrl, endImageUrl });
 
     const message = err instanceof Error ? err.message : "Transition generation failed";
     return NextResponse.json(

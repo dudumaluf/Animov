@@ -209,14 +209,19 @@ async function composeWithMediabunny({
         sample.close();
       }
 
+      const inner = (f + 1) / totalFrames;
       if (f === 0 || f === totalFrames - 1 || f % Math.max(1, Math.floor(totalFrames / 25)) === 0) {
-        const inner = (f + 1) / totalFrames;
         report(
           `Codificando clipe ${i + 1}/${n} — quadro ${f + 1} de ${totalFrames}`,
           basePct + 10 + (i + inner) / n * spanEncode,
         );
       }
     }
+
+    report(
+      `Clipe ${i + 1}/${n} concluído`,
+      basePct + 10 + (i + 1) / n * spanEncode,
+    );
   }
 
   if (audioSource) {

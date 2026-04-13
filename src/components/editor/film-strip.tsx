@@ -637,22 +637,36 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
           {scenes.map((scene, i) => (
             <div key={scene.id} className="flex items-start gap-1.5">
               <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
-              {i < scenes.length - 1 && (
-                <>
-                  <InsertMenu
-                    position="between"
-                    insertIndex={i + 1}
-                    hasScenesOnBothSides={true}
-                    fromSceneId={scene.id}
-                    toSceneId={scenes[i + 1]?.id}
-                  />
-                  <TransitionNode
-                    fromSceneId={scene.id}
-                    toSceneId={scenes[i + 1]!.id}
-                    onPreviewVideo={onPreviewVideo}
-                  />
-                </>
-              )}
+              {i < scenes.length - 1 && (() => {
+                const transId = `t-${scene.id}-${scenes[i + 1]!.id}`;
+                const trans = useProjectStore.getState().transitions.find((t) => t.id === transId);
+                const transVisible = trans && trans.status !== "idle";
+                return (
+                  <>
+                    <InsertMenu
+                      position="between"
+                      insertIndex={i + 1}
+                      hasScenesOnBothSides={true}
+                      fromSceneId={scene.id}
+                      toSceneId={scenes[i + 1]?.id}
+                    />
+                    <TransitionNode
+                      fromSceneId={scene.id}
+                      toSceneId={scenes[i + 1]!.id}
+                      onPreviewVideo={onPreviewVideo}
+                    />
+                    {transVisible && (
+                      <InsertMenu
+                        position="between"
+                        insertIndex={i + 1}
+                        hasScenesOnBothSides={true}
+                        fromSceneId={scene.id}
+                        toSceneId={scenes[i + 1]?.id}
+                      />
+                    )}
+                  </>
+                );
+              })()}
             </div>
           ))}
           {!hasEditNode && (

@@ -746,21 +746,37 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number }) => {
             const dur = Number(s.duration) || 5;
+            const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
+              ? s.video_versions
+              : s.video_url ? [{ url: s.video_url, duration: dur }] : [];
+            const activeVer = Number(s.active_version) || 0;
+            const clampedVer = Math.min(activeVer, Math.max(0, dbVersions.length - 1));
             return {
               id: s.id,
               photoUrl: s.photo_url,
               photoDataUrl: s.photo_url,
               presetId: s.prompt_generated ?? "push_in_serene",
-              duration: dur,
+              duration: dbVersions[clampedVer]?.duration ?? dur,
               status: s.status === "pending" ? "idle" : s.status,
-              videoUrl: s.video_url ?? undefined,
-              videoVersions: s.video_url ? [{ url: s.video_url, duration: dur }] : [],
-              activeVersion: 0,
+              videoUrl: dbVersions[clampedVer]?.url ?? s.video_url ?? undefined,
+              videoVersions: dbVersions,
+              activeVersion: clampedVer,
               costCredits: s.cost_credits,
             };
           });
+
+          const dbTransitions: Transition[] = (data.transitions ?? []).map((t: { from_scene_id: string; to_scene_id: string; video_url: string; status: string; cost_credits: number }) => ({
+            id: `t-${t.from_scene_id}-${t.to_scene_id}`,
+            fromSceneId: t.from_scene_id,
+            toSceneId: t.to_scene_id,
+            presetId: "soft_dissolve_drift",
+            enabled: true,
+            status: t.status === "pending" ? "idle" : t.status,
+            videoUrl: t.video_url ?? undefined,
+            costCredits: t.cost_credits,
+          }));
 
           const meta = data.project.metadata ?? {};
 
@@ -770,9 +786,11 @@ export const useProjectStore = create<ProjectStore>()(
             projectName: data.project.name,
             modelId: DEFAULT_MODEL_ID,
             scenes,
-            transitions: rebuildTransitions(scenes),
+            transitions: rebuildTransitions(scenes, dbTransitions),
             hasEditNode: !!meta.hasEditNode,
             editNodeSelected: false,
+            musicPrompt: meta.musicPrompt ?? "",
+            musicUrl: meta.musicUrl ?? "",
             selectedSceneId: null,
             isLoading: false,
             isDirty: false,
@@ -853,14 +871,37 @@ export const useProjectStore = create<ProjectStore>()(
                 status: s.status,
                 video_url: s.videoUrl,
                 cost_credits: s.costCredits,
+                video_versions: s.videoVersions ?? [],
+                active_version: s.activeVersion ?? 0,
               };
             })
             .filter(Boolean);
 
+          const readyTransitions = state.transitions.filter(
+            (t) => t.status === "ready" || t.status === "generating" || t.status === "failed",
+          );
+          const transitionsPayload = readyTransitions.map((t) => ({
+            from_scene_id: t.fromSceneId,
+            to_scene_id: t.toSceneId,
+            video_url: t.videoUrl,
+            status: t.status,
+            cost_credits: t.costCredits,
+          }));
+
           const payload: Record<string, unknown> = {
             name: state.projectName,
-            metadata: { hasEditNode: state.hasEditNode },
+            metadata: {
+              hasEditNode: state.hasEditNode,
+              musicPrompt: state.musicPrompt || undefined,
+              musicUrl: state.musicUrl || undefined,
+            },
           };
+
+          if (transitionsPayload.length > 0) {
+            payload.transitions = transitionsPayload;
+          } else {
+            payload.transitions = [];
+          }
 
           if (scenesPayload.length > 0) {
             payload.scenes = scenesPayload;

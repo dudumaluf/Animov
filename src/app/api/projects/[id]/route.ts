@@ -59,7 +59,7 @@ export async function PATCH(
   }
 
   if (Array.isArray(body.scenes) && body.scenes.length > 0) {
-    const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number }, i: number) => ({
+    const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number; video_versions?: unknown[]; active_version?: number }, i: number) => ({
       ...(s.id ? { id: s.id } : {}),
       project_id: params.id,
       order_index: i,
@@ -69,6 +69,8 @@ export async function PATCH(
       duration: s.duration,
       status: s.status === "idle" ? "pending" : s.status,
       cost_credits: s.cost_credits,
+      video_versions: s.video_versions ?? [],
+      active_version: s.active_version ?? 0,
     }));
 
     const existingIds = scenesToUpsert.filter((s: { id?: string }) => s.id).map((s: { id: string }) => s.id);
@@ -88,6 +90,47 @@ export async function PATCH(
       console.error("[projects/save-scenes]", error);
       return NextResponse.json({ error: error.message }, { status: 500 });
     }
+  }
+
+  if (Array.isArray(body.transitions) && body.transitions.length > 0) {
+    const transToUpsert = body.transitions.map((t: { from_scene_id: string; to_scene_id: string; video_url?: string; status: string; cost_credits?: number }, i: number) => ({
+      project_id: params.id,
+      from_scene_id: t.from_scene_id,
+      to_scene_id: t.to_scene_id,
+      order_index: i,
+      video_url: t.video_url ?? null,
+      status: t.status === "idle" ? "pending" : t.status,
+      cost_credits: t.cost_credits ?? 0,
+    }));
+
+    const { error } = await supabase.from("transitions").upsert(transToUpsert, {
+      onConflict: "project_id,from_scene_id,to_scene_id",
+    });
+    if (error) {
+      console.error("[projects/save-transitions]", error);
+    }
+
+    const validPairs = transToUpsert.map((t: { from_scene_id: string; to_scene_id: string }) => `(${t.from_scene_id},${t.to_scene_id})`);
+    const { data: allTrans } = await supabase
+      .from("transitions")
+      .select("id, from_scene_id, to_scene_id")
+      .eq("project_id", params.id);
+    if (allTrans) {
+      const toDelete = allTrans.filter(
+        (t) => !validPairs.includes(`(${t.from_scene_id},${t.to_scene_id})`)
+      );
+      if (toDelete.length > 0) {
+        await supabase
+          .from("transitions")
+          .delete()
+          .in("id", toDelete.map((t) => t.id));
+      }
+    }
+  } else if (body.transitions !== undefined) {
+    await supabase
+      .from("transitions")
+      .delete()
+      .eq("project_id", params.id);
   }
 
   return NextResponse.json({ ok: true });

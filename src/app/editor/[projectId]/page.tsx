@@ -108,6 +108,17 @@ export default function EditorPage({
     return () => window.removeEventListener("resize", onResize);
   }, [canvasMode, fitToView]);
 
+  // Prevent browser-level pinch zoom when over the editor
+  useEffect(() => {
+    const prevent = (e: Event) => e.preventDefault();
+    document.addEventListener("gesturestart", prevent, { passive: false });
+    document.addEventListener("gesturechange", prevent, { passive: false });
+    return () => {
+      document.removeEventListener("gesturestart", prevent);
+      document.removeEventListener("gesturechange", prevent);
+    };
+  }, []);
+
   // Initial fit
   useEffect(() => {
     if (mounted && scenes.length > 0) {
@@ -138,14 +149,42 @@ export default function EditorPage({
     setIsPanning(false);
   }, []);
 
-  // Scroll zoom → free mode
-  const handleWheel = useCallback((e: React.WheelEvent) => {
-    if (e.ctrlKey || e.metaKey) {
+  // Wheel / trackpad zoom toward cursor
+  // Must use native listener to be able to preventDefault on non-passive wheel
+  useEffect(() => {
+    const vp = viewportRef.current;
+    if (!vp) return;
+
+    const onWheel = (e: WheelEvent) => {
+      // Pinch-to-zoom on trackpad fires as ctrlKey + wheel
+      // Regular trackpad scroll fires without ctrlKey
+      // We want both to zoom the canvas, not scroll the page
       e.preventDefault();
-      const delta = -e.deltaY * 0.003;
-      setZoom((z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z + delta)));
+
+      const isPinch = e.ctrlKey || e.metaKey;
+      const sensitivity = isPinch ? 0.008 : 0.002;
+      const rawDelta = -e.deltaY * sensitivity;
+
+      setZoom((prevZoom) => {
+        const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, prevZoom + rawDelta));
+        if (newZoom === prevZoom) return prevZoom;
+
+        // Zoom toward the cursor position
+        const rect = vp.getBoundingClientRect();
+        const cx = e.clientX - rect.left - rect.width / 2;
+        const cy = e.clientY - rect.top - rect.height / 2;
+
+        const scale = newZoom / prevZoom;
+        setPanX((px) => cx - scale * (cx - px));
+        setPanY((py) => cy - scale * (cy - py));
+
+        return newZoom;
+      });
       setCanvasMode("free");
-    }
+    };
+
+    vp.addEventListener("wheel", onWheel, { passive: false });
+    return () => vp.removeEventListener("wheel", onWheel);
   }, []);
 
   // Keyboard shortcuts
@@ -230,9 +269,8 @@ export default function EditorPage({
             <div
               ref={viewportRef}
               data-canvas-bg="true"
-              className="flex h-full w-full items-center justify-center overflow-hidden"
+              className="flex h-full w-full items-center justify-center overflow-hidden touch-none"
               style={isPanning ? { cursor: "grabbing" } : undefined}
-              onWheel={handleWheel}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}

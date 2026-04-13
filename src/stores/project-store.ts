@@ -566,7 +566,12 @@ export const useProjectStore = create<ProjectStore>()(
 
       initProject: async (urlProjectId) => {
         const state = get();
-        if (state.supabaseProjectId === urlProjectId && !state.isLoading) return;
+        if (state.isLoading) return;
+        const isAlreadyLoaded =
+          state.supabaseProjectId === urlProjectId &&
+          state.projectName !== "" &&
+          state.projectName !== "Novo Projeto";
+        if (isAlreadyLoaded) return;
 
         set({
           isLoading: true,

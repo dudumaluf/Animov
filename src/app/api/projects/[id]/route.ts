@@ -51,6 +51,13 @@ export async function PATCH(
       .eq("id", params.id);
   }
 
+  if (body.metadata !== undefined) {
+    await supabase
+      .from("projects")
+      .update({ metadata: body.metadata })
+      .eq("id", params.id);
+  }
+
   if (Array.isArray(body.scenes) && body.scenes.length > 0) {
     const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number }, i: number) => ({
       ...(s.id ? { id: s.id } : {}),

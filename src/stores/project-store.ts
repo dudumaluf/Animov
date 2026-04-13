@@ -743,6 +743,8 @@ export const useProjectStore = create<ProjectStore>()(
             };
           });
 
+          const meta = data.project.metadata ?? {};
+
           set({
             supabaseProjectId: supabaseId,
             projectId: supabaseId,
@@ -750,6 +752,8 @@ export const useProjectStore = create<ProjectStore>()(
             modelId: DEFAULT_MODEL_ID,
             scenes,
             transitions: rebuildTransitions(scenes),
+            hasEditNode: !!meta.hasEditNode,
+            editNodeSelected: false,
             selectedSceneId: null,
             isLoading: false,
             isDirty: false,
@@ -834,7 +838,10 @@ export const useProjectStore = create<ProjectStore>()(
             })
             .filter(Boolean);
 
-          const payload: Record<string, unknown> = { name: state.projectName };
+          const payload: Record<string, unknown> = {
+            name: state.projectName,
+            metadata: { hasEditNode: state.hasEditNode },
+          };
 
           if (scenesPayload.length > 0) {
             payload.scenes = scenesPayload;

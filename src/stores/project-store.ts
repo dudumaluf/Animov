@@ -44,6 +44,7 @@ export type ProjectStore = {
   musicPrompt: string;
   musicUrl: string | null;
   isMusicGenerating: boolean;
+  isLoading: boolean;
   isDirty: boolean;
   isGenerating: boolean;
   isSaving: boolean;
@@ -189,12 +190,23 @@ export const useProjectStore = create<ProjectStore>()(
       musicPrompt: "Calm ambient instrumental, warm piano, soft strings, real estate luxury, 90 BPM, elegant and inviting",
       musicUrl: null,
       isMusicGenerating: false,
+      isLoading: false,
       isDirty: false,
       isGenerating: false,
       isSaving: false,
       _photoFiles: {},
 
-      setProjectName: (name) => set({ projectName: name, isDirty: true }),
+      setProjectName: (name) => {
+        set({ projectName: name, isDirty: true });
+        const id = get().supabaseProjectId;
+        if (id) {
+          fetch(`/api/projects/${id}`, {
+            method: "PATCH",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ name }),
+          }).catch(() => {});
+        }
+      },
       setModelId: (modelId) => set({ modelId, isDirty: true }),
       selectScene: (id) =>
         set((state) => ({
@@ -550,8 +562,18 @@ export const useProjectStore = create<ProjectStore>()(
 
       initProject: async (urlProjectId) => {
         const state = get();
-        if (state.supabaseProjectId === urlProjectId) return;
-        if (state.projectId === urlProjectId && state.supabaseProjectId) return;
+        if (state.supabaseProjectId === urlProjectId && !state.isLoading) return;
+
+        set({
+          isLoading: true,
+          scenes: [],
+          transitions: [],
+          projectName: "",
+          selectedSceneId: null,
+          editNodeSelected: false,
+          isDirty: false,
+          _photoFiles: {},
+        });
 
         try {
           const res = await fetch(`/api/projects/${urlProjectId}`);
@@ -575,18 +597,22 @@ export const useProjectStore = create<ProjectStore>()(
               projectName: project.name,
               scenes: [],
               transitions: [],
+              isLoading: false,
               isDirty: false,
             });
+          } else {
+            set({ isLoading: false });
           }
         } catch (err) {
           console.error("[initProject]", err);
+          set({ isLoading: false });
         }
       },
 
       loadFromSupabase: async (supabaseId) => {
         try {
           const res = await fetch(`/api/projects/${supabaseId}`);
-          if (!res.ok) return;
+          if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
           const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number }) => ({
@@ -610,11 +636,13 @@ export const useProjectStore = create<ProjectStore>()(
             scenes,
             transitions: rebuildTransitions(scenes),
             selectedSceneId: null,
+            isLoading: false,
             isDirty: false,
             isGenerating: false,
           });
         } catch (err) {
           console.error("[loadFromSupabase]", err);
+          set({ isLoading: false });
         }
       },
 
@@ -861,23 +889,6 @@ export const useProjectStore = create<ProjectStore>()(
       partialize: (state) => ({
         projectId: state.projectId,
         supabaseProjectId: state.supabaseProjectId,
-        projectName: state.projectName,
-        modelId: state.modelId,
-        hasEditNode: state.hasEditNode,
-        musicPrompt: state.musicPrompt,
-        musicUrl: state.musicUrl,
-        scenes: state.scenes.map((s) => ({
-          id: s.id,
-          photoUrl: s.photoUrl.startsWith("blob:") ? "" : s.photoUrl,
-          presetId: s.presetId,
-          duration: s.duration,
-          status: s.status,
-          videoUrl: s.videoUrl,
-          videoVersions: s.videoVersions ?? [],
-          activeVersion: s.activeVersion ?? 0,
-          costCredits: s.costCredits,
-        })),
-        transitions: state.transitions,
       }) as unknown as ProjectStore,
     },
   ),

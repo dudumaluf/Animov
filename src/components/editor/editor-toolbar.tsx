@@ -11,13 +11,17 @@ import {
   Download,
   Upload,
   Film,
-  CornerDownLeft,
+  Image as ImageIcon,
+  FileJson,
+  FolderOpen,
+  FilePlus,
   Undo2,
   Redo2,
   Clapperboard,
   Play,
   PenLine,
   Settings,
+  ChevronRight,
   ChevronDown,
   Coins,
 } from "lucide-react";
@@ -34,7 +38,115 @@ type MenuItem =
       onClick: () => void;
     }
   | { type: "separator" }
-  | { type: "info"; label: string; value: string };
+  | { type: "heading"; label: string }
+  | { type: "info"; label: string; value: string }
+  | {
+      type: "submenu";
+      label: string;
+      icon?: React.ReactNode;
+      children: MenuItem[];
+    };
+
+/* ── MenuPanel (recursive) ─────────────────────────────────────── */
+
+function MenuPanel({
+  items,
+  onClose,
+  depth = 0,
+}: {
+  items: MenuItem[];
+  onClose: () => void;
+  depth?: number;
+}) {
+  const [hoveredSub, setHoveredSub] = useState<number | null>(null);
+
+  return (
+    <div
+      className={`${
+        depth === 0 ? "absolute left-0 top-full mt-1" : "absolute left-full top-0 -mt-1"
+      } z-50 min-w-[220px] rounded-xl border border-white/10 bg-[#141412] py-1 shadow-xl`}
+    >
+      {items.map((item, i) => {
+        if (item.type === "separator") {
+          return <div key={i} className="mx-2 my-1 border-t border-white/5" />;
+        }
+        if (item.type === "heading") {
+          return (
+            <div
+              key={i}
+              className="px-3 pb-0.5 pt-2 font-mono text-[9px] uppercase tracking-widest text-text-secondary"
+            >
+              {item.label}
+            </div>
+          );
+        }
+        if (item.type === "info") {
+          return (
+            <div
+              key={i}
+              className="flex items-center justify-between px-3 py-1.5 font-mono text-[11px]"
+            >
+              <span className="text-text-secondary">{item.label}</span>
+              <span className="text-[var(--text)]">{item.value}</span>
+            </div>
+          );
+        }
+        if (item.type === "submenu") {
+          return (
+            <div
+              key={i}
+              className="relative"
+              onMouseEnter={() => setHoveredSub(i)}
+              onMouseLeave={() => setHoveredSub(null)}
+            >
+              <div className="flex w-full items-center gap-2.5 px-3 py-1.5 font-mono text-[12px] text-[var(--text)] transition-colors hover:bg-white/5">
+                {item.icon && (
+                  <span className="flex w-4 shrink-0 items-center justify-center text-text-secondary">
+                    {item.icon}
+                  </span>
+                )}
+                <span className="flex-1">{item.label}</span>
+                <ChevronRight size={10} className="text-text-secondary" />
+              </div>
+              {hoveredSub === i && (
+                <MenuPanel
+                  items={item.children}
+                  onClose={onClose}
+                  depth={depth + 1}
+                />
+              )}
+            </div>
+          );
+        }
+        return (
+          <button
+            key={i}
+            onClick={() => {
+              if (!item.disabled) {
+                onClose();
+                item.onClick();
+              }
+            }}
+            disabled={item.disabled}
+            className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left font-mono text-[12px] transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-30"
+          >
+            {item.icon && (
+              <span className="flex w-4 shrink-0 items-center justify-center text-text-secondary">
+                {item.icon}
+              </span>
+            )}
+            <span className="flex-1">{item.label}</span>
+            {item.shortcut && (
+              <span className="ml-4 text-[10px] text-text-secondary">
+                {item.shortcut}
+              </span>
+            )}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
 
 /* ── MenuDropdown ──────────────────────────────────────────────── */
 
@@ -71,51 +183,7 @@ function MenuDropdown({
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={onClose} />
-          <div className="absolute left-0 top-full z-50 mt-1 min-w-[220px] rounded-xl border border-white/10 bg-[#141412] py-1 shadow-xl">
-            {items.map((item, i) => {
-              if (item.type === "separator") {
-                return (
-                  <div key={i} className="mx-2 my-1 border-t border-white/5" />
-                );
-              }
-              if (item.type === "info") {
-                return (
-                  <div
-                    key={i}
-                    className="flex items-center justify-between px-3 py-1.5 font-mono text-[11px]"
-                  >
-                    <span className="text-text-secondary">{item.label}</span>
-                    <span className="text-[var(--text)]">{item.value}</span>
-                  </div>
-                );
-              }
-              return (
-                <button
-                  key={i}
-                  onClick={() => {
-                    if (!item.disabled) {
-                      onClose();
-                      item.onClick();
-                    }
-                  }}
-                  disabled={item.disabled}
-                  className="flex w-full items-center gap-2.5 px-3 py-1.5 text-left font-mono text-[12px] transition-colors hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-30"
-                >
-                  {item.icon && (
-                    <span className="flex w-4 shrink-0 items-center justify-center text-text-secondary">
-                      {item.icon}
-                    </span>
-                  )}
-                  <span className="flex-1">{item.label}</span>
-                  {item.shortcut && (
-                    <span className="ml-4 text-[10px] text-text-secondary">
-                      {item.shortcut}
-                    </span>
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          <MenuPanel items={items} onClose={onClose} />
         </>
       )}
     </div>
@@ -180,6 +248,43 @@ function CreditsChip({ balance }: { balance: number | null }) {
   );
 }
 
+/* ── SaveIndicator ─────────────────────────────────────────────── */
+
+function SaveIndicator({ isSaving, isDirty, hasScenes }: { isSaving: boolean; isDirty: boolean; hasScenes: boolean }) {
+  const [visible, setVisible] = useState(false);
+  const [text, setText] = useState("");
+  const fadeTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  useEffect(() => {
+    clearTimeout(fadeTimer.current);
+
+    if (isSaving) {
+      setText("Salvando...");
+      setVisible(true);
+    } else if (isDirty) {
+      setText("Nao salvo");
+      setVisible(true);
+    } else if (hasScenes) {
+      setText("Salvo");
+      setVisible(true);
+      fadeTimer.current = setTimeout(() => setVisible(false), 2000);
+    } else {
+      setVisible(false);
+    }
+
+    return () => clearTimeout(fadeTimer.current);
+  }, [isSaving, isDirty, hasScenes]);
+
+  return (
+    <span
+      className="ml-2 font-mono text-[10px] text-text-secondary transition-opacity duration-500"
+      style={{ opacity: visible ? 1 : 0 }}
+    >
+      {text}
+    </span>
+  );
+}
+
 /* ── EditorToolbar ─────────────────────────────────────────────── */
 
 export function EditorToolbar({
@@ -201,6 +306,8 @@ export function EditorToolbar({
     saveToSupabase,
     exportProjectJson,
     importPortableProject,
+    hasEditNode,
+    setHasEditNode,
     modelId,
   } = useProjectStore();
 
@@ -208,7 +315,7 @@ export function EditorToolbar({
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const [openMenu, setOpenMenu] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
-  const importBackupRef = useRef<HTMLInputElement>(null);
+  const importFileRef = useRef<HTMLInputElement>(null);
 
   const cost = totalCost();
 
@@ -216,32 +323,37 @@ export function EditorToolbar({
     const { json, skippedSceneIds } = exportProjectJson();
     const blob = new Blob([json], { type: "application/json" });
     const a = document.createElement("a");
-    const safeName = projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
+    const safeName =
+      projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
     a.href = URL.createObjectURL(blob);
     a.download = `${safeName}-backup.json`;
     a.click();
     URL.revokeObjectURL(a.href);
     if (skippedSceneIds.length > 0) {
       window.alert(
-        `Backup salvo. ${skippedSceneIds.length} cena(s) sem URL pública foram omitidas.`,
+        `Backup salvo. ${skippedSceneIds.length} cena(s) sem URL publica foram omitidas.`,
       );
     }
   }, [exportProjectJson, projectName]);
 
-  const handleImportBackup = useCallback(
+  const handleImportFile = useCallback(
     (e: React.ChangeEvent<HTMLInputElement>) => {
       const file = e.target.files?.[0];
-      e.target.value = "";
       if (!file) return;
-      const reader = new FileReader();
-      reader.onload = () => {
-        const text = String(reader.result ?? "");
-        const res = importPortableProject(text);
-        if (!res.ok) {
-          window.alert(res.error);
-        }
-      };
-      reader.readAsText(file);
+
+      if (file.name.endsWith(".json")) {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const text = String(reader.result ?? "");
+          const res = importPortableProject(text);
+          if (!res.ok) window.alert(res.error);
+        };
+        reader.readAsText(file);
+      } else {
+        useProjectStore.getState().addPhotos([file]);
+      }
+
+      e.target.value = "";
     },
     [importPortableProject],
   );
@@ -270,7 +382,26 @@ export function EditorToolbar({
     typeof navigator !== "undefined" && /Mac/.test(navigator.userAgent);
   const mod = isMac ? "⌘" : "Ctrl+";
 
-  const fileItems: MenuItem[] = [
+  const readyCount = scenes.filter((s) => s.status === "ready").length;
+
+  const fileMenuItems: MenuItem[] = [
+    {
+      type: "action",
+      label: "Novo projeto",
+      icon: <FilePlus size={14} />,
+      onClick: () => {
+        window.location.href = "/editor/new";
+      },
+    },
+    {
+      type: "action",
+      label: "Abrir projeto",
+      icon: <FolderOpen size={14} />,
+      onClick: () => {
+        window.location.href = "/dashboard";
+      },
+    },
+    { type: "separator" },
     {
       type: "action",
       label: "Salvar",
@@ -280,39 +411,95 @@ export function EditorToolbar({
     },
     { type: "separator" },
     {
-      type: "action",
-      label: "Exportar backup (.json)",
+      type: "submenu",
+      label: "Exportar",
       icon: <Download size={14} />,
-      disabled: scenes.length === 0,
-      onClick: handleExportBackup,
+      children: [
+        {
+          type: "action",
+          label: "Videos individuais",
+          icon: <Film size={14} />,
+          disabled: readyCount < 1,
+          onClick: () => {
+            /* TODO: download individual scene videos */
+          },
+        },
+        {
+          type: "action",
+          label: "Edit final (.mp4)",
+          icon: <Clapperboard size={14} />,
+          disabled: readyCount < 1,
+          onClick: () => {
+            if (!hasEditNode) setHasEditNode(true);
+            onExportVideo?.();
+          },
+        },
+        { type: "separator" },
+        {
+          type: "action",
+          label: "Backup do projeto (.json)",
+          icon: <FileJson size={14} />,
+          disabled: scenes.length === 0,
+          onClick: handleExportBackup,
+        },
+      ],
     },
     {
-      type: "action",
-      label: "Importar backup (.json)",
+      type: "submenu",
+      label: "Importar",
       icon: <Upload size={14} />,
-      onClick: () => importBackupRef.current?.click(),
-    },
-    {
-      type: "action",
-      label: "Exportar video final",
-      icon: <Film size={14} />,
-      disabled:
-        !onExportVideo ||
-        scenes.filter((s) => s.status === "ready").length < 1,
-      onClick: () => onExportVideo?.(),
+      children: [
+        {
+          type: "action",
+          label: "Imagens",
+          icon: <ImageIcon size={14} />,
+          onClick: () => {
+            const input = document.createElement("input");
+            input.type = "file";
+            input.accept = "image/*";
+            input.multiple = true;
+            input.onchange = () => {
+              if (input.files && input.files.length > 0) {
+                useProjectStore.getState().addPhotos(Array.from(input.files));
+              }
+            };
+            input.click();
+          },
+        },
+        {
+          type: "action",
+          label: "Backup do projeto (.json)",
+          icon: <FileJson size={14} />,
+          onClick: () => importFileRef.current?.click(),
+        },
+      ],
     },
     { type: "separator" },
+    { type: "heading", label: "Projeto" },
     {
       type: "action",
-      label: "Voltar ao dashboard",
-      icon: <CornerDownLeft size={14} />,
-      onClick: () => {
-        window.location.href = "/dashboard";
-      },
+      label: "Renomear",
+      icon: <PenLine size={14} />,
+      onClick: () => setEditing(true),
+    },
+    {
+      type: "action",
+      label: "Configuracoes",
+      icon: <Settings size={14} />,
+      disabled: true,
+      onClick: () => {},
+    },
+    { type: "separator" },
+    { type: "info", label: "Cenas", value: String(scenes.length) },
+    { type: "info", label: "Custo estimado", value: `${cost} cr.` },
+    {
+      type: "info",
+      label: "Modelo",
+      value: modelId.replace(/-/g, " "),
     },
   ];
 
-  const editItems: MenuItem[] = [
+  const editMenuItems: MenuItem[] = [
     {
       type: "action",
       label: "Desfazer",
@@ -330,6 +517,7 @@ export function EditorToolbar({
       onClick: () => {},
     },
     { type: "separator" },
+    { type: "heading", label: "Gerar" },
     {
       type: "action",
       label: "Gerar todas as cenas",
@@ -348,116 +536,81 @@ export function EditorToolbar({
     },
   ];
 
-  const projectItems: MenuItem[] = [
-    {
-      type: "action",
-      label: "Renomear projeto",
-      icon: <PenLine size={14} />,
-      onClick: () => setEditing(true),
-    },
-    {
-      type: "action",
-      label: "Configuracoes",
-      icon: <Settings size={14} />,
-      disabled: true,
-      onClick: () => {},
-    },
-    { type: "separator" },
-    {
-      type: "info",
-      label: "Cenas",
-      value: String(scenes.length),
-    },
-    {
-      type: "info",
-      label: "Custo estimado",
-      value: `${cost} cr.`,
-    },
-    {
-      type: "info",
-      label: "Modelo",
-      value: modelId.replace(/-/g, " "),
-    },
-  ];
-
   return (
-    <div className="shrink-0 border-b border-white/5">
-      {/* Row 1: Title bar */}
-      <div className="flex h-10 items-center justify-between px-3">
-        <div className="flex items-center gap-2">
-          <Link
-            href="/dashboard"
-            className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-          >
-            <ArrowLeft size={14} />
-          </Link>
+    <header className="grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-white/5 px-3">
+      {/* Left: back + menus */}
+      <div className="flex items-center gap-1">
+        <Link
+          href="/dashboard"
+          onClick={() => {
+            if (useProjectStore.getState().isDirty) saveToSupabase();
+          }}
+          className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+        >
+          <ArrowLeft size={14} />
+        </Link>
 
-          {editing ? (
-            <input
-              ref={inputRef}
-              defaultValue={projectName}
-              onBlur={(e) => {
-                setProjectName(e.target.value || "Novo Projeto");
-                setEditing(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-                if (e.key === "Escape") setEditing(false);
-              }}
-              className="bg-transparent font-display text-base outline-none ring-1 ring-white/10 rounded px-2 py-0.5"
-              autoFocus
-            />
-          ) : (
-            <button
-              onClick={() => setEditing(true)}
-              className="font-display text-base hover:text-accent-gold transition-colors"
-            >
-              {projectName}
-            </button>
-          )}
+        <div className="mx-1 h-4 w-px bg-white/5" />
 
-          <span className="font-mono text-[10px] text-text-secondary">
-            {isSaving && "Salvando..."}
-            {!isSaving && isDirty && "Nao salvo"}
-            {!isSaving && !isDirty && scenes.length > 0 && "Salvo"}
-          </span>
-        </div>
-
-        <CreditsChip balance={creditBalance} />
-      </div>
-
-      {/* Row 2: Menu bar */}
-      <div className="flex h-8 items-center gap-0.5 border-t border-white/[0.03] px-3">
         <MenuDropdown
           label="Arquivo"
-          items={fileItems}
+          items={fileMenuItems}
           open={openMenu === "file"}
           onToggle={() => toggleMenu("file")}
           onClose={closeMenu}
         />
         <MenuDropdown
           label="Editar"
-          items={editItems}
+          items={editMenuItems}
           open={openMenu === "edit"}
           onToggle={() => toggleMenu("edit")}
           onClose={closeMenu}
         />
-        <MenuDropdown
-          label="Projeto"
-          items={projectItems}
-          open={openMenu === "project"}
-          onToggle={() => toggleMenu("project")}
-          onClose={closeMenu}
-        />
-
-        <input
-          ref={importBackupRef}
-          type="file"
-          accept="application/json,.json"
-          className="hidden"
-          onChange={handleImportBackup}
-        />
       </div>
-    </div>
+
+      {/* Center: project name + save indicator */}
+      <div className="flex items-center justify-center gap-1">
+        {editing ? (
+          <input
+            ref={inputRef}
+            defaultValue={projectName}
+            onBlur={(e) => {
+              setProjectName(e.target.value || "Novo Projeto");
+              setEditing(false);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") setEditing(false);
+            }}
+            className="bg-transparent font-display text-sm outline-none ring-1 ring-white/10 rounded px-2 py-0.5 text-center"
+            autoFocus
+          />
+        ) : (
+          <button
+            onClick={() => setEditing(true)}
+            className="font-display text-sm hover:text-accent-gold transition-colors"
+            title="Clique para renomear"
+          >
+            {projectName}
+          </button>
+        )}
+
+        <SaveIndicator isSaving={isSaving} isDirty={isDirty} hasScenes={scenes.length > 0} />
+      </div>
+
+      {/* Right: credits */}
+      <div className="flex justify-end">
+        <CreditsChip balance={creditBalance} />
+      </div>
+
+      {/* Hidden file input for JSON import */}
+      <input
+        ref={importFileRef}
+        type="file"
+        accept="application/json,.json"
+        className="hidden"
+        onChange={handleImportFile}
+      />
+    </header>
   );
 }

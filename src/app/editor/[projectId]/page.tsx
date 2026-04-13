@@ -26,6 +26,7 @@ export default function EditorPage({
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const isDirty = useProjectStore((s) => s.isDirty);
+  const isLoading = useProjectStore((s) => s.isLoading);
   const initProject = useProjectStore((s) => s.initProject);
   const saveToSupabase = useProjectStore((s) => s.saveToSupabase);
 
@@ -59,6 +60,14 @@ export default function EditorPage({
     saveTimer.current = setTimeout(() => { saveToSupabase(); }, 3000);
     return () => clearTimeout(saveTimer.current);
   }, [isDirty, scenes, saveToSupabase]);
+
+  useEffect(() => {
+    const flush = () => {
+      if (useProjectStore.getState().isDirty) saveToSupabase();
+    };
+    window.addEventListener("beforeunload", flush);
+    return () => window.removeEventListener("beforeunload", flush);
+  }, [saveToSupabase]);
 
   // Auto-fit calculation
   const fitToView = useCallback(() => {
@@ -178,23 +187,20 @@ export default function EditorPage({
     }
   }, [composing]);
 
-  if (!mounted) {
+  if (!mounted || isLoading) {
     return (
       <div className="flex h-screen flex-col bg-[#0A0A09]">
-        <div className="shrink-0 border-b border-white/5">
-          <div className="flex h-10 items-center justify-between px-3">
-            <div className="flex items-center gap-2">
-              <div className="h-7 w-7 rounded-lg bg-white/5" />
-              <div className="h-4 w-32 rounded bg-white/5 animate-pulse" />
-            </div>
+        <header className="grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-white/5 px-3">
+          <div className="flex items-center gap-2">
+            <div className="h-7 w-7 rounded-lg bg-white/5" />
+            <div className="h-4 w-14 rounded bg-white/5" />
+            <div className="h-4 w-14 rounded bg-white/5" />
+          </div>
+          <div className="h-4 w-28 rounded bg-white/5 animate-pulse" />
+          <div className="flex justify-end">
             <div className="h-7 w-20 rounded-full bg-white/5" />
           </div>
-          <div className="flex h-8 items-center gap-2 border-t border-white/[0.03] px-3">
-            {[1, 2, 3].map((i) => (
-              <div key={i} className="h-4 w-14 rounded bg-white/5" />
-            ))}
-          </div>
-        </div>
+        </header>
         <div className="flex flex-1 items-center justify-center gap-4 p-6">
           {[1, 2, 3].map((i) => (
             <div key={i} className="flex w-48 flex-col gap-2">

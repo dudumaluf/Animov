@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { normalizeKlingO1DurationSeconds } from "@/lib/adapters/kling-o1";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
@@ -26,7 +27,8 @@ export async function POST(req: NextRequest) {
   }
 
   const body = await req.json();
-  const { startImageUrl, endImageUrl, duration = 3 } = body;
+  const { startImageUrl, endImageUrl, duration: rawDur = 5 } = body;
+  const duration = normalizeKlingO1DurationSeconds(Number(rawDur) || 5);
 
   if (!startImageUrl || !endImageUrl) {
     return NextResponse.json(
@@ -77,7 +79,7 @@ export async function POST(req: NextRequest) {
       duration_seconds: duration,
       cost: 0.112 * duration,
       final_positive_prompt: prompt,
-      request_payload: { startImageUrl: falStartUrl, endImageUrl: falEndUrl, duration },
+      request_payload: { startImageUrl: falStartUrl, endImageUrl: falEndUrl, duration, rawDuration: rawDur },
       response_payload: { videoUrl: result.data.video.url },
     });
 

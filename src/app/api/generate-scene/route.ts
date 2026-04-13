@@ -3,6 +3,7 @@ import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdapter } from "@/lib/adapters";
+import { normalizeKlingO1DurationSeconds } from "@/lib/adapters/kling-o1";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 
 fal.config({ credentials: process.env.FAL_KEY! });
@@ -18,8 +19,12 @@ export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const photo = formData.get("photo") as File | null;
   const presetId = (formData.get("presetId") as string) ?? "push_in_serene";
-  const duration = Number(formData.get("duration") ?? "5");
+  const rawDuration = Number(formData.get("duration") ?? "5");
   const modelId = (formData.get("modelId") as string) ?? "kling-o1-pro";
+  const duration =
+    modelId === "kling-o1-pro"
+      ? normalizeKlingO1DurationSeconds(rawDuration)
+      : rawDuration;
 
   if (!photo) {
     return NextResponse.json({ error: "photo is required" }, { status: 400 });
@@ -69,7 +74,7 @@ export async function POST(req: NextRequest) {
       final_negative_prompt: negative,
       duration_seconds: duration,
       cost: adapter.costPerSecond * duration,
-      request_payload: { photoUrl, presetId, duration, modelId },
+      request_payload: { photoUrl, presetId, duration, rawDuration, modelId },
       response_payload: { videoUrl: result.videoUrl },
     });
 

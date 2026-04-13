@@ -6,6 +6,7 @@ import {
   parsePortableProjectJson,
   portableToScene,
 } from "@/lib/project-portable";
+import { normalizeKlingO1DurationSeconds } from "@/lib/adapters/kling-o1";
 
 export type Scene = {
   id: string;
@@ -96,7 +97,7 @@ function promoteReadyTransition(t: Transition): Scene {
     photoUrl: t.videoUrl!,
     photoDataUrl: t.videoUrl!,
     presetId: "push_in_serene",
-    duration: 3,
+    duration: 5,
     status: "ready" as const,
     videoUrl: t.videoUrl!,
     videoVersions: [t.videoUrl!],
@@ -410,9 +411,10 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       setSceneDuration: (sceneId, duration) => {
+        const d = normalizeKlingO1DurationSeconds(duration);
         set((state) => ({
           scenes: state.scenes.map((s) =>
-            s.id === sceneId ? { ...s, duration } : s,
+            s.id === sceneId ? { ...s, duration: d } : s,
           ),
           isDirty: true,
         }));
@@ -450,11 +452,13 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
-      generateTransition: async (fromSceneId, toSceneId, duration = 3) => {
+      generateTransition: async (fromSceneId, toSceneId, duration = 5) => {
         const state = get();
         const fromScene = state.scenes.find((s) => s.id === fromSceneId);
         const toScene = state.scenes.find((s) => s.id === toSceneId);
         if (!fromScene || !toScene) return;
+
+        const d = normalizeKlingO1DurationSeconds(duration);
 
         const getPhotoUrl = (scene: typeof fromScene) => {
           if (scene.photoUrl && scene.photoUrl.startsWith("http")) return scene.photoUrl;
@@ -477,7 +481,7 @@ export const useProjectStore = create<ProjectStore>()(
           const res = await fetch("/api/generate-transition", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ startImageUrl, endImageUrl, duration }),
+            body: JSON.stringify({ startImageUrl, endImageUrl, duration: d }),
           });
 
           if (!res.ok) {
@@ -623,7 +627,7 @@ export const useProjectStore = create<ProjectStore>()(
             photoUrl: s.photo_url,
             photoDataUrl: s.photo_url,
             presetId: s.prompt_generated ?? "push_in_serene",
-            duration: Number(s.duration) || 5,
+            duration: normalizeKlingO1DurationSeconds(Number(s.duration) || 5),
             status: s.status === "pending" ? "idle" : s.status,
             videoUrl: s.video_url ?? undefined,
             videoVersions: s.video_url ? [s.video_url] : [],
@@ -675,7 +679,7 @@ export const useProjectStore = create<ProjectStore>()(
         const scenes = data.scenes.map((ps) => {
           const s = portableToScene(ps);
           if (!uuidRe.test(s.id)) s.id = crypto.randomUUID();
-          return s;
+          return { ...s, duration: normalizeKlingO1DurationSeconds(s.duration) };
         });
 
         set({
@@ -787,6 +791,9 @@ export const useProjectStore = create<ProjectStore>()(
 
             const data = await res.json();
             get().updateSceneStatus(scene.id, "ready", data.videoUrl);
+            if (typeof data.duration === "number") {
+              get().setSceneDuration(scene.id, data.duration);
+            }
 
             const pid = get().supabaseProjectId ?? get().projectId;
             persistVideoToStorage(data.videoUrl, pid, scene.id).then((permUrl) => {
@@ -852,6 +859,9 @@ export const useProjectStore = create<ProjectStore>()(
 
           const data = await res.json();
           get().updateSceneStatus(sceneId, "ready", data.videoUrl);
+          if (typeof data.duration === "number") {
+            get().setSceneDuration(sceneId, data.duration);
+          }
 
           const pid = get().supabaseProjectId ?? get().projectId;
           persistVideoToStorage(data.videoUrl, pid, sceneId).then((permUrl) => {

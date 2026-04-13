@@ -110,6 +110,7 @@ function SortableSceneCard({
           <video
             src={scene.videoUrl}
             className="h-full w-full object-cover"
+            draggable={false}
             muted
             loop
             playsInline
@@ -121,7 +122,8 @@ function SortableSceneCard({
             src={scene.photoDataUrl ?? scene.photoUrl}
             alt={`Cena ${sceneIndex + 1}`}
             fill
-            className="object-cover"
+            className="pointer-events-none object-cover"
+            draggable={false}
             unoptimized
           />
         )}
@@ -485,6 +487,7 @@ function TransitionNode({
           <video
             src={transition.videoUrl}
             className="h-full w-full object-cover"
+            draggable={false}
             muted
             loop
             playsInline
@@ -496,7 +499,8 @@ function TransitionNode({
             src={fromScene.photoDataUrl ?? fromScene.photoUrl}
             alt="transition"
             fill
-            className="object-cover opacity-40"
+            className="pointer-events-none object-cover opacity-40"
+            draggable={false}
             unoptimized
           />
         ) : null}
@@ -563,6 +567,7 @@ function EditNode({ onExport }: { onExport: () => void }) {
           <video
             src={previewScene.videoUrl}
             className="h-full w-full object-cover"
+            draggable={false}
             muted
             loop
             playsInline
@@ -574,7 +579,8 @@ function EditNode({ onExport }: { onExport: () => void }) {
             src={previewScene.photoDataUrl ?? previewScene.photoUrl}
             alt="edit"
             fill
-            className="object-cover"
+            className="pointer-events-none object-cover"
+            draggable={false}
             unoptimized
           />
         ) : (

@@ -275,7 +275,7 @@ export default function EditorPage({
             <div
               ref={viewportRef}
               data-canvas-bg="true"
-              className="flex h-full w-full items-center justify-center overflow-hidden touch-none"
+              className="flex h-full w-full items-center justify-center overflow-hidden touch-none select-none"
               style={isPanning ? { cursor: "grabbing" } : undefined}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}

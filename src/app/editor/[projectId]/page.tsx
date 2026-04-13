@@ -211,12 +211,28 @@ export default function EditorPage({
 
   const handleExport = useCallback(async () => {
     const state = useProjectStore.getState();
-    const readyScenes = state.scenes.filter((s) => s.status === "ready" && s.videoUrl);
+    const allScenes = state.scenes;
+    const readyScenes = allScenes.filter((s) => s.status === "ready" && s.videoUrl);
     if (readyScenes.length < 1 || composing) return;
     setComposing(true);
     setExportProgress({ message: "Iniciando...", percent: 0 });
     try {
-      const clipUrls = readyScenes.map((s) => s.videoUrl!);
+      const clipUrls: string[] = [];
+      for (let i = 0; i < allScenes.length; i++) {
+        const scene = allScenes[i]!;
+        if (scene.status === "ready" && scene.videoUrl) {
+          clipUrls.push(scene.videoUrl);
+        }
+        if (i < allScenes.length - 1) {
+          const nextScene = allScenes[i + 1]!;
+          const transId = `t-${scene.id}-${nextScene.id}`;
+          const trans = state.transitions.find((t) => t.id === transId);
+          if (trans?.status === "ready" && trans.videoUrl) {
+            clipUrls.push(trans.videoUrl);
+          }
+        }
+      }
+      if (clipUrls.length === 0) return;
       const blob = await composeVideos({
         clipUrls,
         audioUrl: state.musicUrl ?? undefined,

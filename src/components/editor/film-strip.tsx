@@ -591,13 +591,17 @@ function TransitionNode({
 
 function EditNode({ onExport }: { onExport: () => void }) {
   const scenes = useProjectStore((s) => s.scenes);
+  const transitions = useProjectStore((s) => s.transitions);
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
   const selectEditNode = useProjectStore((s) => s.selectEditNode);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const musicUrl = useProjectStore((s) => s.musicUrl);
   const readyScenes = scenes.filter((s) => s.status === "ready" && s.videoUrl);
-  const readyCount = readyScenes.length;
-  const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0);
+  const readyTransitions = transitions.filter((t) => t.status === "ready" && t.videoUrl);
+  const readyCount = readyScenes.length + readyTransitions.length;
+  const totalClips = scenes.length + transitions.filter((t) => t.status !== "idle").length;
+  const totalDuration = scenes.reduce((sum, s) => sum + s.duration, 0)
+    + readyTransitions.reduce((sum, t) => sum + (t.costCredits ?? 5), 0);
   const previewScene = readyScenes[0];
 
   return (
@@ -654,7 +658,7 @@ function EditNode({ onExport }: { onExport: () => void }) {
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
           <span className="font-mono text-[10px] text-accent-gold">Edit Final</span>
           <span className="font-mono text-[10px] text-white/60">
-            {readyCount}/{scenes.length} · {totalDuration}s{musicUrl ? " · ♫" : ""}
+            {readyCount}/{totalClips} · {totalDuration}s{musicUrl ? " · ♫" : ""}
           </span>
         </div>
       </div>

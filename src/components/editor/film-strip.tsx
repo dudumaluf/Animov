@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useRef, useState } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -107,6 +107,13 @@ function SortableSceneCard({
           <button
             onClick={(e) => {
               e.stopPropagation();
+              const transitions = useProjectStore.getState().transitions;
+              const hasReadyTransition = transitions.some(
+                (t) => (t.fromSceneId === sceneId || t.toSceneId === sceneId) && t.status === "ready"
+              );
+              if (hasReadyTransition) {
+                if (!confirm("Esta cena tem transições geradas. Remover?")) return;
+              }
               removeScene(sceneId);
             }}
             className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
@@ -149,8 +156,36 @@ function SortableSceneCard({
   );
 }
 
+async function extractLastFrame(videoUrl: string, insertIndex: number): Promise<void> {
+  try {
+    const video = document.createElement("video");
+    video.crossOrigin = "anonymous";
+    video.muted = true;
+    video.preload = "auto";
+    video.src = videoUrl;
+    await new Promise<void>((resolve, reject) => {
+      video.onloadeddata = () => resolve();
+      video.onerror = () => reject(new Error("Failed to load video"));
+    });
+    video.currentTime = video.duration - 0.1;
+    await new Promise<void>((resolve) => { video.onseeked = () => resolve(); });
+    const canvas = document.createElement("canvas");
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    const ctx = canvas.getContext("2d")!;
+    ctx.drawImage(video, 0, 0);
+    const blob = await new Promise<Blob>((resolve) =>
+      canvas.toBlob((b) => resolve(b!), "image/png"),
+    );
+    const file = new File([blob], "frame.png", { type: "image/png" });
+    useProjectStore.getState().insertPhotoAt(insertIndex, file);
+  } catch (err) {
+    console.error("[extractFrame]", err);
+  }
+}
+
 type InsertMenuPosition = "between" | "end";
-type InsertMenuAction = "photo" | "crossfade" | "ai-transition" | "edit" | "composer";
+type InsertMenuAction = "photo" | "crossfade" | "ai-transition" | "edit" | "composer" | "extract-frame";
 
 function InsertMenu({
   position,
@@ -198,6 +233,12 @@ function InsertMenu({
     if (action === "edit") {
       setHasEditNode(true);
     }
+    if (action === "extract-frame" && fromSceneId) {
+      const scene = useProjectStore.getState().scenes.find((s) => s.id === fromSceneId);
+      if (scene?.videoUrl) {
+        extractLastFrame(scene.videoUrl, insertIndex);
+      }
+    }
   };
 
   const handleGenerateTransition = (duration: number) => {
@@ -222,10 +263,14 @@ function InsertMenu({
     }
   };
 
+  const fromScene = fromSceneId ? useProjectStore.getState().scenes.find((s) => s.id === fromSceneId) : null;
+  const fromHasVideo = fromScene?.status === "ready" && !!fromScene?.videoUrl;
+
   const betweenOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Inserir foto", desc: "Nova cena nesta posição", ready: true },
     { action: "crossfade", icon: Blend, label: "Crossfade", desc: "Dissolve suave entre cenas", ready: false },
     ...(!hasTransition ? [{ action: "ai-transition" as const, icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: true }] : []),
+    ...(fromHasVideo ? [{ action: "extract-frame" as const, icon: Frame, label: "Extrair frame", desc: "Último frame do vídeo anterior", ready: true }] : []),
   ];
 
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
@@ -514,17 +559,17 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
               <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
               {i < scenes.length - 1 && (
                 <>
-                  <TransitionNode
-                    fromSceneId={scene.id}
-                    toSceneId={scenes[i + 1]!.id}
-                    onPreviewVideo={onPreviewVideo}
-                  />
                   <InsertMenu
                     position="between"
                     insertIndex={i + 1}
                     hasScenesOnBothSides={true}
                     fromSceneId={scene.id}
                     toSceneId={scenes[i + 1]?.id}
+                  />
+                  <TransitionNode
+                    fromSceneId={scene.id}
+                    toSceneId={scenes[i + 1]!.id}
+                    onPreviewVideo={onPreviewVideo}
                   />
                 </>
               )}

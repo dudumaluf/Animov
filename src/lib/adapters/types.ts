@@ -26,5 +26,5 @@ export interface VideoModelAdapter {
   minDuration: number;
 
   generateScene(input: SceneInput): Promise<ClipResult>;
-  generateTransition?(input: TransitionInput): Promise<ClipResult>;
+  generateTransition(input: TransitionInput): Promise<ClipResult>;
 }

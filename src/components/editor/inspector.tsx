@@ -7,8 +7,7 @@ import { X, Maximize2, ChevronDown, Trash2, Upload, Clapperboard } from "lucide-
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
-
-const DURATIONS = [5, 10];
+import { getAdapter, listAdapters } from "@/lib/adapters";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
@@ -357,6 +356,49 @@ function MusicSection({
   );
 }
 
+function ModelSelector({ modelId, onChange }: { modelId: string; onChange: (id: string) => void }) {
+  const adapters = listAdapters();
+  if (adapters.length <= 1) return null;
+
+  return (
+    <div className="mt-4">
+      <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+        Modelo
+      </label>
+      <div className="flex gap-1.5">
+        {adapters.map((a) => (
+          <button
+            key={a.id}
+            onClick={() => onChange(a.id)}
+            className={`flex-1 rounded-lg border py-1.5 font-mono text-[10px] transition-all ${
+              modelId === a.id
+                ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
+                : "border-white/5 text-text-secondary hover:border-white/10"
+            }`}
+          >
+            {a.displayName}
+          </button>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function getDurations(modelId: string): number[] {
+  try {
+    const adapter = getAdapter(modelId);
+    const durations: number[] = [];
+    for (let d = adapter.minDuration; d <= adapter.maxDuration; d++) {
+      if (d === 5 || d === 10 || d === adapter.minDuration || d === adapter.maxDuration) {
+        durations.push(d);
+      }
+    }
+    return Array.from(new Set(durations)).sort((a, b) => a - b);
+  } catch {
+    return [5, 10];
+  }
+}
+
 export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreviewVideo?: (url: string) => void; onExport?: () => void; onEditImage?: (sceneId: string) => void }) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
@@ -371,6 +413,9 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
   const generateScene = useProjectStore((s) => s.generateScene);
   const isGenerating = useProjectStore((s) => s.isGenerating);
   const selectScene = useProjectStore((s) => s.selectScene);
+  const modelId = useProjectStore((s) => s.modelId);
+  const setModelId = useProjectStore((s) => s.setModelId);
+  const durations = getDurations(modelId);
 
   const musicPrompt = useProjectStore((s) => s.musicPrompt);
   const musicUrl = useProjectStore((s) => s.musicUrl);
@@ -431,6 +476,8 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
               Cena {sceneIndex + 1}
             </p>
 
+            <ModelSelector modelId={modelId} onChange={setModelId} />
+
             <div className="mt-4">
               <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
                 Movimento
@@ -446,17 +493,17 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
                 Duração
               </label>
               <div className="flex gap-1.5">
-                {DURATIONS.map((d) => (
+                {durations.map((d) => (
                   <button
                     key={d}
                     onClick={() => setSceneDuration(selectedSceneId, d)}
-                    className={`flex-1 rounded-lg border py-1.5 font-mono text-label-sm transition-all ${
+                    className={`flex-1 rounded-lg border py-1.5 font-mono text-[10px] transition-all ${
                       scene.duration === d
                         ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
                         : "border-white/5 text-text-secondary hover:border-white/10"
                     }`}
                   >
-                    {d}s
+                    {d}s · {d}cr
                   </button>
                 ))}
               </div>
@@ -464,7 +511,9 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
 
             <div className="mt-4 flex gap-3 rounded-lg border border-white/5 px-3 py-2.5">
               <div className="flex-1">
-                <span className="block font-mono text-[9px] uppercase text-text-secondary">Custo</span>
+                <span className="block font-mono text-[9px] uppercase text-text-secondary">
+                  Custo {scene.status === "ready" ? "(real)" : "(est.)"}
+                </span>
                 <span className="block font-mono text-[13px] text-accent-gold">
                   {scene.costCredits} cr.
                 </span>

@@ -2,8 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAdapter } from "@/lib/adapters";
-import { normalizeKlingO1DurationSeconds } from "@/lib/adapters/kling-o1";
+import { getAdapter, DEFAULT_MODEL_ID } from "@/lib/adapters";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 
 fal.config({ credentials: process.env.FAL_KEY! });
@@ -19,16 +18,15 @@ export async function POST(req: NextRequest) {
   const formData = await req.formData();
   const photo = formData.get("photo") as File | null;
   const presetId = (formData.get("presetId") as string) ?? "push_in_serene";
-  const rawDuration = Number(formData.get("duration") ?? "5");
-  const modelId = (formData.get("modelId") as string) ?? "kling-o1-pro";
-  const duration =
-    modelId === "kling-o1-pro"
-      ? normalizeKlingO1DurationSeconds(rawDuration)
-      : rawDuration;
+  const duration = Number(formData.get("duration") ?? "5");
+  const modelId = (formData.get("modelId") as string) || DEFAULT_MODEL_ID;
 
   if (!photo) {
     return NextResponse.json({ error: "photo is required" }, { status: 400 });
   }
+
+  const adapter = getAdapter(modelId);
+  const creditCost = duration;
 
   const admin = createAdminClient();
 
@@ -36,8 +34,8 @@ export async function POST(req: NextRequest) {
   try {
     const { data: newBalance, error: debitError } = await admin.rpc("debit_credit", {
       p_user_id: user.id,
-      p_amount: 1,
-      p_reason: `Cena: preset=${presetId}, duration=${duration}s`,
+      p_amount: creditCost,
+      p_reason: `Cena: preset=${presetId}, duration=${duration}s, model=${modelId}, cost=${creditCost}cr`,
     });
 
     if (debitError) {
@@ -49,7 +47,6 @@ export async function POST(req: NextRequest) {
 
     debited = true;
 
-    const adapter = getAdapter(modelId);
     const photoUrl = await fal.storage.upload(photo);
 
     const { positive, negative, visionData, visionCost } = await buildPromptForScene({
@@ -72,15 +69,16 @@ export async function POST(req: NextRequest) {
       vision_data: visionData,
       final_positive_prompt: positive,
       final_negative_prompt: negative,
-      duration_seconds: duration,
-      cost: adapter.costPerSecond * duration,
-      request_payload: { photoUrl, presetId, duration, rawDuration, modelId },
+      duration_seconds: result.durationSeconds,
+      cost: adapter.costPerSecond * result.durationSeconds,
+      request_payload: { photoUrl, presetId, duration, modelId },
       response_payload: { videoUrl: result.videoUrl },
     });
 
     return NextResponse.json({
       videoUrl: result.videoUrl,
       duration: result.durationSeconds,
+      creditsCost: creditCost,
       visionData,
       prompt: positive,
       visionCost,
@@ -90,8 +88,8 @@ export async function POST(req: NextRequest) {
     if (debited) {
       await admin.rpc("add_credit", {
         p_user_id: user.id,
-        p_amount: 1,
-        p_reason: "Reembolso: erro na geração",
+        p_amount: creditCost,
+        p_reason: `Reembolso: erro na geração (${creditCost}cr)`,
         p_admin_id: null,
       });
     }

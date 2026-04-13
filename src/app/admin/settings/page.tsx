@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { ModelToggle } from "./model-toggle";
 
 export default async function AdminSettingsPage() {
   const supabase = createClient();
@@ -71,11 +72,7 @@ export default async function AdminSettingsPage() {
                     {m.supports_start_end_frame ? <span className="text-green-400">✓</span> : <span className="text-text-secondary">—</span>}
                   </td>
                   <td className="px-4 py-3 text-center">
-                    <span className={`rounded-full px-2 py-0.5 font-mono text-[9px] uppercase ${
-                      m.active ? "bg-green-500/10 text-green-400" : "bg-red-500/10 text-red-400"
-                    }`}>
-                      {m.active ? "Ativo" : "Inativo"}
-                    </span>
+                    <ModelToggle modelId={m.id} initialActive={m.active} />
                   </td>
                 </tr>
               ))}

@@ -22,6 +22,7 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { getPresetLabel } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
+import { getAdapter } from "@/lib/adapters";
 
 const ACCEPTED = ".jpg,.jpeg,.png,.webp";
 
@@ -293,9 +294,20 @@ function InsertMenu({
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
   const generateTransition = useProjectStore((s) => s.generateTransition);
   const transitions = useProjectStore((s) => s.transitions);
+  const modelId = useProjectStore((s) => s.modelId);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
+
+  let transitionDurations = [5, 10];
+  try {
+    const adapter = getAdapter(modelId);
+    const ds: number[] = [];
+    for (let d = adapter.minDuration; d <= adapter.maxDuration; d++) {
+      if (d === 5 || d === 10 || d === adapter.minDuration || d === adapter.maxDuration) ds.push(d);
+    }
+    transitionDurations = Array.from(new Set(ds)).sort((a, b) => a - b);
+  } catch { /* fallback */ }
 
   const hasTransition = fromSceneId && toSceneId
     ? transitions.some((t) => t.id === `t-${fromSceneId}-${toSceneId}` && t.status !== "idle")
@@ -421,13 +433,13 @@ function InsertMenu({
                   <button onClick={() => setShowDurationPicker(false)} className="font-mono text-[10px] text-text-secondary hover:text-[var(--text)]">←</button>
                   <span className="font-mono text-[10px] text-accent-gold">Duração da transição</span>
                 </div>
-                {[5, 10].map((d) => (
+                {transitionDurations.map((d) => (
                   <button
                     key={d}
                     onClick={() => handleGenerateTransition(d)}
                     className="flex w-full items-center justify-between px-3 py-2.5 font-mono text-[11px] text-[var(--text)] transition-colors hover:bg-white/5"
                   >
-                    <span>{d} segundos</span>
+                    <span>{d}s · {d} cr.</span>
                     <span className="text-[9px] text-text-secondary">~${(d * 0.112).toFixed(2)}</span>
                   </button>
                 ))}

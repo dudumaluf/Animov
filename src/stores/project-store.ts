@@ -6,7 +6,7 @@ import {
   parsePortableProjectJson,
   portableToScene,
 } from "@/lib/project-portable";
-import { normalizeKlingO1DurationSeconds } from "@/lib/adapters/kling-o1";
+import { DEFAULT_MODEL_ID } from "@/lib/adapters";
 
 export type Scene = {
   id: string;
@@ -74,7 +74,7 @@ export type ProjectStore = {
   generateMusic: () => Promise<void>;
   clearMusic: () => void;
 
-  updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string) => void;
+  updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string, costCredits?: number) => void;
   generateAll: () => Promise<void>;
   generateScene: (sceneId: string) => Promise<void>;
 
@@ -121,7 +121,7 @@ function rebuildTransitions(scenes: Scene[], existingTransitions?: Transition[])
         presetId: "soft_dissolve_drift",
         enabled: true,
         status: "idle",
-        costCredits: 1,
+        costCredits: 5,
       });
     }
   }
@@ -182,7 +182,7 @@ export const useProjectStore = create<ProjectStore>()(
       projectId: "",
       supabaseProjectId: null,
       projectName: "Novo Projeto",
-      modelId: "kling-o1-pro",
+      modelId: DEFAULT_MODEL_ID,
       scenes: [],
       transitions: [],
       selectedSceneId: null,
@@ -229,7 +229,7 @@ export const useProjectStore = create<ProjectStore>()(
           status: "idle" as const,
           videoVersions: [],
           activeVersion: 0,
-          costCredits: 1,
+          costCredits: 5,
         }));
 
         const fileMap: Record<string, File> = {};
@@ -286,7 +286,7 @@ export const useProjectStore = create<ProjectStore>()(
           status: "idle",
           videoVersions: [],
           activeVersion: 0,
-          costCredits: 1,
+          costCredits: 5,
         };
         set((state) => {
           const scenes = [...state.scenes];
@@ -411,10 +411,9 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       setSceneDuration: (sceneId, duration) => {
-        const d = normalizeKlingO1DurationSeconds(duration);
         set((state) => ({
           scenes: state.scenes.map((s) =>
-            s.id === sceneId ? { ...s, duration: d } : s,
+            s.id === sceneId ? { ...s, duration, costCredits: s.status === "ready" ? s.costCredits : duration } : s,
           ),
           isDirty: true,
         }));
@@ -458,8 +457,6 @@ export const useProjectStore = create<ProjectStore>()(
         const toScene = state.scenes.find((s) => s.id === toSceneId);
         if (!fromScene || !toScene) return;
 
-        const d = normalizeKlingO1DurationSeconds(duration);
-
         const getPhotoUrl = (scene: typeof fromScene) => {
           if (scene.photoUrl && scene.photoUrl.startsWith("http")) return scene.photoUrl;
           if (scene.photoDataUrl) return scene.photoDataUrl;
@@ -481,7 +478,7 @@ export const useProjectStore = create<ProjectStore>()(
           const res = await fetch("/api/generate-transition", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ startImageUrl, endImageUrl, duration: d }),
+            body: JSON.stringify({ startImageUrl, endImageUrl, duration, modelId: state.modelId }),
           });
 
           if (!res.ok) {
@@ -490,9 +487,10 @@ export const useProjectStore = create<ProjectStore>()(
           }
 
           const data = await res.json();
+          const realCost = typeof data.creditsCost === "number" ? data.creditsCost : duration;
           set((state) => ({
             transitions: state.transitions.map((t) =>
-              t.id === transitionId ? { ...t, status: "ready" as const, videoUrl: data.videoUrl } : t,
+              t.id === transitionId ? { ...t, status: "ready" as const, videoUrl: data.videoUrl, costCredits: realCost } : t,
             ),
             isDirty: true,
           }));
@@ -554,15 +552,21 @@ export const useProjectStore = create<ProjectStore>()(
 
       clearMusic: () => set({ musicUrl: null, isDirty: true }),
 
-      updateSceneStatus: (sceneId, status, videoUrl) => {
+      updateSceneStatus: (sceneId, status, videoUrl, costCredits) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
             if (s.id !== sceneId) return s;
+            const update: Partial<Scene> = { status };
             if (videoUrl) {
               const versions = [...(s.videoVersions ?? []), videoUrl];
-              return { ...s, status, videoUrl, videoVersions: versions, activeVersion: versions.length - 1 };
+              update.videoUrl = videoUrl;
+              update.videoVersions = versions;
+              update.activeVersion = versions.length - 1;
             }
-            return { ...s, status };
+            if (typeof costCredits === "number") {
+              update.costCredits = costCredits;
+            }
+            return { ...s, ...update };
           }),
           isDirty: true,
         }));
@@ -627,7 +631,7 @@ export const useProjectStore = create<ProjectStore>()(
             photoUrl: s.photo_url,
             photoDataUrl: s.photo_url,
             presetId: s.prompt_generated ?? "push_in_serene",
-            duration: normalizeKlingO1DurationSeconds(Number(s.duration) || 5),
+            duration: Number(s.duration) || 5,
             status: s.status === "pending" ? "idle" : s.status,
             videoUrl: s.video_url ?? undefined,
             videoVersions: s.video_url ? [s.video_url] : [],
@@ -639,7 +643,7 @@ export const useProjectStore = create<ProjectStore>()(
             supabaseProjectId: supabaseId,
             projectId: supabaseId,
             projectName: data.project.name,
-            modelId: "kling-o1-pro",
+            modelId: DEFAULT_MODEL_ID,
             scenes,
             transitions: rebuildTransitions(scenes),
             selectedSceneId: null,
@@ -679,7 +683,7 @@ export const useProjectStore = create<ProjectStore>()(
         const scenes = data.scenes.map((ps) => {
           const s = portableToScene(ps);
           if (!uuidRe.test(s.id)) s.id = crypto.randomUUID();
-          return { ...s, duration: normalizeKlingO1DurationSeconds(s.duration) };
+          return s;
         });
 
         set({
@@ -790,7 +794,8 @@ export const useProjectStore = create<ProjectStore>()(
             }
 
             const data = await res.json();
-            get().updateSceneStatus(scene.id, "ready", data.videoUrl);
+            const realCost = typeof data.creditsCost === "number" ? data.creditsCost : scene.duration;
+            get().updateSceneStatus(scene.id, "ready", data.videoUrl, realCost);
             if (typeof data.duration === "number") {
               get().setSceneDuration(scene.id, data.duration);
             }
@@ -858,7 +863,8 @@ export const useProjectStore = create<ProjectStore>()(
           }
 
           const data = await res.json();
-          get().updateSceneStatus(sceneId, "ready", data.videoUrl);
+          const realCost = typeof data.creditsCost === "number" ? data.creditsCost : scene.duration;
+          get().updateSceneStatus(sceneId, "ready", data.videoUrl, realCost);
           if (typeof data.duration === "number") {
             get().setSceneDuration(sceneId, data.duration);
           }

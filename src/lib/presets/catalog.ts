@@ -2,6 +2,7 @@ export type PresetDefinition = {
   id: string;
   displayName: string;
   description: string;
+  arrow: string;
   type: "single" | "dual";
   visionTier: "fast" | "smart";
   visionSystemPrompt: string;
@@ -29,7 +30,7 @@ export function buildPromptFromTemplate(preset: PresetDefinition, visionData: Re
 export const PRESET_CATALOG: PresetDefinition[] = [
   {
     id: "push_in_serene",
-    displayName: "Avanço Suave",
+    arrow: "→",    displayName: "Avanço Suave",
     description: "Dolly lento em direção ao ponto focal principal",
     type: "single",
     visionTier: "fast",
@@ -46,7 +47,7 @@ Respond ONLY in JSON matching this schema:
 
   {
     id: "parallax_architectural",
-    displayName: "Parallax",
+    arrow: "↔",    displayName: "Parallax",
     description: "Movimento lateral revelando profundidade",
     type: "single",
     visionTier: "smart",
@@ -67,7 +68,7 @@ Respond ONLY in JSON matching this schema:
 
   {
     id: "golden_hour_drift",
-    displayName: "Golden Hour",
+    arrow: "◐",    displayName: "Golden Hour",
     description: "Drift contemplativo, luz natural",
     type: "single",
     visionTier: "fast",
@@ -83,7 +84,7 @@ Respond ONLY in JSON matching this schema:
 
   {
     id: "tilt_vertical",
-    displayName: "Tilt Vertical",
+    arrow: "↕",    displayName: "Tilt Vertical",
     description: "Tilt up ou down revelando altura",
     type: "single",
     visionTier: "fast",
@@ -100,7 +101,7 @@ Respond ONLY in JSON matching this schema:
 
   {
     id: "orbit_subtle",
-    displayName: "Giro Sutil",
+    arrow: "↻",    displayName: "Giro Sutil",
     description: "Micro-orbita ao redor do centro",
     type: "single",
     visionTier: "smart",
@@ -118,7 +119,7 @@ Respond ONLY in JSON matching this schema:
 
   {
     id: "rack_focus",
-    displayName: "Foco Viajante",
+    arrow: "⊙",    displayName: "Foco Viajante",
     description: "Foco viaja entre planos",
     type: "single",
     visionTier: "smart",
@@ -135,7 +136,7 @@ Respond ONLY in JSON matching this schema:
 
   {
     id: "depth_reveal",
-    displayName: "Reveal",
+    arrow: "⟵",    displayName: "Reveal",
     description: "Revelação a partir de elemento próximo",
     type: "single",
     visionTier: "smart",

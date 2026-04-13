@@ -19,21 +19,10 @@ import {
 } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 
-const ACCEPTED = ".jpg,.jpeg,.png,.webp";
+import { getPresetLabel } from "@/lib/presets";
+import { downloadVideoBlob } from "@/lib/utils/download";
 
-const PRESET_LABELS: Record<string, string> = {
-  push_in_serene: "Avanço Suave",
-  parallax_architectural: "Parallax",
-  tilt_vertical: "Tilt Vertical",
-  orbit_subtle: "Giro Sutil",
-  rack_focus: "Foco Viajante",
-  golden_hour_drift: "Golden Hour",
-  depth_reveal: "Reveal",
-  soft_dissolve_drift: "Dissolve",
-  continuous_camera: "Contínua",
-  match_cut: "Match Cut",
-  whip_pan: "Whip Pan",
-};
+const ACCEPTED = ".jpg,.jpeg,.png,.webp";
 
 function SortableSceneCard({
   sceneId,
@@ -108,16 +97,7 @@ function SortableSceneCard({
             <button
               onClick={async (e) => {
                 e.stopPropagation();
-                try {
-                  const res = await fetch(scene.videoUrl!);
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = `cena-${sceneIndex + 1}.mp4`;
-                  a.click();
-                  URL.revokeObjectURL(url);
-                } catch { /* ignore */ }
+                await downloadVideoBlob(scene.videoUrl!, `cena-${sceneIndex + 1}.mp4`);
               }}
               className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
             >
@@ -136,7 +116,7 @@ function SortableSceneCard({
         </div>
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
           <span className="truncate font-mono text-[10px] text-white/80">
-            {PRESET_LABELS[scene.presetId] ?? scene.presetId}
+            {getPresetLabel(scene.presetId)}
           </span>
           <div className="flex items-center gap-2">
             {(scene.videoVersions ?? []).length > 1 && (
@@ -411,16 +391,7 @@ function TransitionNode({
             <button
               onClick={async (e) => {
                 e.stopPropagation();
-                try {
-                  const res = await fetch(transition.videoUrl!);
-                  const blob = await res.blob();
-                  const url = URL.createObjectURL(blob);
-                  const a = document.createElement("a");
-                  a.href = url;
-                  a.download = "transicao.mp4";
-                  a.click();
-                  URL.revokeObjectURL(url);
-                } catch { /* ignore */ }
+                await downloadVideoBlob(transition.videoUrl!, "transicao.mp4");
               }}
               className="flex h-5 w-5 items-center justify-center rounded-full bg-black/60 text-white/60 hover:text-white"
             >

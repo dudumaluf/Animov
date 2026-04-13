@@ -3,17 +3,10 @@
 import Image from "next/image";
 import { useState, useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, Maximize2, ChevronDown, RotateCw, MoveUp, MoveRight, Focus, Sun, Layers, Music, Trash2, Upload, Clapperboard } from "lucide-react";
+import { X, Maximize2, ChevronDown, Music, Trash2, Upload, Clapperboard } from "lucide-react";
 
-const PRESETS = [
-  { id: "push_in_serene", label: "Avanço Suave", desc: "Dolly lento em direção ao ponto focal", icon: MoveRight, arrow: "→" },
-  { id: "parallax_architectural", label: "Parallax", desc: "Movimento lateral revelando profundidade", icon: MoveRight, arrow: "↔" },
-  { id: "tilt_vertical", label: "Tilt Vertical", desc: "Tilt up ou down revelando altura", icon: MoveUp, arrow: "↕" },
-  { id: "orbit_subtle", label: "Giro Sutil", desc: "Micro-orbita ao redor do centro", icon: RotateCw, arrow: "↻" },
-  { id: "rack_focus", label: "Foco Viajante", desc: "Foco viaja entre planos", icon: Focus, arrow: "⊙" },
-  { id: "golden_hour_drift", label: "Golden Hour", desc: "Drift contemplativo, luz natural", icon: Sun, arrow: "◐" },
-  { id: "depth_reveal", label: "Reveal", desc: "Revelação a partir de elemento próximo", icon: Layers, arrow: "⟵" },
-];
+import { PRESET_CATALOG } from "@/lib/presets";
+import { downloadVideoBlob } from "@/lib/utils/download";
 
 const DURATIONS = [3, 5, 7, 10];
 
@@ -104,7 +97,7 @@ function PresetSelector({
   onSelect: (id: string) => void;
 }) {
   const [open, setOpen] = useState(false);
-  const selected = PRESETS.find((p) => p.id === selectedId) ?? PRESETS[0]!;
+  const selected = PRESET_CATALOG.find((p) => p.id === selectedId) ?? PRESET_CATALOG[0]!;
 
   return (
     <div className="relative">
@@ -117,8 +110,8 @@ function PresetSelector({
             {selected.arrow}
           </span>
           <div>
-            <span className="block font-mono text-[12px] font-medium">{selected.label}</span>
-            <span className="block font-mono text-[9px] text-text-secondary">{selected.desc}</span>
+            <span className="block font-mono text-[12px] font-medium">{selected.displayName}</span>
+            <span className="block font-mono text-[9px] text-text-secondary">{selected.description}</span>
           </div>
         </div>
         <ChevronDown size={14} className={`text-text-secondary transition-transform ${open ? "rotate-180" : ""}`} />
@@ -128,7 +121,7 @@ function PresetSelector({
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
           <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
-            {PRESETS.map((preset) => {
+            {PRESET_CATALOG.map((preset) => {
               const isSelected = preset.id === selectedId;
               return (
                 <button
@@ -148,10 +141,10 @@ function PresetSelector({
                   </span>
                   <div className="min-w-0 flex-1">
                     <span className={`block font-mono text-[11px] font-medium ${isSelected ? "text-accent-gold" : ""}`}>
-                      {preset.label}
+                      {preset.displayName}
                     </span>
                     <span className="block truncate font-mono text-[9px] text-text-secondary">
-                      {preset.desc}
+                      {preset.description}
                     </span>
                   </div>
                   {isSelected && (
@@ -473,18 +466,7 @@ export function Inspector({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
 
             {scene.status === "ready" && scene.videoUrl && (
               <button
-                onClick={async () => {
-                  try {
-                    const res = await fetch(scene.videoUrl!);
-                    const blob = await res.blob();
-                    const url = URL.createObjectURL(blob);
-                    const a = document.createElement("a");
-                    a.href = url;
-                    a.download = `cena.mp4`;
-                    a.click();
-                    URL.revokeObjectURL(url);
-                  } catch { /* ignore */ }
-                }}
+                onClick={() => downloadVideoBlob(scene.videoUrl!, "cena.mp4")}
                 className="mt-2 w-full rounded-lg border border-white/10 py-2.5 font-mono text-label-sm text-text-secondary transition-all hover:border-white/20 hover:text-[var(--text)]"
               >
                 Baixar cena

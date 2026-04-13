@@ -1,15 +1,33 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { useProjectStore } from "@/stores/project-store";
+import { createClient } from "@/lib/supabase/client";
 import { ArrowLeft } from "lucide-react";
 
 export function EditorToolbar() {
   const { projectName, setProjectName, totalCost, scenes, isGenerating, generateAll, isSaving, isDirty } = useProjectStore();
   const [editing, setEditing] = useState(false);
+  const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const cost = totalCost();
+
+  useEffect(() => {
+    const supabase = createClient();
+    supabase.auth.getUser().then(({ data }) => {
+      if (data.user) {
+        supabase
+          .from("credits")
+          .select("balance")
+          .eq("user_id", data.user.id)
+          .single()
+          .then(({ data: credits }) => {
+            if (credits) setCreditBalance(credits.balance);
+          });
+      }
+    });
+  }, [isGenerating]);
 
   return (
     <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/5 px-4">
@@ -52,9 +70,15 @@ export function EditorToolbar() {
         </span>
       </div>
 
-      <div className="flex items-center gap-2">
-        <span className="font-mono text-label-sm text-text-secondary">
-          Custo: <span className="text-accent-gold">{cost} crédito{cost !== 1 ? "s" : ""}</span>
+      <div className="flex items-center gap-3">
+        {creditBalance !== null && (
+          <span className="font-mono text-label-sm text-text-secondary">
+            <span className="text-accent-gold">{creditBalance}</span> cr.
+          </span>
+        )}
+
+        <span className="font-mono text-[10px] text-text-secondary">
+          Custo: <span className="text-[var(--text)]">{cost}</span>
         </span>
 
         <button

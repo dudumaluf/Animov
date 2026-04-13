@@ -152,25 +152,24 @@ export default function EditorPage({
 
   // Wheel / trackpad zoom toward cursor
   // Must use native listener to be able to preventDefault on non-passive wheel
+  // Re-attach when viewport becomes available (it only renders after loading)
+  const viewportReady = mounted && !isLoading;
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
 
     const onWheel = (e: WheelEvent) => {
-      // Pinch-to-zoom on trackpad fires as ctrlKey + wheel
-      // Regular trackpad scroll fires without ctrlKey
-      // We want both to zoom the canvas, not scroll the page
       e.preventDefault();
 
       const isPinch = e.ctrlKey || e.metaKey;
-      const sensitivity = isPinch ? 0.008 : 0.002;
+      // Trackpad two-finger scroll sends larger deltaY (20-100px) vs pinch (~0.5-5)
+      const sensitivity = isPinch ? 0.008 : 0.004;
       const rawDelta = -e.deltaY * sensitivity;
 
       setZoom((prevZoom) => {
         const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, prevZoom + rawDelta));
         if (newZoom === prevZoom) return prevZoom;
 
-        // Zoom toward the cursor position
         const rect = vp.getBoundingClientRect();
         const cx = e.clientX - rect.left - rect.width / 2;
         const cy = e.clientY - rect.top - rect.height / 2;
@@ -186,7 +185,7 @@ export default function EditorPage({
 
     vp.addEventListener("wheel", onWheel, { passive: false });
     return () => vp.removeEventListener("wheel", onWheel);
-  }, []);
+  }, [viewportReady]);
 
   // Keyboard shortcuts
   useEffect(() => {

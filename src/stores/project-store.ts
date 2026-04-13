@@ -1,6 +1,6 @@
 import { create } from "zustand";
 import { persist, type StorageValue } from "zustand/middleware";
-import { nanoid } from "nanoid";
+const uuid = () => crypto.randomUUID();
 import {
   buildPortableProject,
   parsePortableProjectJson,
@@ -92,7 +92,7 @@ export type ProjectStore = {
 
 function promoteReadyTransition(t: Transition): Scene {
   return {
-    id: `promoted-${t.id}`,
+    id: crypto.randomUUID(),
     photoUrl: t.videoUrl!,
     photoDataUrl: t.videoUrl!,
     presetId: "push_in_serene",
@@ -219,7 +219,7 @@ export const useProjectStore = create<ProjectStore>()(
         })),
 
       addPhotos: (files) => {
-        const ids = files.map(() => nanoid(8));
+        const ids = files.map(() => uuid());
         const newScenes: Scene[] = files.map((file, i) => ({
           id: ids[i]!,
           photoUrl: URL.createObjectURL(file),
@@ -276,7 +276,7 @@ export const useProjectStore = create<ProjectStore>()(
       },
 
       insertPhotoAt: (index, file) => {
-        const id = nanoid(8);
+        const id = uuid();
         const newScene: Scene = {
           id,
           photoUrl: URL.createObjectURL(file),
@@ -671,13 +671,18 @@ export const useProjectStore = create<ProjectStore>()(
         if (!parsed.ok) return parsed;
 
         const data = parsed.data;
-        const scenes = data.scenes.map(portableToScene);
+        const uuidRe = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+        const scenes = data.scenes.map((ps) => {
+          const s = portableToScene(ps);
+          if (!uuidRe.test(s.id)) s.id = crypto.randomUUID();
+          return s;
+        });
 
         set({
           projectName: data.projectName,
           modelId: data.modelId,
           scenes,
-          transitions: data.transitions,
+          transitions: rebuildTransitions(scenes),
           hasEditNode: data.hasEditNode,
           editNodeSelected: false,
           musicPrompt: data.musicPrompt,

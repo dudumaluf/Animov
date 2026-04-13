@@ -11,9 +11,11 @@ import { ImageEditModal } from "@/components/editor/image-edit-modal";
 import { composeVideos, downloadBlob } from "@/lib/composition/compose";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 
-const ZOOM_MIN = 0.5;
+const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 2.0;
-const ZOOM_STEP = 0.15;
+const ZOOM_STEP = 0.1;
+
+type CanvasMode = "fit" | "free";
 
 export default function EditorPage({
   params,
@@ -21,20 +23,31 @@ export default function EditorPage({
   params: { projectId: string };
 }) {
   const scenes = useProjectStore((s) => s.scenes);
+  const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
+  const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const isDirty = useProjectStore((s) => s.isDirty);
   const initProject = useProjectStore((s) => s.initProject);
   const saveToSupabase = useProjectStore((s) => s.saveToSupabase);
+
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
-  const [zoom, setZoom] = useState(1);
   const [mounted, setMounted] = useState(false);
   const [composing, setComposing] = useState(false);
-  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
-  const canvasRef = useRef<HTMLDivElement>(null);
 
-  useEffect(() => {
-    setMounted(true);
-  }, []);
+  const [canvasMode, setCanvasMode] = useState<CanvasMode>("fit");
+  const [zoom, setZoom] = useState(1);
+  const [panX, setPanX] = useState(0);
+  const [panY, setPanY] = useState(0);
+  const [isPanning, setIsPanning] = useState(false);
+  const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+
+  const viewportRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const saveTimer = useRef<ReturnType<typeof setTimeout>>();
+
+  const inspectorOpen = !!(selectedSceneId || editNodeSelected);
+
+  useEffect(() => { setMounted(true); }, []);
 
   useEffect(() => {
     if (mounted) initProject(params.projectId);
@@ -43,18 +56,89 @@ export default function EditorPage({
   useEffect(() => {
     if (!isDirty) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => {
-      saveToSupabase();
-    }, 3000);
+    saveTimer.current = setTimeout(() => { saveToSupabase(); }, 3000);
     return () => clearTimeout(saveTimer.current);
   }, [isDirty, scenes, saveToSupabase]);
 
+  // Auto-fit calculation
+  const fitToView = useCallback(() => {
+    if (!viewportRef.current || !contentRef.current) return;
+
+    const vw = viewportRef.current.clientWidth;
+    const vh = viewportRef.current.clientHeight;
+    const cw = contentRef.current.scrollWidth;
+    const ch = contentRef.current.scrollHeight;
+
+    if (cw === 0 || ch === 0) return;
+
+    const padding = 80;
+    const fitZoom = Math.min(
+      (vw - padding) / cw,
+      (vh - padding) / ch,
+      1.2,
+    );
+    const clampedZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, fitZoom));
+
+    setZoom(clampedZoom);
+    setPanX(0);
+    setPanY(0);
+    setCanvasMode("fit");
+  }, []);
+
+  // Refit when inspector toggles, scenes change, or window resizes
+  useEffect(() => {
+    if (canvasMode === "fit") {
+      const timer = setTimeout(fitToView, 50);
+      return () => clearTimeout(timer);
+    }
+  }, [inspectorOpen, scenes.length, canvasMode, fitToView]);
+
+  useEffect(() => {
+    const onResize = () => { if (canvasMode === "fit") fitToView(); };
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, [canvasMode, fitToView]);
+
+  // Initial fit
+  useEffect(() => {
+    if (mounted && scenes.length > 0) {
+      const timer = setTimeout(fitToView, 200);
+      return () => clearTimeout(timer);
+    }
+  }, [mounted, fitToView, scenes.length]);
+
+  // Pan handlers
+  const handleMouseDown = useCallback((e: React.MouseEvent) => {
+    if (e.target !== e.currentTarget && !(e.target as HTMLElement).closest("[data-canvas-bg]")) return;
+    e.preventDefault();
+    setIsPanning(true);
+    panStart.current = { x: e.clientX, y: e.clientY, panX, panY };
+  }, [panX, panY]);
+
+  const handleMouseMove = useCallback((e: React.MouseEvent) => {
+    if (!isPanning) return;
+    const dx = e.clientX - panStart.current.x;
+    const dy = e.clientY - panStart.current.y;
+    setPanX(panStart.current.panX + dx);
+    setPanY(panStart.current.panY + dy);
+    setCanvasMode("free");
+  }, [isPanning]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsPanning(false);
+  }, []);
+
+  // Scroll zoom → free mode
   const handleWheel = useCallback((e: React.WheelEvent) => {
     if (e.ctrlKey || e.metaKey) {
       e.preventDefault();
+      const delta = -e.deltaY * 0.003;
+      setZoom((z) => Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, z + delta)));
+      setCanvasMode("free");
     }
   }, []);
 
+  // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
@@ -63,16 +147,18 @@ export default function EditorPage({
       } else if (e.key === "=" || e.key === "+") {
         e.preventDefault();
         setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP));
+        setCanvasMode("free");
       } else if (e.key === "-") {
         e.preventDefault();
         setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP));
+        setCanvasMode("free");
       } else if (e.key === "0") {
-        setZoom(1);
+        fitToView();
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [saveToSupabase]);
+  }, [saveToSupabase, fitToView]);
 
   const handleExport = useCallback(async () => {
     const state = useProjectStore.getState();
@@ -127,54 +213,89 @@ export default function EditorPage({
           <DropZone />
         </div>
       ) : (
-        <div className="relative flex-1 overflow-hidden">
-          <div className="flex h-full flex-col">
+        <div className="flex flex-1 overflow-hidden">
+          {/* Canvas area */}
+          <div className="relative flex-1 overflow-hidden">
             <div
-              ref={canvasRef}
-              className="flex flex-1 items-center justify-center overflow-auto p-6"
+              ref={viewportRef}
+              data-canvas-bg="true"
+              className={`flex h-full w-full items-center justify-center overflow-hidden ${
+                isPanning ? "cursor-grabbing" : "cursor-grab"
+              }`}
               onWheel={handleWheel}
-              onClick={() => useProjectStore.getState().selectScene(null)}
+              onMouseDown={handleMouseDown}
+              onMouseMove={handleMouseMove}
+              onMouseUp={handleMouseUp}
+              onMouseLeave={handleMouseUp}
+              onClick={(e) => {
+                if (e.target === e.currentTarget || (e.target as HTMLElement).hasAttribute("data-canvas-bg")) {
+                  useProjectStore.getState().selectScene(null);
+                }
+              }}
             >
               <div
-                className="origin-center transition-transform duration-150"
-                style={{ transform: `scale(${zoom})` }}
+                ref={contentRef}
+                className="transition-transform duration-150"
+                style={{
+                  transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
+                  transformOrigin: "center center",
+                }}
               >
                 <FilmStrip onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} />
               </div>
             </div>
 
-            <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm z-20">
+            {/* Zoom controls */}
+            <div className="absolute bottom-4 left-4 z-20 flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm">
               <button
-                onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP))}
+                onClick={() => { setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP)); setCanvasMode("free"); }}
                 className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                title="Zoom out"
+                title="Zoom out (-)"
               >
                 <ZoomOut size={14} />
               </button>
               <button
-                onClick={() => setZoom(1)}
+                onClick={fitToView}
                 className="flex h-7 items-center justify-center rounded px-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                title="Reset zoom"
+                title="Fit to view (0)"
               >
                 {Math.round(zoom * 100)}%
               </button>
               <button
-                onClick={() => setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP))}
+                onClick={() => { setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP)); setCanvasMode("free"); }}
                 className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                title="Zoom in"
+                title="Zoom in (+)"
               >
                 <ZoomIn size={14} />
               </button>
               <div className="mx-0.5 h-4 w-px bg-white/5" />
               <button
-                onClick={() => setZoom(1)}
-                className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                title="Fit to screen"
+                onClick={fitToView}
+                className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+                  canvasMode === "fit"
+                    ? "text-accent-gold"
+                    : "text-text-secondary hover:bg-white/5 hover:text-[var(--text)]"
+                }`}
+                title="Fit all (0)"
               >
                 <Maximize size={14} />
               </button>
             </div>
+
+            {/* Mode indicator */}
+            {canvasMode === "free" && (
+              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+                <button
+                  onClick={fitToView}
+                  className="rounded-full border border-white/5 bg-[#0A0A09]/90 px-3 py-1 font-mono text-[9px] text-text-secondary backdrop-blur-sm transition-colors hover:text-accent-gold"
+                >
+                  Press 0 or click to refit
+                </button>
+              </div>
+            )}
           </div>
+
+          {/* Inspector (flex, not overlay) */}
           <Inspector onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} onEditImage={setEditingSceneId} />
         </div>
       )}

@@ -260,9 +260,36 @@ export const useProjectStore = create<ProjectStore>()(
 
       removeScene: (id) => {
         set((state) => {
-          const scenes = state.scenes.filter((s) => s.id !== id);
+          const sceneIndex = state.scenes.findIndex((s) => s.id === id);
+          let scenes = [...state.scenes];
+
+          const readyTransitions = state.transitions.filter(
+            (t) => (t.fromSceneId === id || t.toSceneId === id) && t.status === "ready" && t.videoUrl,
+          );
+
+          const newScenes: Scene[] = readyTransitions.map((t) => ({
+            id: `promoted-${t.id}`,
+            photoUrl: t.videoUrl!,
+            photoDataUrl: t.videoUrl!,
+            presetId: "push_in_serene",
+            duration: 3,
+            status: "ready" as const,
+            videoUrl: t.videoUrl!,
+            videoVersions: [t.videoUrl!],
+            activeVersion: 0,
+            costCredits: 0,
+          }));
+
+          scenes = scenes.filter((s) => s.id !== id);
+
+          if (newScenes.length > 0) {
+            const insertAt = Math.min(sceneIndex, scenes.length);
+            scenes.splice(insertAt, 0, ...newScenes);
+          }
+
           const files = { ...state._photoFiles };
           delete files[id];
+
           return {
             scenes,
             transitions: rebuildTransitions(scenes, state.transitions),

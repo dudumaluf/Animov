@@ -7,6 +7,7 @@ import { FilmStrip } from "@/components/editor/film-strip";
 import { Inspector } from "@/components/editor/inspector";
 import { DropZone } from "@/components/editor/drop-zone";
 import { VideoPreviewModal } from "@/components/editor/video-preview-modal";
+import { ImageEditModal } from "@/components/editor/image-edit-modal";
 import { composeVideos, downloadBlob } from "@/lib/composition/compose";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 
@@ -24,6 +25,7 @@ export default function EditorPage({
   const initProject = useProjectStore((s) => s.initProject);
   const saveToSupabase = useProjectStore((s) => s.saveToSupabase);
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
+  const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [zoom, setZoom] = useState(1);
   const [mounted, setMounted] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -173,7 +175,7 @@ export default function EditorPage({
               </button>
             </div>
           </div>
-          <Inspector onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} />
+          <Inspector onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} onEditImage={setEditingSceneId} />
         </div>
       )}
 
@@ -183,6 +185,34 @@ export default function EditorPage({
           onClose={() => setPreviewVideoUrl(null)}
         />
       )}
+
+      {editingSceneId && (() => {
+        const editScene = useProjectStore.getState().scenes.find((s) => s.id === editingSceneId);
+        if (!editScene) return null;
+        const imgUrl = editScene.photoDataUrl ?? editScene.photoUrl;
+        return (
+          <ImageEditModal
+            imageUrl={imgUrl}
+            onClose={() => setEditingSceneId(null)}
+            onResult={(editedUrl, mode) => {
+              if (mode === "replace") {
+                useProjectStore.getState().updateSceneImage(editingSceneId, editedUrl);
+              } else {
+                const idx = useProjectStore.getState().scenes.findIndex((s) => s.id === editingSceneId);
+                if (idx >= 0) {
+                  fetch(editedUrl)
+                    .then((r) => r.blob())
+                    .then((blob) => {
+                      const file = new File([blob], "edited.png", { type: "image/png" });
+                      useProjectStore.getState().insertPhotoAt(idx + 1, file);
+                    });
+                }
+              }
+              setEditingSceneId(null);
+            }}
+          />
+        );
+      })()}
     </div>
   );
 }

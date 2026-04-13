@@ -56,6 +56,7 @@ export type ProjectStore = {
   setScenePreset: (sceneId: string, presetId: string) => void;
   setSceneDuration: (sceneId: string, duration: number) => void;
   setActiveVersion: (sceneId: string, version: number) => void;
+  updateSceneImage: (sceneId: string, newImageUrl: string) => void;
 
   toggleTransition: (transitionId: string) => void;
   generateTransition: (fromSceneId: string, toSceneId: string, duration?: number) => Promise<void>;
@@ -315,6 +316,17 @@ export const useProjectStore = create<ProjectStore>()(
             const clamped = Math.max(0, Math.min(version, versions.length - 1));
             return { ...s, activeVersion: clamped, videoUrl: versions[clamped] ?? s.videoUrl };
           }),
+          isDirty: true,
+        }));
+      },
+
+      updateSceneImage: (sceneId, newImageUrl) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId
+              ? { ...s, photoUrl: newImageUrl, photoDataUrl: newImageUrl, status: "idle" as const, videoUrl: undefined, videoVersions: [], activeVersion: 0 }
+              : s,
+          ),
           isDirty: true,
         }));
       },

@@ -332,7 +332,7 @@ function MusicSection({
   );
 }
 
-export function Inspector({ onPreviewVideo, onExport }: { onPreviewVideo?: (url: string) => void; onExport?: () => void }) {
+export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreviewVideo?: (url: string) => void; onExport?: () => void; onEditImage?: (sceneId: string) => void }) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) =>
@@ -463,6 +463,15 @@ export function Inspector({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
             >
               {scene.status === "ready" ? "Regenerar cena" : scene.status === "generating" ? "Gerando..." : "Gerar esta cena"}
             </button>
+
+            {onEditImage && (
+              <button
+                onClick={() => onEditImage(selectedSceneId)}
+                className="mt-2 w-full rounded-lg border border-white/10 py-2.5 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
+              >
+                Editar imagem
+              </button>
+            )}
 
             {scene.status === "ready" && scene.videoUrl && (
               <button

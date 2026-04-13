@@ -44,18 +44,19 @@ export async function PATCH(
 
   const body = await req.json();
 
-  if (body.name) {
-    await supabase
-      .from("projects")
-      .update({ name: body.name })
-      .eq("id", params.id);
-  }
+  const projectUpdate: Record<string, unknown> = {};
+  if (body.name) projectUpdate.name = body.name;
+  if (body.metadata !== undefined) projectUpdate.metadata = body.metadata;
 
-  if (body.metadata !== undefined) {
-    await supabase
+  if (Object.keys(projectUpdate).length > 0) {
+    const { error } = await supabase
       .from("projects")
-      .update({ metadata: body.metadata })
+      .update(projectUpdate)
       .eq("id", params.id);
+    if (error) {
+      console.error("[projects/update-project]", error);
+      return NextResponse.json({ error: error.message }, { status: 500 });
+    }
   }
 
   if (Array.isArray(body.scenes) && body.scenes.length > 0) {

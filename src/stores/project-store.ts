@@ -1,6 +1,11 @@
 import { create } from "zustand";
 import { persist, type StorageValue } from "zustand/middleware";
 import { nanoid } from "nanoid";
+import {
+  buildPortableProject,
+  parsePortableProjectJson,
+  portableToScene,
+} from "@/lib/project-portable";
 
 export type Scene = {
   id: string;
@@ -74,6 +79,11 @@ export type ProjectStore = {
   initProject: (urlProjectId: string) => Promise<void>;
   saveToSupabase: () => Promise<void>;
   loadFromSupabase: (supabaseId: string) => Promise<void>;
+
+  exportProjectJson: () => { json: string; skippedSceneIds: string[] };
+  importPortableProject: (
+    json: string,
+  ) => { ok: true; skippedSceneIds: string[] } | { ok: false; error: string };
 
   totalCost: () => number;
   reset: () => void;
@@ -572,6 +582,51 @@ export const useProjectStore = create<ProjectStore>()(
         } catch (err) {
           console.error("[loadFromSupabase]", err);
         }
+      },
+
+      exportProjectJson: () => {
+        const state = get();
+        const { data, skippedSceneIds } = buildPortableProject({
+          projectName: state.projectName,
+          modelId: state.modelId,
+          scenes: state.scenes,
+          transitions: state.transitions,
+          hasEditNode: state.hasEditNode,
+          musicPrompt: state.musicPrompt,
+          musicUrl: state.musicUrl,
+        });
+        return {
+          json: JSON.stringify(data, null, 2),
+          skippedSceneIds,
+        };
+      },
+
+      importPortableProject: (json) => {
+        const parsed = parsePortableProjectJson(json);
+        if (!parsed.ok) return parsed;
+
+        const data = parsed.data;
+        const scenes = data.scenes.map(portableToScene);
+
+        set({
+          projectName: data.projectName,
+          modelId: data.modelId,
+          scenes,
+          transitions: data.transitions,
+          hasEditNode: data.hasEditNode,
+          editNodeSelected: false,
+          musicPrompt: data.musicPrompt,
+          musicUrl: data.musicUrl,
+          selectedSceneId: null,
+          isDirty: true,
+          _photoFiles: {},
+        });
+
+        queueMicrotask(() => {
+          get().saveToSupabase();
+        });
+
+        return { ok: true, skippedSceneIds: [] };
       },
 
       saveToSupabase: async () => {

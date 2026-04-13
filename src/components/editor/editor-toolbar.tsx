@@ -4,14 +4,61 @@ import { useRef, useState, useEffect } from "react";
 import Link from "next/link";
 import { useProjectStore } from "@/stores/project-store";
 import { createClient } from "@/lib/supabase/client";
-import { ArrowLeft } from "lucide-react";
+import { ArrowLeft, Download, Upload } from "lucide-react";
 
 export function EditorToolbar() {
-  const { projectName, setProjectName, totalCost, scenes, isGenerating, generateAll, isSaving, isDirty } = useProjectStore();
+  const {
+    projectName,
+    setProjectName,
+    totalCost,
+    scenes,
+    isGenerating,
+    generateAll,
+    isSaving,
+    isDirty,
+    exportProjectJson,
+    importPortableProject,
+  } = useProjectStore();
   const [editing, setEditing] = useState(false);
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const importBackupRef = useRef<HTMLInputElement>(null);
   const cost = totalCost();
+
+  const handleExportBackup = () => {
+    const { json, skippedSceneIds } = exportProjectJson();
+    const blob = new Blob([json], { type: "application/json" });
+    const a = document.createElement("a");
+    const safeName = projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
+    a.href = URL.createObjectURL(blob);
+    a.download = `${safeName}-backup.json`;
+    a.click();
+    URL.revokeObjectURL(a.href);
+    if (skippedSceneIds.length > 0) {
+      window.alert(
+        `Backup salvo. ${skippedSceneIds.length} cena(s) não entraram no arquivo porque ainda não têm URL pública (foto só local). Gere vídeo ou aguarde o upload da foto.`,
+      );
+    }
+  };
+
+  const handleImportBackup = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = "";
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = String(reader.result ?? "");
+      const res = importPortableProject(text);
+      if (!res.ok) {
+        window.alert(res.error);
+        return;
+      }
+      window.alert(
+        "Projeto carregado a partir do backup. Estamos sincronizando com o servidor (aguarde “Salvo”).",
+      );
+    };
+    reader.readAsText(file);
+  };
 
   useEffect(() => {
     const supabase = createClient();
@@ -80,6 +127,35 @@ export function EditorToolbar() {
         <span className="font-mono text-[10px] text-text-secondary">
           Custo: <span className="text-[var(--text)]">{cost}</span>
         </span>
+
+        <input
+          ref={importBackupRef}
+          type="file"
+          accept="application/json,.json"
+          className="hidden"
+          onChange={handleImportBackup}
+        />
+
+        <button
+          type="button"
+          title="Baixar backup JSON (URLs públicas: Supabase + fal.ai)"
+          onClick={handleExportBackup}
+          disabled={scenes.length === 0}
+          className="flex h-9 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 font-mono text-[10px] uppercase tracking-wider text-text-secondary transition-colors hover:border-white/20 hover:text-[var(--text)] disabled:opacity-30"
+        >
+          <Download size={14} />
+          Backup
+        </button>
+
+        <button
+          type="button"
+          title="Restaurar projeto a partir de um backup JSON"
+          onClick={() => importBackupRef.current?.click()}
+          className="flex h-9 items-center gap-1.5 rounded-lg border border-white/10 px-2.5 font-mono text-[10px] uppercase tracking-wider text-text-secondary transition-colors hover:border-white/20 hover:text-[var(--text)]"
+        >
+          <Upload size={14} />
+          Importar
+        </button>
 
         <button
           disabled={scenes.length === 0 || isGenerating}

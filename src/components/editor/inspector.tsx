@@ -3,7 +3,7 @@
 import Image from "next/image";
 import { useState, useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, Maximize2, ChevronDown, Music, Trash2, Upload, Clapperboard } from "lucide-react";
+import { X, Maximize2, ChevronDown, Trash2, Upload, Clapperboard } from "lucide-react";
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
@@ -157,6 +157,31 @@ function PresetSelector({
         </>
       )}
     </div>
+  );
+}
+
+function ExportButton({ onExport }: { onExport: () => Promise<void> | void }) {
+  const [exporting, setExporting] = useState(false);
+  const readyCount = useProjectStore((s) => s.scenes.filter((sc) => sc.status === "ready").length);
+
+  const handleExport = async () => {
+    if (exporting) return;
+    setExporting(true);
+    try {
+      await onExport();
+    } finally {
+      setExporting(false);
+    }
+  };
+
+  return (
+    <button
+      onClick={handleExport}
+      disabled={readyCount < 1 || exporting}
+      className="mt-4 w-full rounded-lg bg-accent-gold py-2.5 font-mono text-label-sm uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed"
+    >
+      {exporting ? "Exportando..." : "Baixar Edit Final"}
+    </button>
   );
 }
 
@@ -524,13 +549,7 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
             </div>
 
             {onExport && (
-              <button
-                onClick={onExport}
-                disabled={useProjectStore.getState().scenes.filter((s) => s.status === "ready").length < 1}
-                className="mt-4 w-full rounded-lg bg-accent-gold py-2.5 font-mono text-label-sm uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed"
-              >
-                Baixar Edit Final
-              </button>
+              <ExportButton onExport={onExport} />
             )}
           </div>
         </div>

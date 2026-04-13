@@ -79,6 +79,21 @@ export type ProjectStore = {
   reset: () => void;
 };
 
+function promoteReadyTransition(t: Transition): Scene {
+  return {
+    id: `promoted-${t.id}`,
+    photoUrl: t.videoUrl!,
+    photoDataUrl: t.videoUrl!,
+    presetId: "push_in_serene",
+    duration: 3,
+    status: "ready" as const,
+    videoUrl: t.videoUrl!,
+    videoVersions: [t.videoUrl!],
+    activeVersion: 0,
+    costCredits: 0,
+  };
+}
+
 function rebuildTransitions(scenes: Scene[], existingTransitions?: Transition[]): Transition[] {
   const transitions: Transition[] = [];
   for (let i = 0; i < scenes.length - 1; i++) {
@@ -226,6 +241,19 @@ export const useProjectStore = create<ProjectStore>()(
         set((state) => {
           const scenes = [...state.scenes];
           scenes.splice(index, 0, newScene);
+
+          const newPairs = new Set<string>();
+          for (let i = 0; i < scenes.length - 1; i++) {
+            newPairs.add(`t-${scenes[i]!.id}-${scenes[i + 1]!.id}`);
+          }
+          const orphaned = state.transitions.filter(
+            (t) => t.status === "ready" && t.videoUrl && !newPairs.has(t.id),
+          );
+          const promoted = orphaned.map(promoteReadyTransition);
+          for (const p of promoted) {
+            scenes.splice(Math.max(0, index), 0, p);
+          }
+
           return {
             scenes,
             transitions: rebuildTransitions(scenes, state.transitions),
@@ -267,18 +295,7 @@ export const useProjectStore = create<ProjectStore>()(
             (t) => (t.fromSceneId === id || t.toSceneId === id) && t.status === "ready" && t.videoUrl,
           );
 
-          const newScenes: Scene[] = readyTransitions.map((t) => ({
-            id: `promoted-${t.id}`,
-            photoUrl: t.videoUrl!,
-            photoDataUrl: t.videoUrl!,
-            presetId: "push_in_serene",
-            duration: 3,
-            status: "ready" as const,
-            videoUrl: t.videoUrl!,
-            videoVersions: [t.videoUrl!],
-            activeVersion: 0,
-            costCredits: 0,
-          }));
+          const newScenes = readyTransitions.map(promoteReadyTransition);
 
           scenes = scenes.filter((s) => s.id !== id);
 
@@ -309,6 +326,23 @@ export const useProjectStore = create<ProjectStore>()(
           const [moved] = scenes.splice(fromIndex, 1);
           if (!moved) return state;
           scenes.splice(toIndex, 0, moved);
+
+          const newPairs = new Set<string>();
+          for (let i = 0; i < scenes.length - 1; i++) {
+            newPairs.add(`t-${scenes[i]!.id}-${scenes[i + 1]!.id}`);
+          }
+
+          const orphaned = state.transitions.filter(
+            (t) => t.status === "ready" && t.videoUrl && !newPairs.has(t.id),
+          );
+
+          const promoted = orphaned.map(promoteReadyTransition);
+          for (const p of promoted) {
+            const fromIdx = scenes.findIndex((s) => s.id === moved.id);
+            const insertAt = Math.max(0, fromIdx);
+            scenes.splice(insertAt, 0, p);
+          }
+
           return {
             scenes,
             transitions: rebuildTransitions(scenes, state.transitions),

@@ -25,11 +25,6 @@ export default async function AccountPage() {
     .order("created_at", { ascending: false })
     .limit(20);
 
-  const { data: projects } = await supabase
-    .from("projects")
-    .select("id", { count: "exact", head: true })
-    .eq("user_id", user.id);
-
   return (
     <main className="p-8">
       <h1 className="font-display text-display-lg">Minha Conta</h1>

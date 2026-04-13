@@ -334,6 +334,18 @@ export default function EditorPage({
           />
         );
       })()}
+
+      {composing && (
+        <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/70 backdrop-blur-sm">
+          <div className="flex flex-col items-center gap-4 rounded-2xl border border-white/10 bg-[#141413] px-10 py-8 shadow-2xl">
+            <div className="h-10 w-10 animate-spin rounded-full border-[3px] border-white/10 border-t-accent-gold" />
+            <p className="font-mono text-label-sm uppercase tracking-widest text-white/70">
+              Exportando vídeo...
+            </p>
+            <p className="text-xs text-white/30">Isso pode levar alguns segundos</p>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

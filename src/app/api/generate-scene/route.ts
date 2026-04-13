@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
       visionCost,
       creditsRemaining: newBalance,
     });
-  } catch (err) {
+  } catch (err: unknown) {
     if (debited) {
       await admin.rpc("add_credit", {
         p_user_id: user.id,
@@ -91,9 +91,13 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    console.error("[generate-scene]", err);
+    const falBody = (err as Record<string, unknown>)?.body;
+    const detail = falBody && typeof falBody === "object" ? JSON.stringify(falBody) : undefined;
+    console.error("[generate-scene]", err, detail ? `fal body: ${detail}` : "");
+
+    const message = err instanceof Error ? err.message : "Generation failed";
     return NextResponse.json(
-      { error: err instanceof Error ? err.message : "Generation failed" },
+      { error: message, detail: detail ?? null },
       { status: 500 },
     );
   }

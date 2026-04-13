@@ -814,11 +814,21 @@ export const useProjectStore = create<ProjectStore>()(
           file = await dataUrlToFile(scene.photoDataUrl, `${scene.id}.jpg`);
         }
         if (!file && scene.photoUrl && !scene.photoUrl.startsWith("blob:")) {
-          const res = await fetch(scene.photoUrl);
-          const blob = await res.blob();
-          file = new File([blob], `${scene.id}.jpg`, { type: blob.type });
+          try {
+            const res = await fetch(scene.photoUrl);
+            if (!res.ok) throw new Error(`Photo fetch failed: ${res.status}`);
+            const blob = await res.blob();
+            const mime = blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+            file = new File([blob], `${scene.id}.jpg`, { type: mime });
+          } catch (fetchErr) {
+            console.error(`[generate] Failed to fetch photo for scene ${sceneId}:`, fetchErr);
+          }
         }
-        if (!file) { set({ isGenerating: false }); return; }
+        if (!file) {
+          console.error(`[generate] No photo available for scene ${sceneId}`);
+          set({ isGenerating: false });
+          return;
+        }
 
         get().updateSceneStatus(sceneId, "generating");
 
@@ -835,8 +845,9 @@ export const useProjectStore = create<ProjectStore>()(
           });
 
           if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error ?? "Failed");
+            const errBody = await res.json();
+            console.error(`[generate] API error for scene ${sceneId}:`, errBody);
+            throw new Error(errBody.error ?? "Failed");
           }
 
           const data = await res.json();

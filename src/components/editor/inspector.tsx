@@ -8,7 +8,7 @@ import { X, Maximize2, ChevronDown, Trash2, Upload, Clapperboard } from "lucide-
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
 
-const DURATIONS = [3, 5, 7, 10];
+const DURATIONS = [5, 10];
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },

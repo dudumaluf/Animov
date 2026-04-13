@@ -421,7 +421,7 @@ function InsertMenu({
                   <button onClick={() => setShowDurationPicker(false)} className="font-mono text-[10px] text-text-secondary hover:text-[var(--text)]">←</button>
                   <span className="font-mono text-[10px] text-accent-gold">Duração da transição</span>
                 </div>
-                {[3, 5, 7].map((d) => (
+                {[5, 10].map((d) => (
                   <button
                     key={d}
                     onClick={() => handleGenerateTransition(d)}

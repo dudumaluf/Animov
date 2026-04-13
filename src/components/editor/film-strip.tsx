@@ -286,6 +286,7 @@ function InsertMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [showDurationPicker, setShowDurationPicker] = useState(false);
+  const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
   const addPhotos = useProjectStore((s) => s.addPhotos);
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
@@ -294,6 +295,7 @@ function InsertMenu({
   const transitions = useProjectStore((s) => s.transitions);
   const inputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
 
   const hasTransition = fromSceneId && toSceneId
     ? transitions.some((t) => t.id === `t-${fromSceneId}-${toSceneId}` && t.status !== "idle")
@@ -380,11 +382,16 @@ function InsertMenu({
       />
 
       <button
+        ref={btnRef}
         onClick={(e) => {
           e.stopPropagation();
           if (variant === "plus" && options.length === 1 && options[0]!.ready) {
             handleAction(options[0]!.action);
           } else {
+            if (!open && btnRef.current) {
+              const rect = btnRef.current.getBoundingClientRect();
+              setMenuPos({ x: rect.left + rect.width / 2, y: rect.bottom + 8 });
+            }
             setOpen(!open);
           }
         }}
@@ -401,10 +408,13 @@ function InsertMenu({
         )}
       </button>
 
-      {open && (
+      {open && menuPos && createPortal(
         <>
-          <div className="fixed inset-0 z-40" onClick={() => { setOpen(false); setShowDurationPicker(false); }} />
-          <div className="absolute left-1/2 top-full z-50 mt-2 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
+          <div className="fixed inset-0 z-50" onClick={() => { setOpen(false); setShowDurationPicker(false); }} />
+          <div
+            className="fixed z-50 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl"
+            style={{ left: menuPos.x, top: menuPos.y }}
+          >
             {showDurationPicker ? (
               <div>
                 <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
@@ -446,7 +456,8 @@ function InsertMenu({
               ))
             )}
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   );

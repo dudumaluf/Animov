@@ -204,7 +204,11 @@ export const useProjectStore = create<ProjectStore>()(
             method: "PATCH",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ name }),
-          }).catch(() => {});
+          })
+            .then((res) => {
+              if (!res.ok) console.error("[setProjectName] PATCH failed:", res.status);
+            })
+            .catch((err) => console.error("[setProjectName]", err));
         }
       },
       setModelId: (modelId) => set({ modelId, isDirty: true }),

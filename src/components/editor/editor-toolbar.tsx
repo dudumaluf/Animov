@@ -1,7 +1,6 @@
 "use client";
 
 import { useRef, useState, useEffect, useCallback } from "react";
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/stores/project-store";
 import { createClient } from "@/lib/supabase/client";
@@ -540,15 +539,15 @@ export function EditorToolbar({
     <header className="grid h-11 shrink-0 grid-cols-[1fr_auto_1fr] items-center border-b border-white/5 px-3">
       {/* Left: back + menus */}
       <div className="flex items-center gap-1">
-        <Link
-          href="/dashboard"
+        <button
           onClick={() => {
             if (useProjectStore.getState().isDirty) saveToSupabase();
+            window.location.href = "/dashboard";
           }}
           className="flex h-7 w-7 items-center justify-center rounded-lg text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
         >
           <ArrowLeft size={14} />
-        </Link>
+        </button>
 
         <div className="mx-1 h-4 w-px bg-white/5" />
 

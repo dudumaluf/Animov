@@ -181,16 +181,20 @@ export default function EditorPage({
   if (!mounted) {
     return (
       <div className="flex h-screen flex-col bg-[#0A0A09]">
-        <header className="flex h-14 shrink-0 items-center justify-between border-b border-white/5 px-4">
-          <div className="flex items-center gap-3">
-            <div className="h-8 w-8 rounded-lg bg-white/5" />
-            <div className="h-5 w-32 rounded bg-white/5 animate-pulse" />
+        <div className="shrink-0 border-b border-white/5">
+          <div className="flex h-10 items-center justify-between px-3">
+            <div className="flex items-center gap-2">
+              <div className="h-7 w-7 rounded-lg bg-white/5" />
+              <div className="h-4 w-32 rounded bg-white/5 animate-pulse" />
+            </div>
+            <div className="h-7 w-20 rounded-full bg-white/5" />
           </div>
-          <div className="flex items-center gap-3">
-            <div className="h-4 w-24 rounded bg-white/5" />
-            <div className="h-9 w-28 rounded-full bg-white/5" />
+          <div className="flex h-8 items-center gap-2 border-t border-white/[0.03] px-3">
+            {[1, 2, 3].map((i) => (
+              <div key={i} className="h-4 w-14 rounded bg-white/5" />
+            ))}
           </div>
-        </header>
+        </div>
         <div className="flex flex-1 items-center justify-center gap-4 p-6">
           {[1, 2, 3].map((i) => (
             <div key={i} className="flex w-48 flex-col gap-2">
@@ -207,7 +211,7 @@ export default function EditorPage({
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0A0A09]">
-      <EditorToolbar />
+      <EditorToolbar onExportVideo={handleExport} />
 
       {isEmpty ? (
         <div className="flex flex-1 items-center justify-center p-8">

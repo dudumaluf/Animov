@@ -40,9 +40,45 @@ function SortableSceneCard({
   const removeScene = useProjectStore((s) => s.removeScene);
   const setActiveVersion = useProjectStore((s) => s.setActiveVersion);
   const sceneIndex = useProjectStore((s) => s.scenes.findIndex((sc) => sc.id === sceneId));
+  const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   if (!scene) return null;
   const isSelected = selectedSceneId === sceneId;
+  const hasVideo = scene.status === "ready" && !!scene.videoUrl;
+
+  const handleContextMenu = (e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setContextMenu({ x: e.clientX, y: e.clientY });
+  };
+
+  const closeContext = () => setContextMenu(null);
+
+  const handleExtractFrame = async (position: "first" | "last") => {
+    closeContext();
+    if (!scene.videoUrl) return;
+    try {
+      const video = document.createElement("video");
+      video.crossOrigin = "anonymous";
+      video.muted = true;
+      video.preload = "auto";
+      video.src = scene.videoUrl;
+      await new Promise<void>((resolve, reject) => {
+        video.onloadeddata = () => resolve();
+        video.onerror = () => reject();
+      });
+      video.currentTime = position === "last" ? video.duration - 0.1 : 0.1;
+      await new Promise<void>((resolve) => { video.onseeked = () => resolve(); });
+      const canvas = document.createElement("canvas");
+      canvas.width = video.videoWidth;
+      canvas.height = video.videoHeight;
+      canvas.getContext("2d")!.drawImage(video, 0, 0);
+      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/png"));
+      const file = new File([blob], `frame-${position}.png`, { type: "image/png" });
+      const insertAt = position === "last" ? sceneIndex + 1 : sceneIndex;
+      useProjectStore.getState().insertPhotoAt(insertAt, file);
+    } catch { /* ignore */ }
+  };
 
   const style = {
     transform: CSS.Transform.toString(transform),
@@ -56,6 +92,7 @@ function SortableSceneCard({
       ref={setNodeRef}
       style={style}
       onClick={(e) => { e.stopPropagation(); selectScene(sceneId); }}
+      onContextMenu={handleContextMenu}
       onDoubleClick={() => {
         if (scene.status === "ready" && scene.videoUrl && onPreviewVideo) {
           onPreviewVideo(scene.videoUrl);
@@ -152,6 +189,47 @@ function SortableSceneCard({
           </div>
         </div>
       </div>
+
+      {contextMenu && (
+        <>
+          <div className="fixed inset-0 z-50" onClick={closeContext} onContextMenu={(e) => { e.preventDefault(); closeContext(); }} />
+          <div
+            className="fixed z-50 w-48 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl"
+            style={{ left: contextMenu.x, top: contextMenu.y }}
+          >
+            {hasVideo && (
+              <>
+                <button onClick={() => handleExtractFrame("first")} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+                  <Frame size={12} className="text-accent-gold" /> Primeiro frame
+                </button>
+                <button onClick={() => handleExtractFrame("last")} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+                  <Frame size={12} className="text-accent-gold" /> Último frame
+                </button>
+                <button onClick={async () => { closeContext(); await downloadVideoBlob(scene.videoUrl!, `cena-${sceneIndex + 1}.mp4`); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+                  <ArrowDownToLine size={12} className="text-text-secondary" /> Download
+                </button>
+                <div className="my-1 h-px bg-white/5" />
+              </>
+            )}
+            <button onClick={() => { closeContext(); selectScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+              Propriedades
+            </button>
+            <button onClick={() => { closeContext(); useProjectStore.getState().generateScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-accent-gold hover:bg-white/5">
+              {hasVideo ? "Regenerar" : "Gerar vídeo"}
+            </button>
+            <div className="my-1 h-px bg-white/5" />
+            <button onClick={() => {
+              closeContext();
+              const transitions = useProjectStore.getState().transitions;
+              const hasReadyTransition = transitions.some((t) => (t.fromSceneId === sceneId || t.toSceneId === sceneId) && t.status === "ready");
+              if (hasReadyTransition && !confirm("Esta cena tem transições geradas. Remover?")) return;
+              removeScene(sceneId);
+            }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-red-400 hover:bg-red-500/5">
+              Remover
+            </button>
+          </div>
+        </>
+      )}
     </div>
   );
 }

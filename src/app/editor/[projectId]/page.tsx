@@ -143,7 +143,7 @@ export default function EditorPage({
               </div>
             </div>
 
-            <div className="absolute bottom-4 right-4 flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm">
+            <div className="absolute bottom-4 left-4 flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm z-20">
               <button
                 onClick={() => setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP))}
                 className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"

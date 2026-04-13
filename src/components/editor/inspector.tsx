@@ -360,8 +360,8 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
 
   return (
     <aside
-      className={`shrink-0 border-l border-white/5 transition-all duration-300 ease-out overflow-hidden overflow-y-auto ${
-        isOpen ? "w-72 min-w-[288px]" : "w-0 border-l-0"
+      className={`absolute right-0 top-0 z-30 h-full border-l border-white/5 bg-[#0A0A09] transition-all duration-300 ease-out overflow-hidden overflow-y-auto ${
+        isOpen ? "w-72" : "w-0 border-l-0"
       }`}
     >
       {scene && selectedSceneId && showScene && (

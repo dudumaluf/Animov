@@ -127,8 +127,8 @@ export default function EditorPage({
           <DropZone />
         </div>
       ) : (
-        <div className="flex flex-1 overflow-hidden">
-          <div className="relative flex flex-1 flex-col">
+        <div className="relative flex-1 overflow-hidden">
+          <div className="flex h-full flex-col">
             <div
               ref={canvasRef}
               className="flex flex-1 items-center justify-center overflow-auto p-6"

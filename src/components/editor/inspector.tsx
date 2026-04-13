@@ -360,12 +360,12 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
 
   return (
     <aside
-      className={`shrink-0 border-l border-white/5 transition-all duration-300 ease-out overflow-hidden ${
-        isOpen ? "w-80" : "w-0 border-l-0"
+      className={`shrink-0 border-l border-white/5 transition-all duration-300 ease-out overflow-hidden overflow-y-auto ${
+        isOpen ? "w-72 min-w-[288px]" : "w-0 border-l-0"
       }`}
     >
       {scene && selectedSceneId && showScene && (
-        <div className="flex h-full w-80 flex-col">
+        <div className="flex h-full w-72 flex-col">
           <div className="relative aspect-video w-full bg-white/5">
             {scene.status === "ready" && scene.videoUrl ? (
               <video
@@ -485,7 +485,7 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
         </div>
       )}
       {showEdit && (
-        <div className="flex h-full w-80 flex-col">
+        <div className="flex h-full w-72 flex-col">
           <EditPreview musicUrl={musicUrl} onClose={() => useProjectStore.setState({ editNodeSelected: false })} />
 
           <div className="flex-1 overflow-y-auto p-4">

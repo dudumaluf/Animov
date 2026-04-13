@@ -119,7 +119,7 @@ export default function EditorPage({
   const isEmpty = scenes.length === 0;
 
   return (
-    <div className="flex h-screen flex-col bg-[#0A0A09]">
+    <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0A0A09]">
       <EditorToolbar />
 
       {isEmpty ? (

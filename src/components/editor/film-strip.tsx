@@ -4,7 +4,7 @@ import Image from "next/image";
 import { useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useProjectStore } from "@/stores/project-store";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame, Pencil, ImageIcon, Film } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -30,12 +30,23 @@ const CURATED_DURATIONS: Record<string, number[]> = {
 
 const ACCEPTED = ".jpg,.jpeg,.png,.webp";
 
+function NodeProcessingOverlay({ label }: { label?: string }) {
+  return (
+    <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-black/50">
+      <Loader2 size={16} className="animate-spin text-accent-gold" />
+      {label && <span className="font-mono text-[9px] text-accent-gold">{label}</span>}
+    </div>
+  );
+}
+
 function SortableSceneCard({
   sceneId,
   onPreviewVideo,
+  onEditImage,
 }: {
   sceneId: string;
   onPreviewVideo?: (url: string) => void;
+  onEditImage?: (sceneId: string) => void;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: sceneId });
@@ -51,6 +62,8 @@ function SortableSceneCard({
   if (!scene) return null;
   const isSelected = selectedSceneId === sceneId;
   const hasVideo = scene.status === "ready" && !!scene.videoUrl;
+  const isProcessing = scene.status === "processing";
+  const isGenerating = scene.status === "generating";
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -63,6 +76,10 @@ function SortableSceneCard({
   const handleExtractFrame = async (position: "first" | "last") => {
     closeContext();
     if (!scene.videoUrl) return;
+
+    const insertAt = position === "last" ? sceneIndex + 1 : sceneIndex;
+    const placeholderId = useProjectStore.getState().insertPlaceholder(insertAt);
+
     try {
       const video = document.createElement("video");
       video.crossOrigin = "anonymous";
@@ -81,9 +98,10 @@ function SortableSceneCard({
       canvas.getContext("2d")!.drawImage(video, 0, 0);
       const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/png"));
       const file = new File([blob], `frame-${position}.png`, { type: "image/png" });
-      const insertAt = position === "last" ? sceneIndex + 1 : sceneIndex;
-      useProjectStore.getState().insertPhotoAt(insertAt, file);
-    } catch { /* ignore */ }
+      await useProjectStore.getState().updatePlaceholderImage(placeholderId, file);
+    } catch {
+      useProjectStore.getState().removeScene(placeholderId);
+    }
   };
 
   const style = {
@@ -122,6 +140,8 @@ function SortableSceneCard({
             onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
             onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
           />
+        ) : isProcessing ? (
+          <div className="flex h-full w-full items-center justify-center bg-white/[0.03]" />
         ) : (
           <Image
             src={scene.photoDataUrl ?? scene.photoUrl}
@@ -132,9 +152,15 @@ function SortableSceneCard({
             unoptimized
           />
         )}
-        {scene.status === "generating" && (
-          <div className="absolute left-2 top-2 flex h-5 items-center gap-1 rounded bg-black/60 px-1.5 font-mono text-[10px]">
-            <span className="animate-pulse text-accent-gold">●</span>
+        {isGenerating && <NodeProcessingOverlay label="Gerando..." />}
+        {isProcessing && <NodeProcessingOverlay label="Extraindo..." />}
+        {!isGenerating && !isProcessing && (
+          <div className="absolute left-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded bg-black/50">
+            {hasVideo ? (
+              <Film size={9} className="text-accent-gold" />
+            ) : (
+              <ImageIcon size={9} className="text-white/50" />
+            )}
           </div>
         )}
         <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
@@ -222,6 +248,11 @@ function SortableSceneCard({
             <button onClick={() => { closeContext(); selectScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
               Propriedades
             </button>
+            {onEditImage && (
+              <button onClick={() => { closeContext(); onEditImage(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+                <Pencil size={12} className="text-text-secondary" /> Editar imagem
+              </button>
+            )}
             <button onClick={() => { closeContext(); useProjectStore.getState().generateScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-accent-gold hover:bg-white/5">
               {hasVideo ? "Regenerar" : "Gerar vídeo"}
             </button>
@@ -244,6 +275,7 @@ function SortableSceneCard({
 }
 
 async function extractLastFrame(videoUrl: string, insertIndex: number): Promise<void> {
+  const placeholderId = useProjectStore.getState().insertPlaceholder(insertIndex);
   try {
     const video = document.createElement("video");
     video.crossOrigin = "anonymous";
@@ -265,9 +297,10 @@ async function extractLastFrame(videoUrl: string, insertIndex: number): Promise<
       canvas.toBlob((b) => resolve(b!), "image/png"),
     );
     const file = new File([blob], "frame.png", { type: "image/png" });
-    useProjectStore.getState().insertPhotoAt(insertIndex, file);
+    await useProjectStore.getState().updatePlaceholderImage(placeholderId, file);
   } catch (err) {
     console.error("[extractFrame]", err);
+    useProjectStore.getState().removeScene(placeholderId);
   }
 }
 
@@ -303,8 +336,7 @@ function InsertMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
-  let transitionDurations = [5, 10];
-  transitionDurations = CURATED_DURATIONS[modelId] ?? [5, 10];
+  const transitionDurations = CURATED_DURATIONS[modelId] ?? [5, 10];
 
   const hasTransition = fromSceneId && toSceneId
     ? transitions.some((t) => t.id === `t-${fromSceneId}-${toSceneId}` && t.status !== "idle")
@@ -524,12 +556,7 @@ function TransitionNode({
             unoptimized
           />
         ) : null}
-        {isGenerating && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50">
-            <Loader2 size={16} className="animate-spin text-accent-gold" />
-            <span className="font-mono text-[9px] text-accent-gold">Gerando transição</span>
-          </div>
-        )}
+        {isGenerating && <NodeProcessingOverlay label="Gerando transição" />}
         {isFailed && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1 bg-black/50">
             <span className="font-mono text-[10px] text-red-400">Erro</span>
@@ -635,7 +662,7 @@ function EditNode({ onExport }: { onExport: () => void }) {
   );
 }
 
-export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url: string) => void; onExport?: () => void }) {
+export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreviewVideo?: (url: string) => void; onExport?: () => void; onEditImage?: (sceneId: string) => void }) {
   const scenes = useProjectStore((s) => s.scenes);
   const transitions = useProjectStore((s) => s.transitions);
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
@@ -663,7 +690,7 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
         <div className="flex items-start gap-1.5 py-4">
           {scenes.map((scene, i) => (
             <div key={scene.id} className="flex items-start gap-1.5">
-              <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
+              <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} onEditImage={onEditImage} />
               {i < scenes.length - 1 && (() => {
                 const transId = `t-${scene.id}-${scenes[i + 1]!.id}`;
                 const trans = transitions.find((t) => t.id === transId);

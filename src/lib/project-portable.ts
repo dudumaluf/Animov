@@ -1,4 +1,4 @@
-import type { Scene, Transition } from "@/stores/project-store";
+import type { Scene, Transition, VideoVersion } from "@/stores/project-store";
 
 export const PORTABLE_VERSION = 1 as const;
 
@@ -33,9 +33,9 @@ export function sceneToPortable(s: Scene): PortableScene | null {
   if (!photo) return null;
 
   const versions = s.videoVersions?.length
-    ? s.videoVersions
-    : s.videoUrl
-      ? [s.videoUrl]
+    ? s.videoVersions.filter((v) => isHttpUrl(v.url))
+    : s.videoUrl && isHttpUrl(s.videoUrl)
+      ? [{ url: s.videoUrl, duration: s.duration }]
       : [];
 
   return {
@@ -45,24 +45,30 @@ export function sceneToPortable(s: Scene): PortableScene | null {
     duration: s.duration,
     status: s.status,
     videoUrl: isHttpUrl(s.videoUrl) ? s.videoUrl : undefined,
-    videoVersions: versions.filter(isHttpUrl),
+    videoVersions: versions,
     activeVersion: s.activeVersion ?? 0,
     costCredits: s.costCredits,
   };
 }
 
 export function portableToScene(p: PortableScene): Scene {
-  const vid = p.videoUrl ?? p.videoVersions[p.activeVersion ?? 0];
+  const rawVersions = (p.videoVersions ?? []) as (VideoVersion | string)[];
+  const versions: VideoVersion[] = rawVersions.map((v) => {
+    if (typeof v === "string") return { url: v, duration: p.duration };
+    return v as VideoVersion;
+  });
+  const active = p.activeVersion ?? 0;
+  const ver = versions[active];
   return {
     id: p.id,
     photoUrl: p.photoUrl,
     photoDataUrl: p.photoUrl,
     presetId: p.presetId,
-    duration: p.duration,
-    status: p.status,
-    videoUrl: vid,
-    videoVersions: p.videoVersions?.length ? p.videoVersions : vid ? [vid] : [],
-    activeVersion: p.activeVersion ?? 0,
+    duration: ver?.duration ?? p.duration,
+    status: (p.status === "processing" ? "idle" : p.status) as Scene["status"],
+    videoUrl: ver?.url ?? p.videoUrl,
+    videoVersions: versions.length ? versions : p.videoUrl ? [{ url: p.videoUrl, duration: p.duration }] : [],
+    activeVersion: active,
     costCredits: p.costCredits,
   };
 }

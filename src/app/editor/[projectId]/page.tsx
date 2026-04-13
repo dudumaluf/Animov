@@ -295,7 +295,7 @@ export default function EditorPage({
                   transformOrigin: "center center",
                 }}
               >
-                <FilmStrip onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} />
+                <FilmStrip onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} onEditImage={setEditingSceneId} />
               </div>
             </div>
 

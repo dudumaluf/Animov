@@ -32,14 +32,14 @@ function getModelShortName(displayName: string): string {
   return displayName.split(" ").slice(0, 2).join(" ");
 }
 
-function StatusDot({ status }: { status: "idle" | "generating" | "ready" | "failed" }) {
+function StatusDot({ status }: { status: "idle" | "generating" | "ready" | "failed" | "processing" }) {
   if (status === "ready") return <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />;
   if (status === "generating") return <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent-gold" />;
   if (status === "failed") return <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400" />;
   return <span className="inline-block h-1.5 w-1.5 rounded-full bg-white/20" />;
 }
 
-function StatusLabel({ status }: { status: "idle" | "generating" | "ready" | "failed" }) {
+function StatusLabel({ status }: { status: "idle" | "generating" | "ready" | "failed" | "processing" }) {
   if (status === "ready") return <span className="text-green-400">Pronto</span>;
   if (status === "generating") return <span className="animate-pulse text-accent-gold">Gerando</span>;
   if (status === "failed") return <span className="text-red-400">Erro</span>;

@@ -8,15 +8,17 @@ import {
 } from "@/lib/project-portable";
 import { DEFAULT_MODEL_ID } from "@/lib/adapters";
 
+export type VideoVersion = { url: string; duration: number };
+
 export type Scene = {
   id: string;
   photoUrl: string;
   photoDataUrl?: string;
   presetId: string;
   duration: number;
-  status: "idle" | "generating" | "ready" | "failed";
+  status: "idle" | "generating" | "ready" | "failed" | "processing";
   videoUrl?: string;
-  videoVersions: string[];
+  videoVersions: VideoVersion[];
   activeVersion: number;
   costCredits: number;
 };
@@ -58,6 +60,8 @@ export type ProjectStore = {
 
   addPhotos: (files: File[]) => void;
   insertPhotoAt: (index: number, file: File) => void;
+  insertPlaceholder: (index: number) => string;
+  updatePlaceholderImage: (sceneId: string, file: File) => Promise<void>;
   removeScene: (id: string) => void;
   reorderScenes: (fromIndex: number, toIndex: number) => void;
   setScenePreset: (sceneId: string, presetId: string) => void;
@@ -74,7 +78,7 @@ export type ProjectStore = {
   generateMusic: () => Promise<void>;
   clearMusic: () => void;
 
-  updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string, costCredits?: number) => void;
+  updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string, costCredits?: number, videoDuration?: number) => void;
   generateAll: () => Promise<void>;
   generateScene: (sceneId: string) => Promise<void>;
 
@@ -91,6 +95,8 @@ export type ProjectStore = {
   reset: () => void;
 };
 
+const PLACEHOLDER_IMG = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
+
 function promoteReadyTransition(t: Transition): Scene {
   return {
     id: crypto.randomUUID(),
@@ -100,7 +106,7 @@ function promoteReadyTransition(t: Transition): Scene {
     duration: 5,
     status: "ready" as const,
     videoUrl: t.videoUrl!,
-    videoVersions: [t.videoUrl!],
+    videoVersions: [{ url: t.videoUrl!, duration: 5 }],
     activeVersion: 0,
     costCredits: 0,
   };
@@ -174,6 +180,32 @@ async function uploadPhoto(file: File, projectId: string): Promise<string> {
   if (!res.ok) throw new Error("Upload failed");
   const data = await res.json();
   return data.url;
+}
+
+async function resolveSceneFile(
+  scene: Scene,
+  photoFiles: Record<string, File>,
+): Promise<File | null> {
+  let file = photoFiles[scene.id];
+  if (!file && scene.photoDataUrl && scene.photoDataUrl !== PLACEHOLDER_IMG) {
+    try {
+      file = await dataUrlToFile(scene.photoDataUrl, `${scene.id}.jpg`);
+    } catch {
+      /* fallback to photoUrl fetch below */
+    }
+  }
+  if (!file && scene.photoUrl && !scene.photoUrl.startsWith("blob:") && !scene.photoUrl.startsWith("data:")) {
+    try {
+      const res = await fetch(scene.photoUrl);
+      if (!res.ok) throw new Error(`Fetch failed: ${res.status}`);
+      const blob = await res.blob();
+      const mime = blob.type.startsWith("image/") ? blob.type : "image/jpeg";
+      file = new File([blob], `${scene.id}.jpg`, { type: mime });
+    } catch (e) {
+      console.error("[resolveSceneFile]", e);
+    }
+  }
+  return file ?? null;
 }
 
 export const useProjectStore = create<ProjectStore>()(
@@ -336,6 +368,57 @@ export const useProjectStore = create<ProjectStore>()(
           });
       },
 
+      insertPlaceholder: (index) => {
+        const id = uuid();
+        const newScene: Scene = {
+          id,
+          photoUrl: PLACEHOLDER_IMG,
+          photoDataUrl: PLACEHOLDER_IMG,
+          presetId: "push_in_serene",
+          duration: 5,
+          status: "processing",
+          videoVersions: [],
+          activeVersion: 0,
+          costCredits: 0,
+        };
+        set((state) => {
+          const scenes = [...state.scenes];
+          scenes.splice(index, 0, newScene);
+          return {
+            scenes,
+            transitions: rebuildTransitions(scenes, state.transitions),
+            isDirty: true,
+          };
+        });
+        return id;
+      },
+
+      updatePlaceholderImage: async (sceneId, file) => {
+        const dataUrl = await fileToDataUrl(file);
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId
+              ? { ...s, photoUrl: dataUrl, photoDataUrl: dataUrl, status: "idle" as const }
+              : s,
+          ),
+          isDirty: true,
+          _photoFiles: { ...state._photoFiles, [sceneId]: file },
+        }));
+
+        const projectId = get().supabaseProjectId ?? get().projectId;
+        try {
+          const supabaseUrl = await uploadPhoto(file, projectId);
+          set((state) => ({
+            scenes: state.scenes.map((s) =>
+              s.id === sceneId ? { ...s, photoUrl: supabaseUrl } : s,
+            ),
+            isDirty: true,
+          }));
+        } catch (err) {
+          console.error("[updatePlaceholderImage] upload failed:", err);
+        }
+      },
+
       removeScene: (id) => {
         set((state) => {
           const sceneIndex = state.scenes.findIndex((s) => s.id === id);
@@ -425,21 +508,32 @@ export const useProjectStore = create<ProjectStore>()(
             if (s.id !== sceneId) return s;
             const versions = s.videoVersions ?? [];
             const clamped = Math.max(0, Math.min(version, versions.length - 1));
-            return { ...s, activeVersion: clamped, videoUrl: versions[clamped] ?? s.videoUrl };
+            const ver = versions[clamped];
+            return {
+              ...s,
+              activeVersion: clamped,
+              videoUrl: ver?.url ?? s.videoUrl,
+              duration: ver?.duration ?? s.duration,
+            };
           }),
           isDirty: true,
         }));
       },
 
       updateSceneImage: (sceneId, newImageUrl) => {
-        set((state) => ({
-          scenes: state.scenes.map((s) =>
-            s.id === sceneId
-              ? { ...s, photoUrl: newImageUrl, photoDataUrl: newImageUrl, status: "idle" as const, videoUrl: undefined, videoVersions: [], activeVersion: 0 }
-              : s,
-          ),
-          isDirty: true,
-        }));
+        set((state) => {
+          const files = { ...state._photoFiles };
+          delete files[sceneId];
+          return {
+            scenes: state.scenes.map((s) =>
+              s.id === sceneId
+                ? { ...s, photoUrl: newImageUrl, photoDataUrl: newImageUrl, status: "idle" as const, videoUrl: undefined, videoVersions: [], activeVersion: 0 }
+                : s,
+            ),
+            isDirty: true,
+            _photoFiles: files,
+          };
+        });
       },
 
       toggleTransition: (transitionId) => {
@@ -457,14 +551,14 @@ export const useProjectStore = create<ProjectStore>()(
         const toScene = state.scenes.find((s) => s.id === toSceneId);
         if (!fromScene || !toScene) return;
 
-        const getPhotoUrl = (scene: typeof fromScene) => {
-          if (scene.photoUrl && scene.photoUrl.startsWith("http")) return scene.photoUrl;
-          if (scene.photoDataUrl) return scene.photoDataUrl;
-          return scene.photoUrl;
-        };
-        const startImageUrl = getPhotoUrl(fromScene);
-        const endImageUrl = getPhotoUrl(toScene);
-        if (!startImageUrl || !endImageUrl) return;
+        const [startFile, endFile] = await Promise.all([
+          resolveSceneFile(fromScene, state._photoFiles),
+          resolveSceneFile(toScene, state._photoFiles),
+        ]);
+        if (!startFile || !endFile) {
+          console.error("[generateTransition] Could not resolve image files");
+          return;
+        }
 
         const transitionId = `t-${fromSceneId}-${toSceneId}`;
 
@@ -475,10 +569,15 @@ export const useProjectStore = create<ProjectStore>()(
         }));
 
         try {
+          const formData = new FormData();
+          formData.append("startImage", startFile);
+          formData.append("endImage", endFile);
+          formData.append("duration", String(duration));
+          formData.append("modelId", state.modelId);
+
           const res = await fetch("/api/generate-transition", {
             method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ startImageUrl, endImageUrl, duration, modelId: state.modelId }),
+            body: formData,
           });
 
           if (!res.ok) {
@@ -552,16 +651,18 @@ export const useProjectStore = create<ProjectStore>()(
 
       clearMusic: () => set({ musicUrl: null, isDirty: true }),
 
-      updateSceneStatus: (sceneId, status, videoUrl, costCredits) => {
+      updateSceneStatus: (sceneId, status, videoUrl, costCredits, videoDuration) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
             if (s.id !== sceneId) return s;
             const update: Partial<Scene> = { status };
             if (videoUrl) {
-              const versions = [...(s.videoVersions ?? []), videoUrl];
+              const d = videoDuration ?? s.duration;
+              const versions = [...(s.videoVersions ?? []), { url: videoUrl, duration: d }];
               update.videoUrl = videoUrl;
               update.videoVersions = versions;
               update.activeVersion = versions.length - 1;
+              update.duration = d;
             }
             if (typeof costCredits === "number") {
               update.costCredits = costCredits;
@@ -626,18 +727,21 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number }) => ({
-            id: s.id,
-            photoUrl: s.photo_url,
-            photoDataUrl: s.photo_url,
-            presetId: s.prompt_generated ?? "push_in_serene",
-            duration: Number(s.duration) || 5,
-            status: s.status === "pending" ? "idle" : s.status,
-            videoUrl: s.video_url ?? undefined,
-            videoVersions: s.video_url ? [s.video_url] : [],
-            activeVersion: 0,
-            costCredits: s.cost_credits,
-          }));
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number }) => {
+            const dur = Number(s.duration) || 5;
+            return {
+              id: s.id,
+              photoUrl: s.photo_url,
+              photoDataUrl: s.photo_url,
+              presetId: s.prompt_generated ?? "push_in_serene",
+              duration: dur,
+              status: s.status === "pending" ? "idle" : s.status,
+              videoUrl: s.video_url ?? undefined,
+              videoVersions: s.video_url ? [{ url: s.video_url, duration: dur }] : [],
+              activeVersion: 0,
+              costCredits: s.cost_credits,
+            };
+          });
 
           set({
             supabaseProjectId: supabaseId,
@@ -714,6 +818,7 @@ export const useProjectStore = create<ProjectStore>()(
 
         try {
           const scenesPayload = state.scenes
+            .filter((s) => s.status !== "processing")
             .map((s) => {
               const photoUrl = s.photoUrl.startsWith("http") ? s.photoUrl : undefined;
               if (!photoUrl) return null;
@@ -763,15 +868,7 @@ export const useProjectStore = create<ProjectStore>()(
         for (const scene of state.scenes) {
           if (scene.status === "ready") continue;
 
-          let file = state._photoFiles[scene.id];
-          if (!file && scene.photoDataUrl) {
-            file = await dataUrlToFile(scene.photoDataUrl, `${scene.id}.jpg`);
-          }
-          if (!file && scene.photoUrl && !scene.photoUrl.startsWith("blob:")) {
-            const res = await fetch(scene.photoUrl);
-            const blob = await res.blob();
-            file = new File([blob], `${scene.id}.jpg`, { type: blob.type });
-          }
+          const file = await resolveSceneFile(scene, state._photoFiles);
           if (!file) continue;
 
           get().updateSceneStatus(scene.id, "generating");
@@ -795,14 +892,26 @@ export const useProjectStore = create<ProjectStore>()(
 
             const data = await res.json();
             const realCost = typeof data.creditsCost === "number" ? data.creditsCost : scene.duration;
-            get().updateSceneStatus(scene.id, "ready", data.videoUrl, realCost);
-            if (typeof data.duration === "number") {
-              get().setSceneDuration(scene.id, data.duration);
-            }
+            const realDuration = typeof data.duration === "number" ? data.duration : scene.duration;
+            get().updateSceneStatus(scene.id, "ready", data.videoUrl, realCost, realDuration);
 
+            const falVideoUrl = data.videoUrl;
             const pid = get().supabaseProjectId ?? get().projectId;
-            persistVideoToStorage(data.videoUrl, pid, scene.id).then((permUrl) => {
-              if (permUrl) get().updateSceneStatus(scene.id, "ready", permUrl);
+            persistVideoToStorage(falVideoUrl, pid, scene.id).then((permUrl) => {
+              if (!permUrl) return;
+              set((st) => ({
+                scenes: st.scenes.map((s) => {
+                  if (s.id !== scene.id) return s;
+                  return {
+                    ...s,
+                    videoUrl: permUrl,
+                    videoVersions: s.videoVersions.map((v) =>
+                      v.url === falVideoUrl ? { ...v, url: permUrl } : v,
+                    ),
+                  };
+                }),
+                isDirty: true,
+              }));
             });
           } catch (err) {
             console.error(`[generate] scene ${scene.id}:`, err);
@@ -821,21 +930,7 @@ export const useProjectStore = create<ProjectStore>()(
 
         set({ isGenerating: true });
 
-        let file = state._photoFiles[scene.id];
-        if (!file && scene.photoDataUrl) {
-          file = await dataUrlToFile(scene.photoDataUrl, `${scene.id}.jpg`);
-        }
-        if (!file && scene.photoUrl && !scene.photoUrl.startsWith("blob:")) {
-          try {
-            const res = await fetch(scene.photoUrl);
-            if (!res.ok) throw new Error(`Photo fetch failed: ${res.status}`);
-            const blob = await res.blob();
-            const mime = blob.type.startsWith("image/") ? blob.type : "image/jpeg";
-            file = new File([blob], `${scene.id}.jpg`, { type: mime });
-          } catch (fetchErr) {
-            console.error(`[generate] Failed to fetch photo for scene ${sceneId}:`, fetchErr);
-          }
-        }
+        const file = await resolveSceneFile(scene, state._photoFiles);
         if (!file) {
           console.error(`[generate] No photo available for scene ${sceneId}`);
           set({ isGenerating: false });
@@ -864,14 +959,26 @@ export const useProjectStore = create<ProjectStore>()(
 
           const data = await res.json();
           const realCost = typeof data.creditsCost === "number" ? data.creditsCost : scene.duration;
-          get().updateSceneStatus(sceneId, "ready", data.videoUrl, realCost);
-          if (typeof data.duration === "number") {
-            get().setSceneDuration(sceneId, data.duration);
-          }
+          const realDuration = typeof data.duration === "number" ? data.duration : scene.duration;
+          get().updateSceneStatus(sceneId, "ready", data.videoUrl, realCost, realDuration);
 
+          const falVideoUrl = data.videoUrl;
           const pid = get().supabaseProjectId ?? get().projectId;
-          persistVideoToStorage(data.videoUrl, pid, sceneId).then((permUrl) => {
-            if (permUrl) get().updateSceneStatus(sceneId, "ready", permUrl);
+          persistVideoToStorage(falVideoUrl, pid, sceneId).then((permUrl) => {
+            if (!permUrl) return;
+            set((st) => ({
+              scenes: st.scenes.map((s) => {
+                if (s.id !== sceneId) return s;
+                return {
+                  ...s,
+                  videoUrl: permUrl,
+                  videoVersions: s.videoVersions.map((v) =>
+                    v.url === falVideoUrl ? { ...v, url: permUrl } : v,
+                  ),
+                };
+              }),
+              isDirty: true,
+            }));
           });
         } catch (err) {
           console.error(`[generate] scene ${sceneId}:`, err);

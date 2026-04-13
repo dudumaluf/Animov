@@ -1,8 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
+import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdapter, DEFAULT_MODEL_ID } from "@/lib/adapters";
-import { ensureFalUrl } from "@/lib/fal-helpers";
+
+fal.config({ credentials: process.env.FAL_KEY! });
 
 export async function POST(req: NextRequest) {
   const supabase = createClient();
@@ -12,19 +14,21 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 
-  const body = await req.json();
-  const { startImageUrl, endImageUrl, duration: rawDur = 5, modelId: rawModelId } = body;
-  const modelId = rawModelId || DEFAULT_MODEL_ID;
-  const adapter = getAdapter(modelId);
-  const duration = Number(rawDur) || 5;
-  const creditCost = duration;
+  const formData = await req.formData();
+  const startImage = formData.get("startImage") as File | null;
+  const endImage = formData.get("endImage") as File | null;
+  const duration = Number(formData.get("duration") ?? "5") || 5;
+  const modelId = (formData.get("modelId") as string) || DEFAULT_MODEL_ID;
 
-  if (!startImageUrl || !endImageUrl) {
+  if (!startImage || !endImage) {
     return NextResponse.json(
-      { error: "startImageUrl and endImageUrl are required" },
+      { error: "startImage and endImage files are required" },
       { status: 400 },
     );
   }
+
+  const adapter = getAdapter(modelId);
+  const creditCost = duration;
 
   const admin = createAdminClient();
 
@@ -46,8 +50,8 @@ export async function POST(req: NextRequest) {
     debited = true;
 
     const [falStartUrl, falEndUrl] = await Promise.all([
-      ensureFalUrl(startImageUrl),
-      ensureFalUrl(endImageUrl),
+      fal.storage.upload(startImage),
+      fal.storage.upload(endImage),
     ]);
 
     const prompt =

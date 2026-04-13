@@ -611,6 +611,7 @@ function EditNode({ onExport }: { onExport: () => void }) {
 
 export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url: string) => void; onExport?: () => void }) {
   const scenes = useProjectStore((s) => s.scenes);
+  const transitions = useProjectStore((s) => s.transitions);
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
   const reorderScenes = useProjectStore((s) => s.reorderScenes);
 
@@ -639,7 +640,7 @@ export function FilmStrip({ onPreviewVideo, onExport }: { onPreviewVideo?: (url:
               <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} />
               {i < scenes.length - 1 && (() => {
                 const transId = `t-${scene.id}-${scenes[i + 1]!.id}`;
-                const trans = useProjectStore.getState().transitions.find((t) => t.id === transId);
+                const trans = transitions.find((t) => t.id === transId);
                 const transVisible = trans && trans.status !== "idle";
                 return (
                   <>

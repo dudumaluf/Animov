@@ -235,7 +235,7 @@ export default function EditorPage({
             >
               <div
                 ref={contentRef}
-                className="transition-transform duration-150"
+                className=""
                 style={{
                   transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
                   transformOrigin: "center center",

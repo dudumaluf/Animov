@@ -150,7 +150,7 @@ function SortableSceneCard({
 }
 
 type InsertMenuPosition = "between" | "end";
-type InsertMenuAction = "photo" | "crossfade" | "ai-transition" | "edit";
+type InsertMenuAction = "photo" | "crossfade" | "ai-transition" | "edit" | "composer";
 
 function InsertMenu({
   position,
@@ -193,7 +193,7 @@ function InsertMenu({
       inputRef.current?.click();
     }
     if (action === "crossfade") {
-      console.log("[insert] crossfade at index", insertIndex);
+      // TODO: implement crossfade
     }
     if (action === "edit") {
       setHasEditNode(true);
@@ -231,7 +231,7 @@ function InsertMenu({
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Adicionar fotos", desc: "Novas cenas no final", ready: true },
     ...(!hasEditNode ? [{ action: "edit" as const, icon: Clapperboard, label: "Criar Edit", desc: "Junta todas as cenas num vídeo final", ready: true }] : []),
-    { action: "composer" as InsertMenuAction, icon: Type, label: "Composer", desc: "Logo, texto, gráficos", ready: false },
+    { action: "composer", icon: Type, label: "Composer", desc: "Logo, texto, gráficos", ready: false },
   ];
 
   const options = position === "between" && hasScenesOnBothSides

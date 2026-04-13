@@ -36,7 +36,7 @@ export async function buildPromptForScene({
     console.error(`[vision] Failed for preset ${presetId}:`, err);
 
     if (preset.fallbackPresetId) {
-      console.log(`[vision] Falling back to ${preset.fallbackPresetId}`);
+      console.warn(`[vision] Falling back to ${preset.fallbackPresetId}`);
       return buildPromptForScene({
         photoUrl,
         presetId: preset.fallbackPresetId,

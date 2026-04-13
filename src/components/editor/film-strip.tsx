@@ -22,7 +22,11 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { getPresetLabel } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
-import { getAdapter } from "@/lib/adapters";
+
+const CURATED_DURATIONS: Record<string, number[]> = {
+  "kling-v3-pro": [3, 5, 7, 10, 12, 15],
+  "kling-o1-pro": [5, 10],
+};
 
 const ACCEPTED = ".jpg,.jpeg,.png,.webp";
 
@@ -300,14 +304,7 @@ function InsertMenu({
   const btnRef = useRef<HTMLButtonElement>(null);
 
   let transitionDurations = [5, 10];
-  try {
-    const adapter = getAdapter(modelId);
-    const ds: number[] = [];
-    for (let d = adapter.minDuration; d <= adapter.maxDuration; d++) {
-      if (d === 5 || d === 10 || d === adapter.minDuration || d === adapter.maxDuration) ds.push(d);
-    }
-    transitionDurations = Array.from(new Set(ds)).sort((a, b) => a - b);
-  } catch { /* fallback */ }
+  transitionDurations = CURATED_DURATIONS[modelId] ?? [5, 10];
 
   const hasTransition = fromSceneId && toSceneId
     ? transitions.some((t) => t.id === `t-${fromSceneId}-${toSceneId}` && t.status !== "idle")

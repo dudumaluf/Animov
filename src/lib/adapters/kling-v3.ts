@@ -19,10 +19,10 @@ type KlingOutput = {
   };
 };
 
-function clampDuration(seconds: number): 5 | 10 {
+function clampV3Duration(seconds: number): number {
   const s = Math.round(Number(seconds));
   if (!Number.isFinite(s) || s <= 0) return 5;
-  return s >= 8 ? 10 : 5;
+  return Math.max(3, Math.min(15, s));
 }
 
 export const klingV3Adapter: VideoModelAdapter = {
@@ -31,11 +31,11 @@ export const klingV3Adapter: VideoModelAdapter = {
   costPerSecond: 0.112,
   supportsStartEndFrame: true,
   supportsNegativePrompt: true,
-  maxDuration: 10,
-  minDuration: 5,
+  maxDuration: 15,
+  minDuration: 3,
 
   async generateScene(input: SceneInput): Promise<ClipResult> {
-    const d = clampDuration(input.duration);
+    const d = clampV3Duration(input.duration);
     const result = await fal.subscribe(MODEL_ID, {
       input: {
         prompt: input.prompt,
@@ -53,7 +53,7 @@ export const klingV3Adapter: VideoModelAdapter = {
   },
 
   async generateTransition(input: TransitionInput): Promise<ClipResult> {
-    const d = clampDuration(input.duration);
+    const d = clampV3Duration(input.duration);
     const result = await fal.subscribe(MODEL_ID, {
       input: {
         prompt: input.prompt,

@@ -7,7 +7,7 @@ import { X, Maximize2, ChevronDown, Trash2, Upload, Clapperboard } from "lucide-
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
-import { getAdapter, listAdapters } from "@/lib/adapters";
+import { listAdapters } from "@/lib/adapters";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
@@ -16,6 +16,75 @@ const MUSIC_PRESETS = [
   { id: "cinematic", label: "Cinematic Drama", desc: "Orchestral, building", icon: "◐", prompt: "Cinematic orchestral instrumental, building strings, dramatic piano, sweeping and grand, 75 BPM, luxury property reveal" },
   { id: "natural", label: "Natural Light", desc: "Acoustic, soft", icon: "○", prompt: "Natural light acoustic instrumental, fingerpicked guitar, soft ambient textures, peaceful and airy, 90 BPM, serene home atmosphere" },
 ];
+
+const CURATED_DURATIONS: Record<string, number[]> = {
+  "kling-v3-pro": [3, 5, 7, 10, 12, 15],
+  "kling-o1-pro": [5, 10],
+};
+
+function getDurations(modelId: string): number[] {
+  return CURATED_DURATIONS[modelId] ?? [5, 10];
+}
+
+function getModelShortName(displayName: string): string {
+  if (displayName.includes("V3")) return "V3 Pro";
+  if (displayName.includes("O1")) return "O1 Pro";
+  return displayName.split(" ").slice(0, 2).join(" ");
+}
+
+function StatusDot({ status }: { status: "idle" | "generating" | "ready" | "failed" }) {
+  if (status === "ready") return <span className="inline-block h-1.5 w-1.5 rounded-full bg-green-400" />;
+  if (status === "generating") return <span className="inline-block h-1.5 w-1.5 animate-pulse rounded-full bg-accent-gold" />;
+  if (status === "failed") return <span className="inline-block h-1.5 w-1.5 rounded-full bg-red-400" />;
+  return <span className="inline-block h-1.5 w-1.5 rounded-full bg-white/20" />;
+}
+
+function StatusLabel({ status }: { status: "idle" | "generating" | "ready" | "failed" }) {
+  if (status === "ready") return <span className="text-green-400">Pronto</span>;
+  if (status === "generating") return <span className="animate-pulse text-accent-gold">Gerando</span>;
+  if (status === "failed") return <span className="text-red-400">Erro</span>;
+  return <span className="text-white/30">—</span>;
+}
+
+function ModelChip({ modelId, onChange }: { modelId: string; onChange: (id: string) => void }) {
+  const [open, setOpen] = useState(false);
+  const adapters = listAdapters();
+  if (adapters.length <= 1) return null;
+
+  const current = adapters.find((a) => a.id === modelId) ?? adapters[0]!;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex items-center gap-1 rounded-md border border-accent-gold/20 bg-accent-gold/5 px-2 py-0.5 font-mono text-[10px] text-accent-gold transition-colors hover:border-accent-gold/40"
+      >
+        {getModelShortName(current.displayName)}
+        <ChevronDown size={10} className={`transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-50" onClick={() => setOpen(false)} />
+          <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
+            {adapters.map((a) => (
+              <button
+                key={a.id}
+                onClick={() => { onChange(a.id); setOpen(false); }}
+                className={`flex w-full items-center justify-between px-3 py-2 font-mono text-[11px] transition-colors ${
+                  a.id === modelId ? "text-accent-gold" : "text-text-secondary hover:bg-white/5 hover:text-[var(--text)]"
+                }`}
+              >
+                {getModelShortName(a.displayName)}
+                {a.id === modelId && <span className="text-accent-gold">✓</span>}
+              </button>
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 function MusicPresetSelector({
   selectedPrompt,
@@ -54,10 +123,7 @@ function MusicPresetSelector({
               return (
                 <button
                   key={preset.id}
-                  onClick={() => {
-                    onSelect(preset.prompt);
-                    setOpen(false);
-                  }}
+                  onClick={() => { onSelect(preset.prompt); setOpen(false); }}
                   className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
                     isSelected ? "bg-accent-gold/5" : "hover:bg-white/5"
                   }`}
@@ -75,9 +141,7 @@ function MusicPresetSelector({
                       {preset.desc}
                     </span>
                   </div>
-                  {isSelected && (
-                    <span className="text-accent-gold font-mono text-[10px]">✓</span>
-                  )}
+                  {isSelected && <span className="text-accent-gold font-mono text-[10px]">✓</span>}
                 </button>
               );
             })}
@@ -125,10 +189,7 @@ function PresetSelector({
               return (
                 <button
                   key={preset.id}
-                  onClick={() => {
-                    onSelect(preset.id);
-                    setOpen(false);
-                  }}
+                  onClick={() => { onSelect(preset.id); setOpen(false); }}
                   className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
                     isSelected ? "bg-accent-gold/5" : "hover:bg-white/5"
                   }`}
@@ -146,9 +207,7 @@ function PresetSelector({
                       {preset.description}
                     </span>
                   </div>
-                  {isSelected && (
-                    <span className="text-accent-gold font-mono text-[10px]">✓</span>
-                  )}
+                  {isSelected && <span className="text-accent-gold font-mono text-[10px]">✓</span>}
                 </button>
               );
             })}
@@ -166,18 +225,14 @@ function ExportButton({ onExport }: { onExport: () => Promise<void> | void }) {
   const handleExport = async () => {
     if (exporting) return;
     setExporting(true);
-    try {
-      await onExport();
-    } finally {
-      setExporting(false);
-    }
+    try { await onExport(); } finally { setExporting(false); }
   };
 
   return (
     <button
       onClick={handleExport}
       disabled={readyCount < 1 || exporting}
-      className="mt-4 w-full rounded-lg bg-accent-gold py-2.5 font-mono text-label-sm uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80 disabled:opacity-30 disabled:cursor-not-allowed"
+      className="mt-3 w-full rounded-lg bg-accent-gold py-2.5 font-mono text-label-sm uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
     >
       {exporting ? "Exportando..." : "Baixar Edit Final"}
     </button>
@@ -191,16 +246,9 @@ function EditPreview({ musicUrl, onClose }: { musicUrl: string | null; onClose: 
 
   const syncPlay = () => {
     videoRef.current?.play();
-    if (audioRef.current && musicUrl) {
-      audioRef.current.currentTime = 0;
-      audioRef.current.play();
-    }
+    if (audioRef.current && musicUrl) { audioRef.current.currentTime = 0; audioRef.current.play(); }
   };
-
-  const syncPause = () => {
-    videoRef.current?.pause();
-    audioRef.current?.pause();
-  };
+  const syncPause = () => { videoRef.current?.pause(); audioRef.current?.pause(); };
 
   return (
     <div className="relative aspect-video w-full bg-white/5">
@@ -209,22 +257,11 @@ function EditPreview({ musicUrl, onClose }: { musicUrl: string | null; onClose: 
           ref={videoRef}
           src={preview.videoUrl}
           className="h-full w-full cursor-pointer object-cover"
-          loop
-          playsInline
-          muted={!musicUrl}
-          onClick={() => {
-            if (videoRef.current?.paused) syncPlay();
-            else syncPause();
-          }}
+          loop playsInline muted={!musicUrl}
+          onClick={() => videoRef.current?.paused ? syncPlay() : syncPause()}
         />
       ) : preview ? (
-        <Image
-          src={preview.photoDataUrl ?? preview.photoUrl}
-          alt="edit"
-          fill
-          className="object-cover"
-          unoptimized
-        />
+        <Image src={preview.photoDataUrl ?? preview.photoUrl} alt="edit" fill className="object-cover" unoptimized />
       ) : (
         <div className="flex h-full w-full items-center justify-center">
           <Clapperboard size={24} className="text-text-secondary" />
@@ -242,13 +279,7 @@ function EditPreview({ musicUrl, onClose }: { musicUrl: string | null; onClose: 
 }
 
 function MusicSection({
-  musicUrl,
-  musicPrompt,
-  isMusicGenerating,
-  setMusicPrompt,
-  generateMusic,
-  clearMusic,
-  setMusicUrl,
+  musicUrl, musicPrompt, isMusicGenerating, setMusicPrompt, generateMusic, clearMusic, setMusicUrl,
 }: {
   musicUrl: string | null;
   musicPrompt: string;
@@ -268,7 +299,7 @@ function MusicSection({
           Trilha Sonora
         </label>
         <div className="space-y-2">
-          <audio src={musicUrl} controls className="w-full h-8 opacity-80" />
+          <audio src={musicUrl} controls className="h-8 w-full opacity-80" />
           <button
             onClick={clearMusic}
             className="flex items-center gap-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:text-red-400"
@@ -307,20 +338,15 @@ function MusicSection({
 
       {tab === "ai" ? (
         <div className="space-y-3">
-          <MusicPresetSelector
-            selectedPrompt={musicPrompt}
-            onSelect={setMusicPrompt}
-          />
+          <MusicPresetSelector selectedPrompt={musicPrompt} onSelect={setMusicPrompt} />
           <button
             onClick={generateMusic}
             disabled={isMusicGenerating || !musicPrompt.trim()}
-            className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:opacity-30 disabled:cursor-not-allowed"
+            className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
           >
             {isMusicGenerating ? "Gerando trilha..." : "Gerar trilha"}
           </button>
-          <p className="font-mono text-[9px] text-text-secondary">
-            $0.15 · Instrumental · ~30s
-          </p>
+          <p className="font-mono text-[9px] text-text-secondary">$0.15 · Instrumental · ~30s</p>
         </div>
       ) : (
         <div className="space-y-3">
@@ -331,10 +357,7 @@ function MusicSection({
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) {
-                const url = URL.createObjectURL(file);
-                setMusicUrl(url);
-              }
+              if (file) setMusicUrl(URL.createObjectURL(file));
               e.target.value = "";
             }}
           />
@@ -343,12 +366,8 @@ function MusicSection({
             className="flex w-full flex-col items-center gap-2 rounded-lg border border-dashed border-white/10 py-6 transition-colors hover:border-accent-gold/30"
           >
             <Upload size={16} className="text-text-secondary" />
-            <span className="font-mono text-[10px] text-text-secondary">
-              Arraste ou clique pra enviar
-            </span>
-            <span className="font-mono text-[8px] text-text-secondary">
-              MP3, WAV, OGG, M4A
-            </span>
+            <span className="font-mono text-[10px] text-text-secondary">Arraste ou clique pra enviar</span>
+            <span className="font-mono text-[8px] text-text-secondary">MP3, WAV, OGG, M4A</span>
           </button>
         </div>
       )}
@@ -356,58 +375,11 @@ function MusicSection({
   );
 }
 
-function ModelSelector({ modelId, onChange }: { modelId: string; onChange: (id: string) => void }) {
-  const adapters = listAdapters();
-  if (adapters.length <= 1) return null;
-
-  return (
-    <div className="mt-4">
-      <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-        Modelo
-      </label>
-      <div className="flex gap-1.5">
-        {adapters.map((a) => (
-          <button
-            key={a.id}
-            onClick={() => onChange(a.id)}
-            className={`flex-1 rounded-lg border py-1.5 font-mono text-[10px] transition-all ${
-              modelId === a.id
-                ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
-                : "border-white/5 text-text-secondary hover:border-white/10"
-            }`}
-          >
-            {a.displayName}
-          </button>
-        ))}
-      </div>
-    </div>
-  );
-}
-
-function getDurations(modelId: string): number[] {
-  try {
-    const adapter = getAdapter(modelId);
-    const durations: number[] = [];
-    for (let d = adapter.minDuration; d <= adapter.maxDuration; d++) {
-      if (d === 5 || d === 10 || d === adapter.minDuration || d === adapter.maxDuration) {
-        durations.push(d);
-      }
-    }
-    return Array.from(new Set(durations)).sort((a, b) => a - b);
-  } catch {
-    return [5, 10];
-  }
-}
-
 export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreviewVideo?: (url: string) => void; onExport?: () => void; onEditImage?: (sceneId: string) => void }) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
-  const scene = useProjectStore((s) =>
-    s.scenes.find((sc) => sc.id === s.selectedSceneId),
-  );
-  const sceneIndex = useProjectStore((s) =>
-    s.scenes.findIndex((sc) => sc.id === s.selectedSceneId),
-  );
+  const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
+  const sceneIndex = useProjectStore((s) => s.scenes.findIndex((sc) => sc.id === s.selectedSceneId));
   const setScenePreset = useProjectStore((s) => s.setScenePreset);
   const setSceneDuration = useProjectStore((s) => s.setSceneDuration);
   const generateScene = useProjectStore((s) => s.generateScene);
@@ -431,28 +403,19 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
   return (
     <aside
       className={`shrink-0 border-l border-white/5 bg-[#0A0A09] transition-all duration-300 ease-out overflow-hidden overflow-y-auto ${
-        isOpen ? "w-72" : "w-0 border-l-0"
+        isOpen ? "w-64" : "w-0 border-l-0"
       }`}
     >
       {scene && selectedSceneId && showScene && (
-        <div className="flex h-full w-72 flex-col">
+        <div className="flex h-full w-64 flex-col">
           <div className="relative aspect-video w-full bg-white/5">
             {scene.status === "ready" && scene.videoUrl ? (
-              <video
-                src={scene.videoUrl}
-                className="h-full w-full object-cover"
-                muted
-                loop
-                autoPlay
-                playsInline
-              />
+              <video src={scene.videoUrl} className="h-full w-full object-cover" muted loop autoPlay playsInline />
             ) : (
               <Image
                 src={scene.photoDataUrl ?? scene.photoUrl}
                 alt={`Cena ${sceneIndex + 1}`}
-                fill
-                className="object-cover"
-                unoptimized
+                fill className="object-cover" unoptimized
               />
             )}
             <button
@@ -471,15 +434,18 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto p-4">
-            <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-              Cena {sceneIndex + 1}
-            </p>
+          <div className="flex-1 overflow-y-auto px-3 py-3">
+            {/* Header: cena + model chip */}
+            <div className="flex items-center justify-between">
+              <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                Cena {sceneIndex + 1}
+              </p>
+              <ModelChip modelId={modelId} onChange={setModelId} />
+            </div>
 
-            <ModelSelector modelId={modelId} onChange={setModelId} />
-
-            <div className="mt-4">
-              <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+            {/* Movimento */}
+            <div className="mt-3">
+              <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
                 Movimento
               </label>
               <PresetSelector
@@ -488,52 +454,41 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
               />
             </div>
 
-            <div className="mt-4">
-              <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                Duração
-              </label>
-              <div className="flex gap-1.5">
+            {/* Duracao + custo/status inline */}
+            <div className="mt-3">
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                  Duração
+                </label>
+                <span className="flex items-center gap-1.5 font-mono text-[10px] text-text-secondary">
+                  <span className="text-accent-gold/80">{scene.costCredits} cr.</span>
+                  <span className="opacity-40">·</span>
+                  <StatusDot status={scene.status} />
+                  <StatusLabel status={scene.status} />
+                </span>
+              </div>
+              <div className={`grid gap-1 ${durations.length > 4 ? "grid-cols-6" : durations.length > 2 ? "grid-cols-4" : "grid-cols-2"}`}>
                 {durations.map((d) => (
                   <button
                     key={d}
                     onClick={() => setSceneDuration(selectedSceneId, d)}
-                    className={`flex-1 rounded-lg border py-1.5 font-mono text-[10px] transition-all ${
+                    className={`rounded-md border py-1 font-mono text-[10px] transition-all ${
                       scene.duration === d
                         ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
                         : "border-white/5 text-text-secondary hover:border-white/10"
                     }`}
                   >
-                    {d}s · {d}cr
+                    {d}s
                   </button>
                 ))}
               </div>
             </div>
 
-            <div className="mt-4 flex gap-3 rounded-lg border border-white/5 px-3 py-2.5">
-              <div className="flex-1">
-                <span className="block font-mono text-[9px] uppercase text-text-secondary">
-                  Custo {scene.status === "ready" ? "(real)" : "(est.)"}
-                </span>
-                <span className="block font-mono text-[13px] text-accent-gold">
-                  {scene.costCredits} cr.
-                </span>
-              </div>
-              <div className="h-8 w-px bg-white/5" />
-              <div className="flex-1">
-                <span className="block font-mono text-[9px] uppercase text-text-secondary">Status</span>
-                <span className="block font-mono text-[13px]">
-                  {scene.status === "idle" && <span className="text-text-secondary">Idle</span>}
-                  {scene.status === "generating" && <span className="animate-pulse text-accent-gold">Gerando</span>}
-                  {scene.status === "ready" && <span className="text-green-400">Pronto</span>}
-                  {scene.status === "failed" && <span className="text-red-400">Erro</span>}
-                </span>
-              </div>
-            </div>
-
+            {/* Actions */}
             <button
               disabled={isGenerating}
               onClick={() => generateScene(selectedSceneId)}
-              className="mt-4 w-full rounded-lg border border-accent-gold/30 py-2.5 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:opacity-30 disabled:cursor-not-allowed"
+              className="mt-3 w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
             >
               {scene.status === "ready" ? "Regenerar cena" : scene.status === "generating" ? "Gerando..." : "Gerar esta cena"}
             </button>
@@ -541,7 +496,7 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
             {onEditImage && (
               <button
                 onClick={() => onEditImage(selectedSceneId)}
-                className="mt-2 w-full rounded-lg border border-white/10 py-2.5 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
+                className="mt-1.5 w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
               >
                 Editar imagem
               </button>
@@ -550,7 +505,7 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
             {scene.status === "ready" && scene.videoUrl && (
               <button
                 onClick={() => downloadVideoBlob(scene.videoUrl!, "cena.mp4")}
-                className="mt-2 w-full rounded-lg border border-white/10 py-2.5 font-mono text-label-sm text-text-secondary transition-all hover:border-white/20 hover:text-[var(--text)]"
+                className="mt-1.5 w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-white/20 hover:text-[var(--text)]"
               >
                 Baixar cena
               </button>
@@ -558,28 +513,29 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
           </div>
         </div>
       )}
+
       {showEdit && (
-        <div className="flex h-full w-72 flex-col">
+        <div className="flex h-full w-64 flex-col">
           <EditPreview musicUrl={musicUrl} onClose={() => useProjectStore.setState({ editNodeSelected: false })} />
 
-          <div className="flex-1 overflow-y-auto p-4">
+          <div className="flex-1 overflow-y-auto px-3 py-3">
             <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
               Edit Final
             </p>
 
-            <div className="mt-4">
+            <div className="mt-3">
               <MusicSection
-              musicUrl={musicUrl}
-              musicPrompt={musicPrompt}
-              isMusicGenerating={isMusicGenerating}
-              setMusicPrompt={setMusicPrompt}
-              generateMusic={generateMusicAction}
-              clearMusic={clearMusic}
-              setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
-            />
+                musicUrl={musicUrl}
+                musicPrompt={musicPrompt}
+                isMusicGenerating={isMusicGenerating}
+                setMusicPrompt={setMusicPrompt}
+                generateMusic={generateMusicAction}
+                clearMusic={clearMusic}
+                setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
+              />
             </div>
 
-            <div className="mt-4 rounded-lg border border-white/5 p-3">
+            <div className="mt-3 rounded-lg border border-white/5 p-3">
               <span className="block font-mono text-[9px] uppercase text-text-secondary">Composição</span>
               <div className="mt-2 space-y-1">
                 <div className="flex items-center justify-between">
@@ -597,9 +553,7 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
               </div>
             </div>
 
-            {onExport && (
-              <ExportButton onExport={onExport} />
-            )}
+            {onExport && <ExportButton onExport={onExport} />}
           </div>
         </div>
       )}

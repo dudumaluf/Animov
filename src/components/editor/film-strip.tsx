@@ -2,6 +2,7 @@
 
 import Image from "next/image";
 import { useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { useProjectStore } from "@/stores/project-store";
 import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame } from "lucide-react";
 import {
@@ -190,7 +191,7 @@ function SortableSceneCard({
         </div>
       </div>
 
-      {contextMenu && (
+      {contextMenu && createPortal(
         <>
           <div className="fixed inset-0 z-50" onClick={closeContext} onContextMenu={(e) => { e.preventDefault(); closeContext(); }} />
           <div
@@ -228,7 +229,8 @@ function SortableSceneCard({
               Remover
             </button>
           </div>
-        </>
+        </>,
+        document.body,
       )}
     </div>
   );

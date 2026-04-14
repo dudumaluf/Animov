@@ -14,6 +14,7 @@ import {
   Play,
   Pause,
   Loader2,
+  Volume2,
 } from "lucide-react";
 
 import { PRESET_CATALOG } from "@/lib/presets";
@@ -427,7 +428,7 @@ function EditPreview({
 }
 
 function MusicSection({
-  musicUrl, musicPrompt, isMusicGenerating, setMusicPrompt, generateMusic, clearMusic, setMusicUrl,
+  musicUrl, musicPrompt, isMusicGenerating, setMusicPrompt, generateMusic, clearMusic, setMusicUrl, musicVolume, setMusicVolume,
 }: {
   musicUrl: string | null;
   musicPrompt: string;
@@ -436,6 +437,8 @@ function MusicSection({
   generateMusic: () => void;
   clearMusic: () => void;
   setMusicUrl: (url: string) => void;
+  musicVolume: number;
+  setMusicVolume: (vol: number) => void;
 }) {
   const [tab, setTab] = useState<"ai" | "upload">("ai");
   const fileRef = useRef<HTMLInputElement>(null);
@@ -458,6 +461,21 @@ function MusicSection({
           </button>
         </div>
         <MusicTrackPlayer src={musicUrl} />
+        <div className="mt-2 flex items-center gap-2">
+          <Volume2 size={12} className="shrink-0 text-text-secondary" />
+          <input
+            type="range"
+            min={0}
+            max={100}
+            step={1}
+            value={Math.round(musicVolume * 100)}
+            onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
+            className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-white/10 accent-accent-gold [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-gold"
+          />
+          <span className="w-8 text-right font-mono text-[10px] text-text-secondary">
+            {Math.round(musicVolume * 100)}%
+          </span>
+        </div>
       </div>
     );
   }
@@ -557,6 +575,8 @@ export function Inspector({
   const clearMusic = useProjectStore((s) => s.clearMusic);
   const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
   const setExportAspectRatio = useProjectStore((s) => s.setExportAspectRatio);
+  const musicVolume = useProjectStore((s) => s.musicVolume);
+  const setMusicVolume = useProjectStore((s) => s.setMusicVolume);
 
   const showScene = !!scene && !!selectedSceneId;
   const showEdit = editNodeSelected && !selectedSceneId;
@@ -735,6 +755,8 @@ export function Inspector({
               generateMusic={generateMusicAction}
               clearMusic={clearMusic}
               setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
+              musicVolume={musicVolume}
+              setMusicVolume={setMusicVolume}
             />
 
             <div className="mt-3 rounded-lg border border-white/5 px-3 py-2">

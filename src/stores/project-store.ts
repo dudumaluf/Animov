@@ -50,6 +50,7 @@ export type ProjectStore = {
   musicUrl: string | null;
   isMusicGenerating: boolean;
   exportAspectRatio: "16:9" | "9:16";
+  musicVolume: number;
   isLoading: boolean;
   isDirty: boolean;
   isGenerating: boolean;
@@ -83,6 +84,7 @@ export type ProjectStore = {
   generateMusic: () => Promise<void>;
   clearMusic: () => void;
   setExportAspectRatio: (ratio: "16:9" | "9:16") => void;
+  setMusicVolume: (vol: number) => void;
 
   updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string, costCredits?: number, videoDuration?: number) => void;
   generateAll: () => Promise<void>;
@@ -273,6 +275,7 @@ export const useProjectStore = create<ProjectStore>()(
       musicUrl: null,
       isMusicGenerating: false,
       exportAspectRatio: "16:9",
+      musicVolume: 0.3,
       isLoading: false,
       isDirty: false,
       isGenerating: false,
@@ -835,6 +838,8 @@ export const useProjectStore = create<ProjectStore>()(
 
       setExportAspectRatio: (ratio) => set({ exportAspectRatio: ratio, isDirty: true }),
 
+      setMusicVolume: (vol) => set({ musicVolume: Math.max(0, Math.min(1, vol)), isDirty: true }),
+
       updateSceneStatus: (sceneId, status, videoUrl, costCredits, videoDuration) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
@@ -958,6 +963,7 @@ export const useProjectStore = create<ProjectStore>()(
             musicPrompt: meta.musicPrompt ?? "",
             musicUrl: meta.musicUrl ?? "",
             exportAspectRatio: meta.exportAspectRatio === "9:16" ? "9:16" : "16:9",
+            musicVolume: typeof meta.musicVolume === "number" ? meta.musicVolume : 0.3,
             selectedSceneId: null,
             isLoading: false,
             isDirty: false,
@@ -1063,6 +1069,7 @@ export const useProjectStore = create<ProjectStore>()(
               musicPrompt: state.musicPrompt || undefined,
               musicUrl: state.musicUrl || undefined,
               exportAspectRatio: state.exportAspectRatio !== "16:9" ? state.exportAspectRatio : undefined,
+              musicVolume: state.musicVolume !== 0.3 ? state.musicVolume : undefined,
             },
           };
 

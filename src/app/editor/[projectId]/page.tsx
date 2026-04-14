@@ -218,13 +218,15 @@ export default function EditorPage({
     setComposing(true);
     setExportProgress({ message: "Iniciando...", percent: 0 });
     try {
-      const clips: { url: string; hasAudio: boolean }[] = [];
+      const clips: { url: string; hasAudio: boolean; durationHint?: number; clipVolume?: number }[] = [];
       for (let i = 0; i < allScenes.length; i++) {
         const scene = allScenes[i]!;
         if (scene.status === "ready" && scene.videoUrl) {
           clips.push({
             url: scene.videoUrl,
             hasAudio: scene.sourceType === "video-upload",
+            durationHint: scene.duration,
+            clipVolume: scene.audioVolume ?? 1,
           });
         }
         if (i < allScenes.length - 1) {
@@ -241,7 +243,7 @@ export default function EditorPage({
       const blob = await composeVideos({
         clips,
         audioUrl: state.musicUrl ?? undefined,
-        musicVolume: state.musicVolume,
+        audioMix: state.audioMix,
         width: isVertical ? 1080 : 1920,
         height: isVertical ? 1920 : 1080,
         onProgress: setExportProgress,

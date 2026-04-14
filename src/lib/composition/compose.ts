@@ -18,12 +18,36 @@ export type ComposeProgress = {
 export type ClipInfo = {
   url: string;
   hasAudio: boolean;
+  durationHint?: number;
+  clipVolume?: number;
+};
+
+export type AudioMixSettings = {
+  musicVolume: number;
+  musicFadeIn: number;
+  musicFadeOut: number;
+  clipFadeIn: number;
+  clipFadeOut: number;
+  duckingIntensity: number;
+  duckingAttack: number;
+  duckingRelease: number;
+};
+
+export const DEFAULT_AUDIO_MIX: AudioMixSettings = {
+  musicVolume: 0.3,
+  musicFadeIn: 0.5,
+  musicFadeOut: 2.0,
+  clipFadeIn: 0.3,
+  clipFadeOut: 0.3,
+  duckingIntensity: 0.75,
+  duckingAttack: 0.1,
+  duckingRelease: 0.4,
 };
 
 type CompositionInput = {
   clips: ClipInfo[];
   audioUrl?: string;
-  musicVolume?: number;
+  audioMix?: AudioMixSettings;
   width?: number;
   height?: number;
   fps?: number;
@@ -55,10 +79,8 @@ function coverCrop(
 
 const MIX_SAMPLE_RATE = 44100;
 const MIX_CHANNELS = 2;
-const RMS_WINDOW = Math.floor(MIX_SAMPLE_RATE * 0.1); // 100ms
 const SPEECH_THRESHOLD = 0.02;
-const DUCK_FACTOR = 0.25;
-const RAMP_SAMPLES = Math.floor(MIX_SAMPLE_RATE * 0.05); // 50ms
+const DUCK_MIN_GAIN = 0.15;
 
 /* ── Audio helpers ──────────────────────────────────────── */
 
@@ -161,12 +183,13 @@ type ClipAudioInfo = {
   pcm: Float32Array[] | null;
   startSample: number;
   lengthSamples: number;
+  volume: number;
 };
 
 function buildMixedTimeline(
   clipAudios: ClipAudioInfo[],
   musicPCM: Float32Array[] | null,
-  musicVolume: number,
+  mix: AudioMixSettings,
   totalDurationSec: number,
 ): Float32Array[] {
   const totalSamples = Math.ceil(totalDurationSec * MIX_SAMPLE_RATE);
@@ -175,6 +198,9 @@ function buildMixedTimeline(
     master.push(new Float32Array(totalSamples));
   }
 
+  const clipFadeInSamples = Math.floor(mix.clipFadeIn * MIX_SAMPLE_RATE);
+  const clipFadeOutSamples = Math.floor(mix.clipFadeOut * MIX_SAMPLE_RATE);
+
   for (const clip of clipAudios) {
     if (!clip.pcm) continue;
     for (let ch = 0; ch < MIX_CHANNELS; ch++) {
@@ -182,7 +208,10 @@ function buildMixedTimeline(
       const src = clip.pcm[ch]!;
       const copyLen = Math.min(src.length, clip.lengthSamples, totalSamples - clip.startSample);
       for (let i = 0; i < copyLen; i++) {
-        dst[clip.startSample + i] = (dst[clip.startSample + i] ?? 0) + src[i]!;
+        let fade = 1;
+        if (i < clipFadeInSamples) fade = i / clipFadeInSamples;
+        if (i > copyLen - clipFadeOutSamples) fade = Math.min(fade, (copyLen - i) / clipFadeOutSamples);
+        dst[clip.startSample + i] = (dst[clip.startSample + i] ?? 0) + src[i]! * clip.volume * fade;
       }
     }
   }
@@ -190,34 +219,42 @@ function buildMixedTimeline(
   if (musicPCM) {
     const hasAnyClipAudio = clipAudios.some((c) => c.pcm !== null);
     const clipMono = hasAnyClipAudio ? master[0]! : null;
+    const rmsWindow = Math.floor(0.1 * MIX_SAMPLE_RATE);
+    const musicFadeInSamples = Math.floor(mix.musicFadeIn * MIX_SAMPLE_RATE);
+    const musicFadeOutSamples = Math.floor(mix.musicFadeOut * MIX_SAMPLE_RATE);
+    const attackAlpha = mix.duckingAttack > 0 ? 1 / (mix.duckingAttack * MIX_SAMPLE_RATE) : 1;
+    const releaseAlpha = mix.duckingRelease > 0 ? 1 / (mix.duckingRelease * MIX_SAMPLE_RATE) : 1;
 
     for (let ch = 0; ch < MIX_CHANNELS; ch++) {
       const dst = master[ch]!;
       const src = musicPCM[ch]!;
       const len = Math.min(src.length, totalSamples);
 
-      let prevGain = musicVolume;
+      let currentGain = mix.musicVolume;
 
       for (let i = 0; i < len; i++) {
-        let gain = musicVolume;
+        let targetGain = mix.musicVolume;
 
         if (clipMono) {
-          const winStart = Math.max(0, i - Math.floor(RMS_WINDOW / 2));
-          const winEnd = Math.min(clipMono.length, winStart + RMS_WINDOW);
+          const winStart = Math.max(0, i - Math.floor(rmsWindow / 2));
+          const winEnd = Math.min(clipMono.length, winStart + rmsWindow);
           let sum = 0;
           for (let j = winStart; j < winEnd; j++) {
             sum += clipMono[j]! * clipMono[j]!;
           }
           const rms = Math.sqrt(sum / (winEnd - winStart));
           if (rms > SPEECH_THRESHOLD) {
-            gain = musicVolume * DUCK_FACTOR;
+            targetGain = mix.musicVolume * (1 - mix.duckingIntensity * (1 - DUCK_MIN_GAIN));
           }
-          const alpha = 1 / RAMP_SAMPLES;
-          gain = prevGain + (gain - prevGain) * alpha;
-          prevGain = gain;
+          const alpha = rms > SPEECH_THRESHOLD ? attackAlpha : releaseAlpha;
+          currentGain += (targetGain - currentGain) * alpha;
         }
 
-        const mixed = dst[i]! + src[i]! * gain;
+        let musicFade = 1;
+        if (i < musicFadeInSamples) musicFade = i / musicFadeInSamples;
+        if (i > len - musicFadeOutSamples) musicFade = Math.min(musicFade, (len - i) / musicFadeOutSamples);
+
+        const mixed = dst[i]! + src[i]! * currentGain * musicFade;
         dst[i] = Math.max(-1, Math.min(1, mixed));
       }
     }
@@ -248,7 +285,7 @@ function timelineToChunks(timeline: Float32Array[], chunkDuration: number = 1): 
 export async function composeVideos({
   clips,
   audioUrl,
-  musicVolume = 0.3,
+  audioMix = DEFAULT_AUDIO_MIX,
   width = 1920,
   height = 1080,
   fps = 30,
@@ -277,11 +314,11 @@ export async function composeVideos({
   }
 
   try {
-    return await composeWithMediabunny({ clips, audioUrl, musicVolume, width, height, fps, onProgress });
+    return await composeWithMediabunny({ clips, audioUrl, audioMix, width, height, fps, onProgress });
   } catch (err) {
     console.warn("[compose] Mediabunny failed, falling back to MediaRecorder:", err);
     onProgress?.({ message: "Usando modo alternativo de gravação...", percent: 5 });
-    return composeWithMediaRecorder({ clips, audioUrl, musicVolume, width, height, onProgress });
+    return composeWithMediaRecorder({ clips, audioUrl, audioMix, width, height, onProgress });
   }
 }
 
@@ -290,7 +327,7 @@ export async function composeVideos({
 async function composeWithMediabunny({
   clips,
   audioUrl,
-  musicVolume,
+  audioMix,
   width,
   height,
   fps,
@@ -298,7 +335,7 @@ async function composeWithMediabunny({
 }: {
   clips: ClipInfo[];
   audioUrl?: string;
-  musicVolume: number;
+  audioMix: AudioMixSettings;
   width: number;
   height: number;
   fps: number;
@@ -348,7 +385,8 @@ async function composeWithMediabunny({
     const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(clipData[i]!.blob) });
     const videoTrack = await input.getPrimaryVideoTrack();
     const dur = videoTrack ? await videoTrack.computeDuration() : 0;
-    clipMetas.push({ duration: dur });
+    const hint = clips[i]!.durationHint ?? 0;
+    clipMetas.push({ duration: Math.max(dur, hint) });
   }
 
   const totalDuration = clipMetas.reduce((sum, m) => sum + m.duration, 0);
@@ -372,12 +410,13 @@ async function composeWithMediabunny({
         pcm: clipData[i]!.clipAudioPCM?.pcm ?? null,
         startSample: sampleOffset,
         lengthSamples,
+        volume: clips[i]!.clipVolume ?? 1,
       };
       sampleOffset += lengthSamples;
       return info;
     });
 
-    const masterTimeline = buildMixedTimeline(clipAudioInfos, musicPCM, musicVolume, totalDuration);
+    const masterTimeline = buildMixedTimeline(clipAudioInfos, musicPCM, audioMix, totalDuration);
     mixedChunks = timelineToChunks(masterTimeline);
   }
 
@@ -491,14 +530,14 @@ async function composeWithMediabunny({
 async function composeWithMediaRecorder({
   clips,
   audioUrl,
-  musicVolume,
+  audioMix,
   width,
   height,
   onProgress,
 }: {
   clips: ClipInfo[];
   audioUrl?: string;
-  musicVolume: number;
+  audioMix: AudioMixSettings;
   width: number;
   height: number;
   onProgress?: CompositionInput["onProgress"];
@@ -528,7 +567,7 @@ async function composeWithMediaRecorder({
 
     const elSource = audioCtx.createMediaElementSource(audioEl);
     musicGain = audioCtx.createGain();
-    musicGain.gain.value = musicVolume;
+    musicGain.gain.value = audioMix.musicVolume;
     elSource.connect(musicGain);
     musicGain.connect(dest);
   }
@@ -558,7 +597,7 @@ async function composeWithMediaRecorder({
     report(`Gravando clipe ${i + 1} de ${nc}...`, 15 + (i / nc) * 75);
 
     if (clip.hasAudio) {
-      await playClipWithAudio(clip.url, ctx, width, height, audioCtx, dest, musicGain, musicVolume);
+      await playClipWithAudio(clip.url, ctx, width, height, audioCtx, dest, musicGain, audioMix.musicVolume);
     } else {
       await playClipMuted(clip.url, ctx, width, height);
     }
@@ -644,7 +683,7 @@ function playClipWithAudio(
       }
 
       if (musicGain) {
-        musicGain.gain.setTargetAtTime(baseMusicVolume * DUCK_FACTOR, audioCtx.currentTime, 0.1);
+        musicGain.gain.setTargetAtTime(baseMusicVolume * DUCK_MIN_GAIN, audioCtx.currentTime, 0.1);
       }
 
       video.play().catch(() => {});

@@ -8,6 +8,7 @@ import {
 } from "@/lib/project-portable";
 import { DEFAULT_MODEL_ID } from "@/lib/adapters";
 import { extractVideoThumbnail } from "@/lib/utils/video-thumbnail";
+import { type AudioMixSettings, DEFAULT_AUDIO_MIX } from "@/lib/composition/compose";
 
 export type VideoVersion = { url: string; duration: number };
 
@@ -23,6 +24,7 @@ export type Scene = {
   activeVersion: number;
   costCredits: number;
   sourceType?: "image" | "video-upload";
+  audioVolume?: number;
 };
 
 export type Transition = {
@@ -50,7 +52,7 @@ export type ProjectStore = {
   musicUrl: string | null;
   isMusicGenerating: boolean;
   exportAspectRatio: "16:9" | "9:16";
-  musicVolume: number;
+  audioMix: AudioMixSettings;
   isLoading: boolean;
   isDirty: boolean;
   isGenerating: boolean;
@@ -84,7 +86,8 @@ export type ProjectStore = {
   generateMusic: () => Promise<void>;
   clearMusic: () => void;
   setExportAspectRatio: (ratio: "16:9" | "9:16") => void;
-  setMusicVolume: (vol: number) => void;
+  setAudioMixSetting: <K extends keyof AudioMixSettings>(key: K, val: AudioMixSettings[K]) => void;
+  setSceneAudioVolume: (sceneId: string, vol: number) => void;
 
   updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string, costCredits?: number, videoDuration?: number) => void;
   generateAll: () => Promise<void>;
@@ -275,7 +278,7 @@ export const useProjectStore = create<ProjectStore>()(
       musicUrl: null,
       isMusicGenerating: false,
       exportAspectRatio: "16:9",
-      musicVolume: 0.3,
+      audioMix: { ...DEFAULT_AUDIO_MIX },
       isLoading: false,
       isDirty: false,
       isGenerating: false,
@@ -838,7 +841,17 @@ export const useProjectStore = create<ProjectStore>()(
 
       setExportAspectRatio: (ratio) => set({ exportAspectRatio: ratio, isDirty: true }),
 
-      setMusicVolume: (vol) => set({ musicVolume: Math.max(0, Math.min(1, vol)), isDirty: true }),
+      setAudioMixSetting: (key, val) => set((state) => ({
+        audioMix: { ...state.audioMix, [key]: typeof val === "number" ? Math.max(0, val) : val },
+        isDirty: true,
+      })),
+
+      setSceneAudioVolume: (sceneId, vol) => set((state) => ({
+        scenes: state.scenes.map((s) =>
+          s.id === sceneId ? { ...s, audioVolume: Math.max(0, Math.min(2, vol)) } : s,
+        ),
+        isDirty: true,
+      })),
 
       updateSceneStatus: (sceneId, status, videoUrl, costCredits, videoDuration) => {
         set((state) => ({
@@ -916,7 +929,7 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
@@ -935,6 +948,7 @@ export const useProjectStore = create<ProjectStore>()(
               activeVersion: clampedVer,
               costCredits: s.cost_credits,
               sourceType: s.source_type === "video-upload" ? "video-upload" : undefined,
+              audioVolume: typeof s.audio_volume === "number" ? s.audio_volume : undefined,
             };
           });
 
@@ -951,6 +965,13 @@ export const useProjectStore = create<ProjectStore>()(
 
           const meta = data.project.metadata ?? {};
 
+          const restoredMix: AudioMixSettings = meta.audioMix
+            ? { ...DEFAULT_AUDIO_MIX, ...meta.audioMix }
+            : {
+                ...DEFAULT_AUDIO_MIX,
+                musicVolume: typeof meta.musicVolume === "number" ? meta.musicVolume : DEFAULT_AUDIO_MIX.musicVolume,
+              };
+
           set({
             supabaseProjectId: supabaseId,
             projectId: supabaseId,
@@ -963,7 +984,7 @@ export const useProjectStore = create<ProjectStore>()(
             musicPrompt: meta.musicPrompt ?? "",
             musicUrl: meta.musicUrl ?? "",
             exportAspectRatio: meta.exportAspectRatio === "9:16" ? "9:16" : "16:9",
-            musicVolume: typeof meta.musicVolume === "number" ? meta.musicVolume : 0.3,
+            audioMix: restoredMix,
             selectedSceneId: null,
             isLoading: false,
             isDirty: false,
@@ -1047,6 +1068,7 @@ export const useProjectStore = create<ProjectStore>()(
                 video_versions: s.videoVersions ?? [],
                 active_version: s.activeVersion ?? 0,
                 source_type: s.sourceType ?? "image",
+                audio_volume: s.audioVolume ?? 1,
               };
             })
             .filter(Boolean);
@@ -1069,7 +1091,7 @@ export const useProjectStore = create<ProjectStore>()(
               musicPrompt: state.musicPrompt || undefined,
               musicUrl: state.musicUrl || undefined,
               exportAspectRatio: state.exportAspectRatio !== "16:9" ? state.exportAspectRatio : undefined,
-              musicVolume: state.musicVolume !== 0.3 ? state.musicVolume : undefined,
+              audioMix: state.audioMix,
             },
           };
 

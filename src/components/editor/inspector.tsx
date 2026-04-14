@@ -1,12 +1,13 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import {
   X,
   Maximize2,
   ChevronDown,
+  ChevronRight,
   Trash2,
   Upload,
   Clapperboard,
@@ -15,11 +16,13 @@ import {
   Pause,
   Loader2,
   Volume2,
+  SlidersHorizontal,
 } from "lucide-react";
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
 import { listAdapters } from "@/lib/adapters";
+import { DEFAULT_AUDIO_MIX, type AudioMixSettings } from "@/lib/composition/compose";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
@@ -36,6 +39,72 @@ const CURATED_DURATIONS: Record<string, number[]> = {
 
 function getDurations(modelId: string): number[] {
   return CURATED_DURATIONS[modelId] ?? [5, 10];
+}
+
+function DragValue({
+  value,
+  onChange,
+  min = 0,
+  max = 1,
+  step = 0.01,
+  sensitivity = 0.005,
+  suffix = "%",
+  displayMultiplier = 100,
+  decimals = 0,
+  icon,
+  label,
+}: {
+  value: number;
+  onChange: (v: number) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+  sensitivity?: number;
+  suffix?: string;
+  displayMultiplier?: number;
+  decimals?: number;
+  icon?: React.ReactNode;
+  label?: string;
+}) {
+  const dragging = useRef(false);
+  const startY = useRef(0);
+  const startVal = useRef(value);
+
+  const onPointerDown = useCallback((e: React.PointerEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    startY.current = e.clientY;
+    startVal.current = value;
+    (e.target as HTMLElement).setPointerCapture(e.pointerId);
+  }, [value]);
+
+  const onPointerMove = useCallback((e: React.PointerEvent) => {
+    if (!dragging.current) return;
+    const delta = (startY.current - e.clientY) * sensitivity;
+    const raw = startVal.current + delta;
+    const snapped = Math.round(raw / step) * step;
+    onChange(Math.max(min, Math.min(max, snapped)));
+  }, [onChange, min, max, step, sensitivity]);
+
+  const onPointerUp = useCallback((e: React.PointerEvent) => {
+    dragging.current = false;
+    (e.target as HTMLElement).releasePointerCapture(e.pointerId);
+  }, []);
+
+  const display = (value * displayMultiplier).toFixed(decimals);
+
+  return (
+    <span
+      className="inline-flex cursor-ns-resize select-none items-center gap-1 rounded px-1 py-0.5 font-mono text-[10px] text-white/60 transition-colors hover:bg-white/5 hover:text-accent-gold active:text-accent-gold"
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={onPointerUp}
+      title={label ? `${label}: arrastar para ajustar` : "Arrastar para ajustar"}
+    >
+      {icon}
+      <span>{display}{suffix}</span>
+    </span>
+  );
 }
 
 function getModelShortName(displayName: string): string {
@@ -442,19 +511,6 @@ function MusicSection({
 }) {
   const [tab, setTab] = useState<"ai" | "upload">("ai");
   const fileRef = useRef<HTMLInputElement>(null);
-  const [showVolSlider, setShowVolSlider] = useState(false);
-  const volRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    if (!showVolSlider) return;
-    const handler = (e: MouseEvent) => {
-      if (volRef.current && !volRef.current.contains(e.target as Node)) {
-        setShowVolSlider(false);
-      }
-    };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, [showVolSlider]);
 
   if (musicUrl) {
     return (
@@ -464,31 +520,15 @@ function MusicSection({
             Trilha sonora
           </span>
           <div className="flex items-center gap-1">
-            <div className="relative" ref={volRef}>
-              <button
-                type="button"
-                onClick={() => setShowVolSlider((v) => !v)}
-                className="flex h-7 items-center gap-1 rounded-md px-1.5 text-white/50 transition-colors hover:bg-white/5 hover:text-accent-gold"
-                title="Volume da música"
-                aria-label="Volume da música"
-              >
-                <Volume2 size={13} />
-                <span className="font-mono text-[10px]">{Math.round(musicVolume * 100)}%</span>
-              </button>
-              {showVolSlider && (
-                <div className="absolute right-0 top-full z-50 mt-1 rounded-lg border border-white/10 bg-[#141413] p-2.5 shadow-xl">
-                  <input
-                    type="range"
-                    min={0}
-                    max={100}
-                    step={1}
-                    value={Math.round(musicVolume * 100)}
-                    onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
-                    className="h-1 w-28 cursor-pointer appearance-none rounded-full bg-white/10 accent-accent-gold [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-gold"
-                  />
-                </div>
-              )}
-            </div>
+            <DragValue
+              value={musicVolume}
+              onChange={setMusicVolume}
+              min={0}
+              max={1}
+              step={0.01}
+              icon={<Volume2 size={12} />}
+              label="Volume da música"
+            />
             <button
               type="button"
               onClick={clearMusic}
@@ -568,6 +608,63 @@ function MusicSection({
   );
 }
 
+function MixagemSection({ audioMix, onUpdate }: {
+  audioMix: AudioMixSettings;
+  onUpdate: <K extends keyof AudioMixSettings>(key: K, val: AudioMixSettings[K]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="mt-3 rounded-lg border border-white/5">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[9px] uppercase tracking-wider text-text-secondary transition-colors hover:text-white/70"
+      >
+        {open ? <ChevronDown size={10} /> : <ChevronRight size={10} />}
+        <SlidersHorizontal size={10} />
+        Mixagem
+      </button>
+      {open && (
+        <div className="space-y-2 border-t border-white/5 px-3 py-2.5">
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[9px] text-text-secondary">Música vol.</span>
+            <DragValue value={audioMix.musicVolume} onChange={(v) => onUpdate("musicVolume", v)} min={0} max={1} label="Volume da música" icon={<Volume2 size={10} />} />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[9px] text-text-secondary">Música fade</span>
+            <div className="flex items-center gap-1">
+              <DragValue value={audioMix.musicFadeIn} onChange={(v) => onUpdate("musicFadeIn", v)} min={0} max={5} step={0.1} sensitivity={0.02} suffix="s" displayMultiplier={1} decimals={1} label="Fade in" />
+              <span className="font-mono text-[8px] text-white/20">/</span>
+              <DragValue value={audioMix.musicFadeOut} onChange={(v) => onUpdate("musicFadeOut", v)} min={0} max={10} step={0.1} sensitivity={0.02} suffix="s" displayMultiplier={1} decimals={1} label="Fade out" />
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[9px] text-text-secondary">Clipe fade</span>
+            <div className="flex items-center gap-1">
+              <DragValue value={audioMix.clipFadeIn} onChange={(v) => onUpdate("clipFadeIn", v)} min={0} max={3} step={0.1} sensitivity={0.02} suffix="s" displayMultiplier={1} decimals={1} label="Fade in" />
+              <span className="font-mono text-[8px] text-white/20">/</span>
+              <DragValue value={audioMix.clipFadeOut} onChange={(v) => onUpdate("clipFadeOut", v)} min={0} max={3} step={0.1} sensitivity={0.02} suffix="s" displayMultiplier={1} decimals={1} label="Fade out" />
+            </div>
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[9px] text-text-secondary">Ducking</span>
+            <DragValue value={audioMix.duckingIntensity} onChange={(v) => onUpdate("duckingIntensity", v)} min={0} max={1} label="Intensidade ducking" />
+          </div>
+          <div className="flex items-center justify-between">
+            <span className="font-mono text-[9px] text-text-secondary">Duck atk/rel</span>
+            <div className="flex items-center gap-1">
+              <DragValue value={audioMix.duckingAttack} onChange={(v) => onUpdate("duckingAttack", v)} min={0.01} max={2} step={0.01} sensitivity={0.005} suffix="s" displayMultiplier={1} decimals={2} label="Duck attack" />
+              <span className="font-mono text-[8px] text-white/20">/</span>
+              <DragValue value={audioMix.duckingRelease} onChange={(v) => onUpdate("duckingRelease", v)} min={0.01} max={2} step={0.01} sensitivity={0.005} suffix="s" displayMultiplier={1} decimals={2} label="Duck release" />
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function Inspector({
   onPreviewVideo,
   onExport,
@@ -600,8 +697,9 @@ export function Inspector({
   const clearMusic = useProjectStore((s) => s.clearMusic);
   const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
   const setExportAspectRatio = useProjectStore((s) => s.setExportAspectRatio);
-  const musicVolume = useProjectStore((s) => s.musicVolume);
-  const setMusicVolume = useProjectStore((s) => s.setMusicVolume);
+  const audioMix = useProjectStore((s) => s.audioMix);
+  const setAudioMixSetting = useProjectStore((s) => s.setAudioMixSetting);
+  const setSceneAudioVolume = useProjectStore((s) => s.setSceneAudioVolume);
 
   const showScene = !!scene && !!selectedSceneId;
   const showEdit = editNodeSelected && !selectedSceneId;
@@ -671,6 +769,20 @@ export function Inspector({
                     <span className="text-text-secondary">Duração</span>
                     <span className="text-white">{Math.round(scene.duration * 10) / 10}s</span>
                   </div>
+                  {scene.status === "ready" && (
+                    <div className="mt-1.5 flex items-center justify-between font-mono text-[11px]">
+                      <span className="text-text-secondary">Volume</span>
+                      <DragValue
+                        value={scene.audioVolume ?? 1}
+                        onChange={(v) => setSceneAudioVolume(selectedSceneId, v)}
+                        min={0}
+                        max={2}
+                        step={0.01}
+                        icon={<Volume2 size={10} />}
+                        label="Volume do clipe"
+                      />
+                    </div>
+                  )}
                 </div>
                 <div className="min-h-4 flex-1" aria-hidden />
                 <div className="mt-auto shrink-0 pt-2">
@@ -780,8 +892,8 @@ export function Inspector({
               generateMusic={generateMusicAction}
               clearMusic={clearMusic}
               setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
-              musicVolume={musicVolume}
-              setMusicVolume={setMusicVolume}
+              musicVolume={audioMix.musicVolume}
+              setMusicVolume={(vol: number) => setAudioMixSetting("musicVolume", vol)}
             />
 
             <div className="mt-3 rounded-lg border border-white/5 px-3 py-2">
@@ -807,6 +919,8 @@ export function Inspector({
                 </div>
               </div>
             </div>
+
+            <MixagemSection audioMix={audioMix} onUpdate={setAudioMixSetting} />
 
             <div className="mt-3">
               <label className="mb-1.5 block font-mono text-[9px] uppercase tracking-wider text-text-secondary">

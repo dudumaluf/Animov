@@ -473,39 +473,45 @@ async function composeWithMediabunny({
 
     let tempCanvas: OffscreenCanvas | null = null;
     let tempCtx: OffscreenCanvasRenderingContext2D | null = null;
+    let hasDrawnFrame = false;
 
     for (let f = 0; f < totalFrames; f++) {
       const time = f / fps;
       const sample = await sink.getSample(time);
-      if (!sample) continue;
 
-      try {
-        const sw = sample.displayWidth;
-        const sh = sample.displayHeight;
-        if (!tempCanvas || tempCanvas.width !== sw || tempCanvas.height !== sh) {
-          tempCanvas = new OffscreenCanvas(sw, sh);
-          tempCtx = tempCanvas.getContext("2d")!;
-        }
-        tempCtx!.clearRect(0, 0, sw, sh);
-        sample.draw(tempCtx!, 0, 0, sw, sh);
-
-        ctx.clearRect(0, 0, width, height);
-        const crop = coverCrop(sw, sh, width, height);
-        ctx.drawImage(tempCanvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
-
-        await videoSource.add(globalTime, frameDuration);
-
-        if (audioSource) {
-          while (audioChunkIdx < mixedChunks.length && audioChunkIdx <= globalTime) {
-            await audioSource.add(mixedChunks[audioChunkIdx]!);
-            audioChunkIdx++;
+      if (sample) {
+        try {
+          const sw = sample.displayWidth;
+          const sh = sample.displayHeight;
+          if (!tempCanvas || tempCanvas.width !== sw || tempCanvas.height !== sh) {
+            tempCanvas = new OffscreenCanvas(sw, sh);
+            tempCtx = tempCanvas.getContext("2d")!;
           }
-        }
+          tempCtx!.clearRect(0, 0, sw, sh);
+          sample.draw(tempCtx!, 0, 0, sw, sh);
 
-        globalTime += frameDuration;
-      } finally {
-        sample.close();
+          ctx.clearRect(0, 0, width, height);
+          const crop = coverCrop(sw, sh, width, height);
+          ctx.drawImage(tempCanvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
+          hasDrawnFrame = true;
+        } finally {
+          sample.close();
+        }
+      } else if (!hasDrawnFrame) {
+        continue;
       }
+      // If sample is null but we have a previous frame, hold it (canvas unchanged)
+
+      await videoSource.add(globalTime, frameDuration);
+
+      if (audioSource) {
+        while (audioChunkIdx < mixedChunks.length && audioChunkIdx <= globalTime) {
+          await audioSource.add(mixedChunks[audioChunkIdx]!);
+          audioChunkIdx++;
+        }
+      }
+
+      globalTime += frameDuration;
 
       const inner = (f + 1) / totalFrames;
       if (f === 0 || f === totalFrames - 1 || f % Math.max(1, Math.floor(totalFrames / 25)) === 0) {

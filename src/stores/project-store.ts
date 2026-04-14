@@ -7,6 +7,7 @@ import {
   portableToScene,
 } from "@/lib/project-portable";
 import { DEFAULT_MODEL_ID } from "@/lib/adapters";
+import { extractVideoThumbnail } from "@/lib/utils/video-thumbnail";
 
 export type VideoVersion = { url: string; duration: number };
 
@@ -21,6 +22,7 @@ export type Scene = {
   videoVersions: VideoVersion[];
   activeVersion: number;
   costCredits: number;
+  sourceType?: "image" | "video-upload";
 };
 
 export type Transition = {
@@ -47,6 +49,7 @@ export type ProjectStore = {
   musicPrompt: string;
   musicUrl: string | null;
   isMusicGenerating: boolean;
+  exportAspectRatio: "16:9" | "9:16";
   isLoading: boolean;
   isDirty: boolean;
   isGenerating: boolean;
@@ -59,7 +62,9 @@ export type ProjectStore = {
   selectScene: (id: string | null) => void;
 
   addPhotos: (files: File[]) => void;
+  addVideoUploads: (files: File[]) => void;
   insertPhotoAt: (index: number, file: File) => void;
+  insertVideoAt: (index: number, file: File) => void;
   insertPlaceholder: (index: number) => string;
   updatePlaceholderImage: (sceneId: string, file: File) => Promise<void>;
   removeScene: (id: string) => void;
@@ -77,6 +82,7 @@ export type ProjectStore = {
   setMusicPrompt: (prompt: string) => void;
   generateMusic: () => Promise<void>;
   clearMusic: () => void;
+  setExportAspectRatio: (ratio: "16:9" | "9:16") => void;
 
   updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string, costCredits?: number, videoDuration?: number) => void;
   generateAll: () => Promise<void>;
@@ -182,6 +188,31 @@ async function uploadPhoto(file: File, projectId: string): Promise<string> {
   return data.url;
 }
 
+async function uploadVideoToStorage(
+  file: File,
+  projectId: string,
+): Promise<string> {
+  const res = await fetch("/api/upload-video", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: file.name,
+      contentType: file.type,
+      projectId,
+    }),
+  });
+  if (!res.ok) throw new Error("Failed to get signed upload URL");
+  const { signedUrl, publicUrl } = await res.json();
+
+  const putRes = await fetch(signedUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type },
+    body: file,
+  });
+  if (!putRes.ok) throw new Error("Video upload failed");
+  return publicUrl;
+}
+
 async function resolveSceneFile(
   scene: Scene,
   photoFiles: Record<string, File>,
@@ -241,6 +272,7 @@ export const useProjectStore = create<ProjectStore>()(
       musicPrompt: "Calm ambient instrumental, warm piano, soft strings, real estate luxury, 90 BPM, elegant and inviting",
       musicUrl: null,
       isMusicGenerating: false,
+      exportAspectRatio: "16:9",
       isLoading: false,
       isDirty: false,
       isGenerating: false,
@@ -384,6 +416,137 @@ export const useProjectStore = create<ProjectStore>()(
               }));
             });
           });
+      },
+
+      addVideoUploads: (files) => {
+        const projectId = get().supabaseProjectId ?? get().projectId;
+        for (const file of files) {
+          const id = uuid();
+          const placeholder: Scene = {
+            id,
+            photoUrl: PLACEHOLDER_IMG,
+            photoDataUrl: PLACEHOLDER_IMG,
+            presetId: "push_in_serene",
+            duration: 5,
+            status: "processing",
+            videoVersions: [],
+            activeVersion: 0,
+            costCredits: 0,
+            sourceType: "video-upload",
+          };
+          set((state) => {
+            const scenes = [...state.scenes, placeholder];
+            return {
+              scenes,
+              transitions: rebuildTransitions(scenes, state.transitions),
+              selectedSceneId: id,
+              isDirty: true,
+            };
+          });
+
+          (async () => {
+            try {
+              const thumb = await extractVideoThumbnail(file);
+              set((state) => ({
+                scenes: state.scenes.map((s) =>
+                  s.id === id ? { ...s, photoDataUrl: thumb.dataUrl, duration: thumb.duration } : s,
+                ),
+              }));
+              const thumbFile = await dataUrlToFile(thumb.dataUrl, `${id}.jpg`);
+              const [photoUrl, videoUrl] = await Promise.all([
+                uploadPhoto(thumbFile, projectId),
+                uploadVideoToStorage(file, projectId),
+              ]);
+              set((state) => ({
+                scenes: state.scenes.map((s) =>
+                  s.id === id
+                    ? {
+                        ...s,
+                        photoUrl,
+                        videoUrl,
+                        status: "ready" as const,
+                        duration: thumb.duration,
+                        videoVersions: [{ url: videoUrl, duration: thumb.duration }],
+                      }
+                    : s,
+                ),
+                isDirty: true,
+              }));
+            } catch (err) {
+              console.error("[addVideoUpload]", err);
+              set((state) => ({
+                scenes: state.scenes.map((s) =>
+                  s.id === id ? { ...s, status: "failed" as const } : s,
+                ),
+              }));
+            }
+          })();
+        }
+      },
+
+      insertVideoAt: (index, file) => {
+        const id = uuid();
+        const projectId = get().supabaseProjectId ?? get().projectId;
+        const placeholder: Scene = {
+          id,
+          photoUrl: PLACEHOLDER_IMG,
+          photoDataUrl: PLACEHOLDER_IMG,
+          presetId: "push_in_serene",
+          duration: 5,
+          status: "processing",
+          videoVersions: [],
+          activeVersion: 0,
+          costCredits: 0,
+          sourceType: "video-upload",
+        };
+        set((state) => {
+          const scenes = [...state.scenes];
+          scenes.splice(index, 0, placeholder);
+          return {
+            scenes,
+            transitions: rebuildTransitions(scenes, state.transitions),
+            selectedSceneId: id,
+            isDirty: true,
+          };
+        });
+
+        (async () => {
+          try {
+            const thumb = await extractVideoThumbnail(file);
+            set((state) => ({
+              scenes: state.scenes.map((s) =>
+                s.id === id ? { ...s, photoDataUrl: thumb.dataUrl, duration: thumb.duration } : s,
+              ),
+            }));
+            const thumbFile = await dataUrlToFile(thumb.dataUrl, `${id}.jpg`);
+            const [photoUrl, videoUrl] = await Promise.all([
+              uploadPhoto(thumbFile, projectId),
+              uploadVideoToStorage(file, projectId),
+            ]);
+            set((state) => ({
+              scenes: state.scenes.map((s) =>
+                s.id === id
+                  ? {
+                      ...s,
+                      photoUrl,
+                      videoUrl,
+                      status: "ready" as const,
+                      duration: thumb.duration,
+                      videoVersions: [{ url: videoUrl, duration: thumb.duration }],
+                    }
+                  : s,
+              ),
+              isDirty: true,
+            }));
+          } catch (err) {
+            console.error("[insertVideoAt]", err);
+            set((state) => ({
+              scenes: state.scenes.map((s) =>
+                s.id === id ? { ...s, status: "failed" as const } : s,
+              ),
+            }));
+          }
+        })();
       },
 
       insertPlaceholder: (index) => {
@@ -670,6 +833,8 @@ export const useProjectStore = create<ProjectStore>()(
 
       clearMusic: () => set({ musicUrl: null, isDirty: true }),
 
+      setExportAspectRatio: (ratio) => set({ exportAspectRatio: ratio, isDirty: true }),
+
       updateSceneStatus: (sceneId, status, videoUrl, costCredits, videoDuration) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
@@ -746,7 +911,7 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
@@ -764,6 +929,7 @@ export const useProjectStore = create<ProjectStore>()(
               videoVersions: dbVersions,
               activeVersion: clampedVer,
               costCredits: s.cost_credits,
+              sourceType: s.source_type === "video-upload" ? "video-upload" : undefined,
             };
           });
 
@@ -791,6 +957,7 @@ export const useProjectStore = create<ProjectStore>()(
             editNodeSelected: false,
             musicPrompt: meta.musicPrompt ?? "",
             musicUrl: meta.musicUrl ?? "",
+            exportAspectRatio: meta.exportAspectRatio === "9:16" ? "9:16" : "16:9",
             selectedSceneId: null,
             isLoading: false,
             isDirty: false,
@@ -873,6 +1040,7 @@ export const useProjectStore = create<ProjectStore>()(
                 cost_credits: s.costCredits,
                 video_versions: s.videoVersions ?? [],
                 active_version: s.activeVersion ?? 0,
+                source_type: s.sourceType ?? "image",
               };
             })
             .filter(Boolean);
@@ -894,6 +1062,7 @@ export const useProjectStore = create<ProjectStore>()(
               hasEditNode: state.hasEditNode,
               musicPrompt: state.musicPrompt || undefined,
               musicUrl: state.musicUrl || undefined,
+              exportAspectRatio: state.exportAspectRatio !== "16:9" ? state.exportAspectRatio : undefined,
             },
           };
 

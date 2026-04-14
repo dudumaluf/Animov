@@ -64,6 +64,7 @@ function SortableSceneCard({
   const hasVideo = scene.status === "ready" && !!scene.videoUrl;
   const isProcessing = scene.status === "processing";
   const isGenerating = scene.status === "generating";
+  const isUploadedVideo = scene.sourceType === "video-upload";
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -156,7 +157,9 @@ function SortableSceneCard({
         {isProcessing && <NodeProcessingOverlay label="Extraindo..." />}
         {!isGenerating && !isProcessing && (
           <div className="absolute left-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded bg-black/50">
-            {hasVideo ? (
+            {isUploadedVideo ? (
+              <Film size={9} className="text-blue-400" />
+            ) : hasVideo ? (
               <Film size={9} className="text-accent-gold" />
             ) : (
               <ImageIcon size={9} className="text-white/50" />
@@ -194,7 +197,7 @@ function SortableSceneCard({
         </div>
         <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
           <span className="truncate font-mono text-[10px] text-white/80">
-            {getPresetLabel(scene.presetId)}
+            {isUploadedVideo ? "Upload" : getPresetLabel(scene.presetId)}
           </span>
           <div className="flex items-center gap-2">
             {(scene.videoVersions ?? []).length > 1 && (
@@ -248,14 +251,16 @@ function SortableSceneCard({
             <button onClick={() => { closeContext(); selectScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
               Propriedades
             </button>
-            {onEditImage && (
+            {onEditImage && !isUploadedVideo && (
               <button onClick={() => { closeContext(); onEditImage(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
                 <Pencil size={12} className="text-text-secondary" /> Editar imagem
               </button>
             )}
-            <button onClick={() => { closeContext(); useProjectStore.getState().generateScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-accent-gold hover:bg-white/5">
-              {hasVideo ? "Regenerar" : "Gerar vídeo"}
-            </button>
+            {!isUploadedVideo && (
+              <button onClick={() => { closeContext(); useProjectStore.getState().generateScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-accent-gold hover:bg-white/5">
+                {hasVideo ? "Regenerar" : "Gerar vídeo"}
+              </button>
+            )}
             <div className="my-1 h-px bg-white/5" />
             <button onClick={() => {
               closeContext();
@@ -305,7 +310,7 @@ async function extractLastFrame(videoUrl: string, insertIndex: number): Promise<
 }
 
 type InsertMenuPosition = "between" | "end";
-type InsertMenuAction = "photo" | "crossfade" | "ai-transition" | "edit" | "composer" | "extract-frame";
+type InsertMenuAction = "photo" | "video" | "crossfade" | "ai-transition" | "edit" | "composer" | "extract-frame";
 
 function InsertMenu({
   position,
@@ -326,13 +331,16 @@ function InsertMenu({
   const [showDurationPicker, setShowDurationPicker] = useState(false);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
+  const insertVideoAt = useProjectStore((s) => s.insertVideoAt);
   const addPhotos = useProjectStore((s) => s.addPhotos);
+  const addVideoUploads = useProjectStore((s) => s.addVideoUploads);
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
   const generateTransition = useProjectStore((s) => s.generateTransition);
   const transitions = useProjectStore((s) => s.transitions);
   const modelId = useProjectStore((s) => s.modelId);
   const inputRef = useRef<HTMLInputElement>(null);
+  const videoInputRef = useRef<HTMLInputElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
@@ -351,6 +359,9 @@ function InsertMenu({
     setShowDurationPicker(false);
     if (action === "photo") {
       inputRef.current?.click();
+    }
+    if (action === "video") {
+      videoInputRef.current?.click();
     }
     if (action === "crossfade") {
       // TODO: implement crossfade
@@ -388,11 +399,26 @@ function InsertMenu({
     }
   };
 
+  const handleVideoFile = (files: FileList | null) => {
+    if (!files) return;
+    const videos = Array.from(files).filter((f) => f.type.startsWith("video/"));
+    if (videos.length === 0) return;
+
+    if (position === "end") {
+      addVideoUploads(videos);
+    } else {
+      videos.forEach((file, i) => {
+        insertVideoAt(insertIndex + i, file);
+      });
+    }
+  };
+
   const fromScene = fromSceneId ? useProjectStore.getState().scenes.find((s) => s.id === fromSceneId) : null;
   const fromHasVideo = fromScene?.status === "ready" && !!fromScene?.videoUrl;
 
   const betweenOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Inserir foto", desc: "Nova cena nesta posição", ready: true },
+    { action: "video", icon: Film, label: "Inserir vídeo", desc: "Upload de vídeo externo", ready: true },
     { action: "crossfade", icon: Blend, label: "Crossfade", desc: "Dissolve suave entre cenas", ready: false },
     ...(!hasTransition ? [{ action: "ai-transition" as const, icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: true }] : []),
     ...(fromHasVideo ? [{ action: "extract-frame" as const, icon: Frame, label: "Extrair frame", desc: "Último frame do vídeo anterior", ready: true }] : []),
@@ -400,6 +426,7 @@ function InsertMenu({
 
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Adicionar fotos", desc: "Novas cenas no final", ready: true },
+    { action: "video", icon: Film, label: "Adicionar vídeo", desc: "Upload de vídeo externo", ready: true },
     ...(!hasEditNode ? [{ action: "edit" as const, icon: Clapperboard, label: "Criar Edit", desc: "Junta todas as cenas num vídeo final", ready: true }] : []),
     { action: "composer", icon: Type, label: "Composer", desc: "Logo, texto, gráficos", ready: false },
   ];
@@ -418,6 +445,17 @@ function InsertMenu({
         className="hidden"
         onChange={(e) => {
           handleFile(e.target.files);
+          e.target.value = "";
+        }}
+      />
+      <input
+        ref={videoInputRef}
+        type="file"
+        accept=".mp4,.webm,.mov"
+        multiple={position === "end"}
+        className="hidden"
+        onChange={(e) => {
+          handleVideoFile(e.target.files);
           e.target.value = "";
         }}
       />

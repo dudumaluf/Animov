@@ -60,7 +60,7 @@ export async function PATCH(
   }
 
   if (Array.isArray(body.scenes) && body.scenes.length > 0) {
-    const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number; video_versions?: unknown[]; active_version?: number }, i: number) => ({
+    const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number; video_versions?: unknown[]; active_version?: number; source_type?: string }, i: number) => ({
       ...(s.id ? { id: s.id } : {}),
       project_id: params.id,
       order_index: i,
@@ -72,6 +72,7 @@ export async function PATCH(
       cost_credits: s.cost_credits,
       video_versions: s.video_versions ?? [],
       active_version: s.active_version ?? 0,
+      source_type: s.source_type ?? "image",
     }));
 
     const existingIds = scenesToUpsert.filter((s: { id?: string }) => s.id).map((s: { id: string }) => s.id);

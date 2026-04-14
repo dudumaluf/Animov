@@ -4,21 +4,23 @@ import { useCallback, useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { ImagePlus, Upload } from "lucide-react";
 
-const ACCEPTED = ".jpg,.jpeg,.png,.webp";
+const ACCEPTED = ".jpg,.jpeg,.png,.webp,.mp4,.webm,.mov";
 
 export function DropZone({ compact = false }: { compact?: boolean }) {
   const addPhotos = useProjectStore((s) => s.addPhotos);
+  const addVideoUploads = useProjectStore((s) => s.addVideoUploads);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const handleFiles = useCallback(
     (files: FileList | null) => {
       if (!files) return;
-      const images = Array.from(files).filter((f) =>
-        f.type.startsWith("image/"),
-      );
+      const all = Array.from(files);
+      const images = all.filter((f) => f.type.startsWith("image/"));
+      const videos = all.filter((f) => f.type.startsWith("video/"));
       if (images.length > 0) addPhotos(images);
+      if (videos.length > 0) addVideoUploads(videos);
     },
-    [addPhotos],
+    [addPhotos, addVideoUploads],
   );
 
   const handleDrop = useCallback(
@@ -72,10 +74,10 @@ export function DropZone({ compact = false }: { compact?: boolean }) {
         </div>
         <div className="text-center">
           <p className="font-display text-xl">
-            Arraste as fotos do imóvel
+            Arraste fotos ou vídeos
           </p>
           <p className="mt-2 font-body text-sm text-text-secondary">
-            JPG, PNG ou WEBP · Mínimo 2 fotos · A ordem define as cenas
+            JPG, PNG, WEBP, MP4, WEBM · A ordem define as cenas
           </p>
         </div>
         <button className="rounded-full bg-white/5 px-6 py-2.5 font-mono text-label-sm uppercase tracking-widest text-text-secondary transition-colors hover:bg-white/10 hover:text-[var(--text)]">

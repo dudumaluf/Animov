@@ -48,6 +48,7 @@ export function sceneToPortable(s: Scene): PortableScene | null {
     videoVersions: versions,
     activeVersion: s.activeVersion ?? 0,
     costCredits: s.costCredits,
+    sourceType: s.sourceType,
   };
 }
 
@@ -70,6 +71,7 @@ export function portableToScene(p: PortableScene): Scene {
     videoVersions: versions.length ? versions : p.videoUrl ? [{ url: p.videoUrl, duration: p.duration }] : [],
     activeVersion: active,
     costCredits: p.costCredits,
+    sourceType: p.sourceType,
   };
 }
 

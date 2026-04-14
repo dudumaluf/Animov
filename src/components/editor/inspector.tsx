@@ -334,10 +334,12 @@ function EditPreview({
   musicUrl,
   onClose,
   onExport,
+  aspectRatio = "16:9",
 }: {
   musicUrl: string | null;
   onClose: () => void;
   onExport?: () => void | Promise<void>;
+  aspectRatio?: "16:9" | "9:16";
 }) {
   const preview = useProjectStore((s) => s.scenes.find((sc) => sc.status === "ready" && sc.videoUrl));
   const readyForExport = useProjectStore((s) => s.scenes.some((sc) => sc.status === "ready" && sc.videoUrl));
@@ -368,7 +370,7 @@ function EditPreview({
   };
 
   return (
-    <div className="relative aspect-video w-full bg-white/5">
+    <div className={`relative w-full bg-white/5 ${aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-video"}`}>
       {preview?.videoUrl ? (
         <video
           ref={videoRef}
@@ -553,6 +555,8 @@ export function Inspector({
   const setMusicPrompt = useProjectStore((s) => s.setMusicPrompt);
   const generateMusicAction = useProjectStore((s) => s.generateMusic);
   const clearMusic = useProjectStore((s) => s.clearMusic);
+  const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
+  const setExportAspectRatio = useProjectStore((s) => s.setExportAspectRatio);
 
   const showScene = !!scene && !!selectedSceneId;
   const showEdit = editNodeSelected && !selectedSceneId;
@@ -612,77 +616,103 @@ export function Inspector({
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
-            <div>
-              <div className="mb-1.5 flex items-center justify-between">
-                <label className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                  Movimento
-                </label>
-                {showModelPicker && <ModelChip modelId={modelId} onChange={setModelId} />}
-              </div>
-              <PresetSelector
-                selectedId={scene.presetId}
-                onSelect={(id) => setScenePreset(selectedSceneId, id)}
-              />
-            </div>
+            {scene.sourceType === "video-upload" ? (
+              <>
+                <div>
+                  <span className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                    Vídeo importado
+                  </span>
+                  <div className="mt-2 flex items-center justify-between font-mono text-[11px]">
+                    <span className="text-text-secondary">Duração</span>
+                    <span className="text-white">{Math.round(scene.duration * 10) / 10}s</span>
+                  </div>
+                </div>
+                <div className="min-h-4 flex-1" aria-hidden />
+                <div className="mt-auto shrink-0 pt-2">
+                  <div className="flex items-center justify-between font-mono text-[10px] text-text-secondary">
+                    <span className="text-blue-400/80">Upload</span>
+                    <span className="flex items-center gap-1.5">
+                      <StatusDot status={scene.status} />
+                      <StatusLabel status={scene.status} />
+                    </span>
+                  </div>
+                </div>
+              </>
+            ) : (
+              <>
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                      Movimento
+                    </label>
+                    {showModelPicker && <ModelChip modelId={modelId} onChange={setModelId} />}
+                  </div>
+                  <PresetSelector
+                    selectedId={scene.presetId}
+                    onSelect={(id) => setScenePreset(selectedSceneId, id)}
+                  />
+                </div>
 
-            <div className="mt-3">
-              <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                Duração
-              </label>
-              <div
-                className={`grid gap-1 ${durations.length > 4 ? "grid-cols-6" : durations.length > 2 ? "grid-cols-4" : "grid-cols-2"}`}
-              >
-                {durations.map((d) => (
-                  <button
-                    key={d}
-                    type="button"
-                    onClick={() => setSceneDuration(selectedSceneId, d)}
-                    className={`rounded-md border py-1 font-mono text-[10px] transition-all ${
-                      scene.duration === d
-                        ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
-                        : "border-white/5 text-text-secondary hover:border-white/10"
-                    }`}
+                <div className="mt-3">
+                  <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                    Duração
+                  </label>
+                  <div
+                    className={`grid gap-1 ${durations.length > 4 ? "grid-cols-6" : durations.length > 2 ? "grid-cols-4" : "grid-cols-2"}`}
                   >
-                    {d}s
+                    {durations.map((d) => (
+                      <button
+                        key={d}
+                        type="button"
+                        onClick={() => setSceneDuration(selectedSceneId, d)}
+                        className={`rounded-md border py-1 font-mono text-[10px] transition-all ${
+                          scene.duration === d
+                            ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
+                            : "border-white/5 text-text-secondary hover:border-white/10"
+                        }`}
+                      >
+                        {d}s
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div className="min-h-4 flex-1" aria-hidden />
+
+                <div className="mt-auto shrink-0 space-y-2 pt-2">
+                  <button
+                    type="button"
+                    disabled={isGenerating}
+                    onClick={() => generateScene(selectedSceneId)}
+                    className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    {scene.status === "ready"
+                      ? "Regenerar cena"
+                      : scene.status === "generating"
+                        ? "Gerando..."
+                        : "Gerar esta cena"}
                   </button>
-                ))}
-              </div>
-            </div>
 
-            <div className="min-h-4 flex-1" aria-hidden />
+                  {onEditImage && (
+                    <button
+                      type="button"
+                      onClick={() => onEditImage(selectedSceneId)}
+                      className="w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
+                    >
+                      Editar imagem
+                    </button>
+                  )}
 
-            <div className="mt-auto shrink-0 space-y-2 pt-2">
-              <button
-                type="button"
-                disabled={isGenerating}
-                onClick={() => generateScene(selectedSceneId)}
-                className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
-              >
-                {scene.status === "ready"
-                  ? "Regenerar cena"
-                  : scene.status === "generating"
-                    ? "Gerando..."
-                    : "Gerar esta cena"}
-              </button>
-
-              {onEditImage && (
-                <button
-                  type="button"
-                  onClick={() => onEditImage(selectedSceneId)}
-                  className="w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
-                >
-                  Editar imagem
-                </button>
-              )}
-
-              <div className="flex items-center justify-between border-t border-white/5 pt-2 font-mono text-[10px] text-text-secondary">
-                <span className="text-accent-gold/80">{scene.costCredits} cr.</span>
-                <span className="flex items-center gap-1.5">
-                  <StatusDot status={scene.status} />
-                  <StatusLabel status={scene.status} />
-                </span>
-              </div>
-            </div>
+                  <div className="flex items-center justify-between border-t border-white/5 pt-2 font-mono text-[10px] text-text-secondary">
+                    <span className="text-accent-gold/80">{scene.costCredits} cr.</span>
+                    <span className="flex items-center gap-1.5">
+                      <StatusDot status={scene.status} />
+                      <StatusLabel status={scene.status} />
+                    </span>
+                  </div>
+                </div>
+              </>
+            )}
           </div>
         </div>
       )}
@@ -693,6 +723,7 @@ export function Inspector({
             musicUrl={musicUrl}
             onClose={() => useProjectStore.setState({ editNodeSelected: false })}
             onExport={onExport}
+            aspectRatio={exportAspectRatio}
           />
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
@@ -727,6 +758,38 @@ export function Inspector({
                     )}
                   </span>
                 </div>
+              </div>
+            </div>
+
+            <div className="mt-3">
+              <label className="mb-1.5 block font-mono text-[9px] uppercase tracking-wider text-text-secondary">
+                Formato
+              </label>
+              <div className="grid grid-cols-2 gap-1">
+                <button
+                  type="button"
+                  onClick={() => setExportAspectRatio("16:9")}
+                  className={`flex items-center justify-center gap-1.5 rounded-md border py-1.5 font-mono text-[10px] transition-all ${
+                    exportAspectRatio === "16:9"
+                      ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
+                      : "border-white/5 text-text-secondary hover:border-white/10"
+                  }`}
+                >
+                  <span className="inline-block h-2.5 w-4 rounded-[2px] border border-current" />
+                  16:9
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setExportAspectRatio("9:16")}
+                  className={`flex items-center justify-center gap-1.5 rounded-md border py-1.5 font-mono text-[10px] transition-all ${
+                    exportAspectRatio === "9:16"
+                      ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
+                      : "border-white/5 text-text-secondary hover:border-white/10"
+                  }`}
+                >
+                  <span className="inline-block h-4 w-2.5 rounded-[2px] border border-current" />
+                  9:16
+                </button>
               </div>
             </div>
 

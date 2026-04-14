@@ -29,6 +29,23 @@ function clampPct(n: number) {
   return Math.min(100, Math.max(0, n));
 }
 
+function coverCrop(
+  srcW: number,
+  srcH: number,
+  dstW: number,
+  dstH: number,
+): { sx: number; sy: number; sw: number; sh: number } {
+  const srcRatio = srcW / srcH;
+  const dstRatio = dstW / dstH;
+  if (srcRatio > dstRatio) {
+    const sw = srcH * dstRatio;
+    return { sx: (srcW - sw) / 2, sy: 0, sw, sh: srcH };
+  } else {
+    const sh = srcW / dstRatio;
+    return { sx: 0, sy: (srcH - sh) / 2, sw: srcW, sh };
+  }
+}
+
 async function fetchBlobWithRetry(url: string, onRetry?: (attempt: number) => void): Promise<Blob> {
   const maxAttempts = 3;
   let lastErr: unknown;
@@ -184,14 +201,27 @@ async function composeWithMediabunny({
     const duration = await videoTrack.computeDuration();
     const totalFrames = Math.ceil(duration * fps);
 
+    let tempCanvas: OffscreenCanvas | null = null;
+    let tempCtx: OffscreenCanvasRenderingContext2D | null = null;
+
     for (let f = 0; f < totalFrames; f++) {
       const time = f / fps;
       const sample = await sink.getSample(time);
       if (!sample) continue;
 
       try {
+        const sw = sample.displayWidth;
+        const sh = sample.displayHeight;
+        if (!tempCanvas || tempCanvas.width !== sw || tempCanvas.height !== sh) {
+          tempCanvas = new OffscreenCanvas(sw, sh);
+          tempCtx = tempCanvas.getContext("2d")!;
+        }
+        tempCtx!.clearRect(0, 0, sw, sh);
+        sample.draw(tempCtx!, 0, 0, sw, sh);
+
         ctx.clearRect(0, 0, width, height);
-        sample.draw(ctx, 0, 0, width, height);
+        const crop = coverCrop(sw, sh, width, height);
+        ctx.drawImage(tempCanvas, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
 
         await videoSource.add(globalTime, frameDuration);
 
@@ -339,14 +369,16 @@ function playClipToCanvas(
     video.onplay = () => {
       const draw = () => {
         if (video.ended || video.paused) return;
-        ctx.drawImage(video, 0, 0, width, height);
+        const crop = coverCrop(video.videoWidth, video.videoHeight, width, height);
+        ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
         requestAnimationFrame(draw);
       };
       draw();
     };
 
     video.onended = () => {
-      ctx.drawImage(video, 0, 0, width, height);
+      const crop = coverCrop(video.videoWidth, video.videoHeight, width, height);
+      ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
       resolve();
     };
 

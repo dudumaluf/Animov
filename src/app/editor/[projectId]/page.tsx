@@ -234,9 +234,12 @@ export default function EditorPage({
         }
       }
       if (clipUrls.length === 0) return;
+      const isVertical = state.exportAspectRatio === "9:16";
       const blob = await composeVideos({
         clipUrls,
         audioUrl: state.musicUrl ?? undefined,
+        width: isVertical ? 1080 : 1920,
+        height: isVertical ? 1920 : 1080,
         onProgress: setExportProgress,
       });
       const blobUrl = URL.createObjectURL(blob);

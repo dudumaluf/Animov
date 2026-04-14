@@ -35,6 +35,7 @@ export default function EditorPage({
   const [mounted, setMounted] = useState(false);
   const [composing, setComposing] = useState(false);
   const [exportProgress, setExportProgress] = useState<ComposeProgress | null>(null);
+  const [lastExportBlobUrl, setLastExportBlobUrl] = useState<string | null>(null);
 
   const [canvasMode, setCanvasMode] = useState<CanvasMode>("fit");
   const [zoom, setZoom] = useState(1);
@@ -238,6 +239,9 @@ export default function EditorPage({
         audioUrl: state.musicUrl ?? undefined,
         onProgress: setExportProgress,
       });
+      const blobUrl = URL.createObjectURL(blob);
+      if (lastExportBlobUrl) URL.revokeObjectURL(lastExportBlobUrl);
+      setLastExportBlobUrl(blobUrl);
       const safeName = state.projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
       downloadBlob(blob, `${safeName}.mp4`);
     } catch (err) {
@@ -246,7 +250,16 @@ export default function EditorPage({
       setComposing(false);
       setExportProgress(null);
     }
-  }, [composing]);
+  }, [composing, lastExportBlobUrl]);
+
+  const handleDownloadLast = useCallback(() => {
+    if (!lastExportBlobUrl) return;
+    const safeName = useProjectStore.getState().projectName.replace(/[^a-zA-Z0-9-_ ]/g, "").trim() || "animov";
+    const a = document.createElement("a");
+    a.href = lastExportBlobUrl;
+    a.download = `${safeName}.mp4`;
+    a.click();
+  }, [lastExportBlobUrl]);
 
   if (!mounted || isLoading) {
     return (
@@ -366,7 +379,7 @@ export default function EditorPage({
           </div>
 
           {/* Inspector (flex, not overlay) */}
-          <Inspector onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} onEditImage={setEditingSceneId} />
+          <Inspector onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} onDownloadLast={lastExportBlobUrl ? handleDownloadLast : undefined} onEditImage={setEditingSceneId} />
         </div>
       )}
 

@@ -396,20 +396,28 @@ function EditPreview({
               void handleExportClick();
             }}
             disabled={!readyForExport || exporting}
-            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
-            title="Baixar edit final"
-            aria-label="Baixar edit final"
+            className={`flex h-7 w-7 items-center justify-center rounded-full bg-black/70 transition-colors disabled:cursor-not-allowed disabled:opacity-35 ${
+              readyForExport && !exporting
+                ? "text-accent-gold hover:bg-black/90 hover:text-accent-gold"
+                : "text-white/50 hover:text-white/80"
+            }`}
+            title="Exportar vídeo final (MP4)"
+            aria-label="Exportar vídeo final"
           >
-            {exporting ? <Loader2 size={12} className="animate-spin" /> : <ArrowDownToLine size={12} />}
+            {exporting ? (
+              <Loader2 size={14} className="animate-spin text-accent-gold" />
+            ) : (
+              <ArrowDownToLine size={14} />
+            )}
           </button>
         )}
         <button
           type="button"
           onClick={onClose}
-          className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+          className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
           aria-label="Fechar painel"
         >
-          <X size={12} />
+          <X size={13} />
         </button>
       </div>
     </div>
@@ -515,7 +523,17 @@ function MusicSection({
   );
 }
 
-export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreviewVideo?: (url: string) => void; onExport?: () => void; onEditImage?: (sceneId: string) => void }) {
+export function Inspector({
+  onPreviewVideo,
+  onExport,
+  onDownloadLast,
+  onEditImage,
+}: {
+  onPreviewVideo?: (url: string) => void;
+  onExport?: () => void;
+  onDownloadLast?: () => void;
+  onEditImage?: (sceneId: string) => void;
+}) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
@@ -594,16 +612,13 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
           </div>
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
-            {showModelPicker && (
-              <div className="flex items-center justify-end">
-                <ModelChip modelId={modelId} onChange={setModelId} />
+            <div>
+              <div className="mb-1.5 flex items-center justify-between">
+                <label className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                  Movimento
+                </label>
+                {showModelPicker && <ModelChip modelId={modelId} onChange={setModelId} />}
               </div>
-            )}
-
-            <div className={showModelPicker ? "mt-3" : undefined}>
-              <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                Movimento
-              </label>
               <PresetSelector
                 selectedId={scene.presetId}
                 onSelect={(id) => setScenePreset(selectedSceneId, id)}
@@ -681,42 +696,61 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
           />
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
-            <div className="min-h-4 flex-1" aria-hidden />
+            <MusicSection
+              musicUrl={musicUrl}
+              musicPrompt={musicPrompt}
+              isMusicGenerating={isMusicGenerating}
+              setMusicPrompt={setMusicPrompt}
+              generateMusic={generateMusicAction}
+              clearMusic={clearMusic}
+              setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
+            />
 
-            <div className="mt-auto shrink-0 space-y-3">
-              <MusicSection
-                musicUrl={musicUrl}
-                musicPrompt={musicPrompt}
-                isMusicGenerating={isMusicGenerating}
-                setMusicPrompt={setMusicPrompt}
-                generateMusic={generateMusicAction}
-                clearMusic={clearMusic}
-                setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
-              />
-
-              <div className="rounded-lg border border-white/5 px-3 py-2">
-                <span className="block font-mono text-[9px] uppercase tracking-wider text-text-secondary">
-                  Composição
-                </span>
-                <div className="mt-1.5 space-y-1">
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] text-text-secondary">Cenas prontas</span>
-                    <span className="font-mono text-[11px] text-accent-gold">
-                      {useProjectStore.getState().scenes.filter((s) => s.status === "ready").length}
-                    </span>
-                  </div>
-                  <div className="flex items-center justify-between">
-                    <span className="font-mono text-[10px] text-text-secondary">Trilha</span>
-                    <span className="font-mono text-[11px]">
-                      {musicUrl ? (
-                        <span className="text-green-400">✓</span>
-                      ) : (
-                        <span className="text-text-secondary">—</span>
-                      )}
-                    </span>
-                  </div>
+            <div className="mt-3 rounded-lg border border-white/5 px-3 py-2">
+              <span className="block font-mono text-[9px] uppercase tracking-wider text-text-secondary">
+                Composição
+              </span>
+              <div className="mt-1.5 space-y-1">
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] text-text-secondary">Cenas prontas</span>
+                  <span className="font-mono text-[11px] text-accent-gold">
+                    {useProjectStore.getState().scenes.filter((s) => s.status === "ready").length}
+                  </span>
+                </div>
+                <div className="flex items-center justify-between">
+                  <span className="font-mono text-[10px] text-text-secondary">Trilha</span>
+                  <span className="font-mono text-[11px]">
+                    {musicUrl ? (
+                      <span className="text-green-400">✓</span>
+                    ) : (
+                      <span className="text-text-secondary">—</span>
+                    )}
+                  </span>
                 </div>
               </div>
+            </div>
+
+            <div className="min-h-4 flex-1" aria-hidden />
+
+            <div className="mt-auto shrink-0 space-y-2 pt-2">
+              {onExport && (
+                <button
+                  type="button"
+                  onClick={onExport}
+                  className="w-full rounded-lg bg-accent-gold py-2.5 font-mono text-label-sm uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80"
+                >
+                  Renderizar
+                </button>
+              )}
+              {onDownloadLast && (
+                <button
+                  type="button"
+                  onClick={onDownloadLast}
+                  className="w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-white/20 hover:text-[var(--text)]"
+                >
+                  Baixar último
+                </button>
+              )}
             </div>
           </div>
         </div>

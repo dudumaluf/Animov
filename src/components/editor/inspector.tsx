@@ -442,6 +442,19 @@ function MusicSection({
 }) {
   const [tab, setTab] = useState<"ai" | "upload">("ai");
   const fileRef = useRef<HTMLInputElement>(null);
+  const [showVolSlider, setShowVolSlider] = useState(false);
+  const volRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!showVolSlider) return;
+    const handler = (e: MouseEvent) => {
+      if (volRef.current && !volRef.current.contains(e.target as Node)) {
+        setShowVolSlider(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showVolSlider]);
 
   if (musicUrl) {
     return (
@@ -450,32 +463,44 @@ function MusicSection({
           <span className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
             Trilha sonora
           </span>
-          <button
-            type="button"
-            onClick={clearMusic}
-            className="flex h-7 w-7 items-center justify-center rounded-md text-white/50 transition-colors hover:bg-white/5 hover:text-red-400"
-            title="Remover trilha"
-            aria-label="Remover trilha"
-          >
-            <Trash2 size={14} />
-          </button>
+          <div className="flex items-center gap-1">
+            <div className="relative" ref={volRef}>
+              <button
+                type="button"
+                onClick={() => setShowVolSlider((v) => !v)}
+                className="flex h-7 items-center gap-1 rounded-md px-1.5 text-white/50 transition-colors hover:bg-white/5 hover:text-accent-gold"
+                title="Volume da música"
+                aria-label="Volume da música"
+              >
+                <Volume2 size={13} />
+                <span className="font-mono text-[10px]">{Math.round(musicVolume * 100)}%</span>
+              </button>
+              {showVolSlider && (
+                <div className="absolute right-0 top-full z-50 mt-1 rounded-lg border border-white/10 bg-[#141413] p-2.5 shadow-xl">
+                  <input
+                    type="range"
+                    min={0}
+                    max={100}
+                    step={1}
+                    value={Math.round(musicVolume * 100)}
+                    onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
+                    className="h-1 w-28 cursor-pointer appearance-none rounded-full bg-white/10 accent-accent-gold [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-gold"
+                  />
+                </div>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={clearMusic}
+              className="flex h-7 w-7 items-center justify-center rounded-md text-white/50 transition-colors hover:bg-white/5 hover:text-red-400"
+              title="Remover trilha"
+              aria-label="Remover trilha"
+            >
+              <Trash2 size={14} />
+            </button>
+          </div>
         </div>
         <MusicTrackPlayer src={musicUrl} />
-        <div className="mt-2 flex items-center gap-2">
-          <Volume2 size={12} className="shrink-0 text-text-secondary" />
-          <input
-            type="range"
-            min={0}
-            max={100}
-            step={1}
-            value={Math.round(musicVolume * 100)}
-            onChange={(e) => setMusicVolume(Number(e.target.value) / 100)}
-            className="h-1 flex-1 cursor-pointer appearance-none rounded-full bg-white/10 accent-accent-gold [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:bg-accent-gold"
-          />
-          <span className="w-8 text-right font-mono text-[10px] text-text-secondary">
-            {Math.round(musicVolume * 100)}%
-          </span>
-        </div>
       </div>
     );
   }

@@ -51,64 +51,16 @@ function coverCrop(
   }
 }
 
-const RMS_WINDOW_SAMPLES = 4410; // ~100ms at 44100
+/* ── Audio mixing constants ─────────────────────────────── */
+
+const MIX_SAMPLE_RATE = 44100;
+const MIX_CHANNELS = 2;
+const RMS_WINDOW = Math.floor(MIX_SAMPLE_RATE * 0.1); // 100ms
 const SPEECH_THRESHOLD = 0.02;
 const DUCK_FACTOR = 0.25;
-const RAMP_SAMPLES = 2205; // ~50ms ramp for smooth transitions
+const RAMP_SAMPLES = Math.floor(MIX_SAMPLE_RATE * 0.05); // 50ms
 
-function computeRMS(samples: Float32Array, start: number, length: number): number {
-  let sum = 0;
-  const end = Math.min(start + length, samples.length);
-  for (let i = start; i < end; i++) {
-    sum += samples[i]! * samples[i]!;
-  }
-  return Math.sqrt(sum / (end - start));
-}
-
-function mixAudioChunks(
-  clipBuffer: AudioBuffer | null,
-  musicBuffer: AudioBuffer | null,
-  musicVolume: number,
-): AudioBuffer {
-  if (!clipBuffer && !musicBuffer) {
-    return new AudioBuffer({ length: 4410, sampleRate: 44100, numberOfChannels: 2 });
-  }
-
-  const ref = clipBuffer ?? musicBuffer!;
-  const sampleRate = ref.sampleRate;
-  const length = Math.max(clipBuffer?.length ?? 0, musicBuffer?.length ?? 0);
-  const channels = Math.max(clipBuffer?.numberOfChannels ?? 0, musicBuffer?.numberOfChannels ?? 0, 2);
-  const out = new AudioBuffer({ length, sampleRate, numberOfChannels: channels });
-
-  for (let ch = 0; ch < channels; ch++) {
-    const outData = out.getChannelData(ch);
-    const clipData = clipBuffer && ch < clipBuffer.numberOfChannels ? clipBuffer.getChannelData(ch) : null;
-    const musicData = musicBuffer && ch < musicBuffer.numberOfChannels ? musicBuffer.getChannelData(ch) : null;
-    const clipMono = clipBuffer ? clipBuffer.getChannelData(0) : null;
-
-    let prevGain = musicVolume;
-
-    for (let i = 0; i < length; i++) {
-      const clipSample = clipData ? (i < clipData.length ? clipData[i]! : 0) : 0;
-
-      let effectiveMusicVol = musicVolume;
-      if (clipMono) {
-        const windowStart = Math.max(0, i - Math.floor(RMS_WINDOW_SAMPLES / 2));
-        const rms = computeRMS(clipMono, windowStart, RMS_WINDOW_SAMPLES);
-        if (rms > SPEECH_THRESHOLD) {
-          effectiveMusicVol = musicVolume * DUCK_FACTOR;
-        }
-        const rampAlpha = Math.min(1, 1 / RAMP_SAMPLES);
-        effectiveMusicVol = prevGain + (effectiveMusicVol - prevGain) * rampAlpha;
-        prevGain = effectiveMusicVol;
-      }
-
-      const musicSample = musicData ? (i < musicData.length ? musicData[i]! * effectiveMusicVol : 0) : 0;
-      outData[i] = Math.max(-1, Math.min(1, clipSample + musicSample));
-    }
-  }
-  return out;
-}
+/* ── Audio helpers ──────────────────────────────────────── */
 
 async function fetchBlobWithRetry(url: string, onRetry?: (attempt: number) => void): Promise<Blob> {
   const maxAttempts = 3;
@@ -129,32 +81,169 @@ async function fetchBlobWithRetry(url: string, onRetry?: (attempt: number) => vo
   throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
-async function decodeAudioToBuffers(url: string): Promise<AudioBuffer[]> {
+async function decodeAudioUrl(url: string): Promise<AudioBuffer> {
   const res = await fetch(url);
-  const arrayBuffer = await res.arrayBuffer();
-  const audioCtx = new OfflineAudioContext(2, 1, 44100);
-  const fullBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+  const buf = await res.arrayBuffer();
+  const ctx = new OfflineAudioContext(MIX_CHANNELS, 1, MIX_SAMPLE_RATE);
+  return ctx.decodeAudioData(buf);
+}
 
-  const chunkDuration = 1;
-  const sampleRate = fullBuffer.sampleRate;
-  const channels = fullBuffer.numberOfChannels;
-  const totalSamples = fullBuffer.length;
-  const chunkSamples = Math.floor(chunkDuration * sampleRate);
+async function extractClipAudioPCM(
+  blob: Blob,
+): Promise<{ pcm: Float32Array[]; duration: number } | null> {
+  try {
+    const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(blob) });
+    const audioTrack = await input.getPrimaryAudioTrack();
+    if (!audioTrack) return null;
+
+    const { AudioBufferSink } = await import("mediabunny");
+    const sink = new AudioBufferSink(audioTrack);
+
+    const channelArrays: Float32Array[][] = [[], []];
+    let totalLength = 0;
+
+    for await (const wrapped of sink.buffers()) {
+      const ab = wrapped.buffer;
+      for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+        const src = ch < ab.numberOfChannels ? ab.getChannelData(ch) : ab.getChannelData(0);
+        channelArrays[ch]!.push(new Float32Array(src));
+      }
+      totalLength += ab.length;
+    }
+
+    if (totalLength === 0) return null;
+
+    const pcm: Float32Array[] = [];
+    for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+      const merged = new Float32Array(totalLength);
+      let offset = 0;
+      for (const chunk of channelArrays[ch]!) {
+        merged.set(chunk, offset);
+        offset += chunk.length;
+      }
+      pcm.push(merged);
+    }
+
+    return { pcm, duration: totalLength / MIX_SAMPLE_RATE };
+  } catch (e) {
+    console.warn("[extractClipAudioPCM]", e);
+    return null;
+  }
+}
+
+function resampleToMixRate(buffer: AudioBuffer): Float32Array[] {
+  if (buffer.sampleRate === MIX_SAMPLE_RATE) {
+    const out: Float32Array[] = [];
+    for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+      out.push(new Float32Array(ch < buffer.numberOfChannels ? buffer.getChannelData(ch) : buffer.getChannelData(0)));
+    }
+    return out;
+  }
+  const ratio = MIX_SAMPLE_RATE / buffer.sampleRate;
+  const newLen = Math.floor(buffer.length * ratio);
+  const out: Float32Array[] = [];
+  for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+    const src = ch < buffer.numberOfChannels ? buffer.getChannelData(ch) : buffer.getChannelData(0);
+    const dst = new Float32Array(newLen);
+    for (let i = 0; i < newLen; i++) {
+      const srcIdx = i / ratio;
+      const lo = Math.floor(srcIdx);
+      const hi = Math.min(lo + 1, src.length - 1);
+      const frac = srcIdx - lo;
+      dst[i] = src[lo]! * (1 - frac) + src[hi]! * frac;
+    }
+    out.push(dst);
+  }
+  return out;
+}
+
+type ClipAudioInfo = {
+  pcm: Float32Array[] | null;
+  startSample: number;
+  lengthSamples: number;
+};
+
+function buildMixedTimeline(
+  clipAudios: ClipAudioInfo[],
+  musicPCM: Float32Array[] | null,
+  musicVolume: number,
+  totalDurationSec: number,
+): Float32Array[] {
+  const totalSamples = Math.ceil(totalDurationSec * MIX_SAMPLE_RATE);
+  const master: Float32Array[] = [];
+  for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+    master.push(new Float32Array(totalSamples));
+  }
+
+  for (const clip of clipAudios) {
+    if (!clip.pcm) continue;
+    for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+      const dst = master[ch]!;
+      const src = clip.pcm[ch]!;
+      const copyLen = Math.min(src.length, clip.lengthSamples, totalSamples - clip.startSample);
+      for (let i = 0; i < copyLen; i++) {
+        dst[clip.startSample + i] = (dst[clip.startSample + i] ?? 0) + src[i]!;
+      }
+    }
+  }
+
+  if (musicPCM) {
+    const hasAnyClipAudio = clipAudios.some((c) => c.pcm !== null);
+    const clipMono = hasAnyClipAudio ? master[0]! : null;
+
+    for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+      const dst = master[ch]!;
+      const src = musicPCM[ch]!;
+      const len = Math.min(src.length, totalSamples);
+
+      let prevGain = musicVolume;
+
+      for (let i = 0; i < len; i++) {
+        let gain = musicVolume;
+
+        if (clipMono) {
+          const winStart = Math.max(0, i - Math.floor(RMS_WINDOW / 2));
+          const winEnd = Math.min(clipMono.length, winStart + RMS_WINDOW);
+          let sum = 0;
+          for (let j = winStart; j < winEnd; j++) {
+            sum += clipMono[j]! * clipMono[j]!;
+          }
+          const rms = Math.sqrt(sum / (winEnd - winStart));
+          if (rms > SPEECH_THRESHOLD) {
+            gain = musicVolume * DUCK_FACTOR;
+          }
+          const alpha = 1 / RAMP_SAMPLES;
+          gain = prevGain + (gain - prevGain) * alpha;
+          prevGain = gain;
+        }
+
+        const mixed = dst[i]! + src[i]! * gain;
+        dst[i] = Math.max(-1, Math.min(1, mixed));
+      }
+    }
+  }
+
+  return master;
+}
+
+function timelineToChunks(timeline: Float32Array[], chunkDuration: number = 1): AudioBuffer[] {
+  const totalSamples = timeline[0]!.length;
+  const chunkSamples = Math.floor(chunkDuration * MIX_SAMPLE_RATE);
   const buffers: AudioBuffer[] = [];
 
   for (let offset = 0; offset < totalSamples; offset += chunkSamples) {
     const length = Math.min(chunkSamples, totalSamples - offset);
-    const chunk = new AudioBuffer({ length, sampleRate, numberOfChannels: channels });
-    for (let ch = 0; ch < channels; ch++) {
-      const src = fullBuffer.getChannelData(ch);
-      const dst = chunk.getChannelData(ch);
-      dst.set(src.subarray(offset, offset + length));
+    const ab = new AudioBuffer({ length, sampleRate: MIX_SAMPLE_RATE, numberOfChannels: MIX_CHANNELS });
+    for (let ch = 0; ch < MIX_CHANNELS; ch++) {
+      ab.getChannelData(ch).set(timeline[ch]!.subarray(offset, offset + length));
     }
-    buffers.push(chunk);
+    buffers.push(ab);
   }
 
   return buffers;
 }
+
+/* ── Main entry ─────────────────────────────────────────── */
 
 export async function composeVideos({
   clips,
@@ -196,6 +285,8 @@ export async function composeVideos({
   }
 }
 
+/* ── Mediabunny path (primary) ──────────────────────────── */
+
 async function composeWithMediabunny({
   clips,
   audioUrl,
@@ -216,90 +307,122 @@ async function composeWithMediabunny({
   const report = (message: string, percent: number) =>
     onProgress?.({ message, percent: clampPct(percent) });
 
+  const n = clips.length;
+  const anyClipHasAudio = clips.some((c) => c.hasAudio);
+  const needsAudio = !!audioUrl || anyClipHasAudio;
+
+  /* ─ Phase 1: download all clips + extract audio upfront ─ */
+  report("Baixando clipes...", 2);
+
+  type ClipData = {
+    blob: Blob;
+    clipAudioPCM: { pcm: Float32Array[]; duration: number } | null;
+  };
+
+  const clipData: ClipData[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const clip = clips[i]!;
+    report(`Baixando clipe ${i + 1} de ${n}...`, 2 + (i / n) * 8);
+
+    const blob = await fetchBlobWithRetry(clip.url, (attempt) => {
+      report(`Clipe ${i + 1}: reconectando (${attempt}/3)...`, 2 + (i / n) * 8);
+    });
+
+    let clipAudioPCM: { pcm: Float32Array[]; duration: number } | null = null;
+    if (clip.hasAudio) {
+      report(`Extraindo áudio do clipe ${i + 1}...`, 2 + ((i + 0.5) / n) * 8);
+      clipAudioPCM = await extractClipAudioPCM(blob);
+    }
+
+    clipData.push({ blob, clipAudioPCM });
+  }
+
+  /* ─ Phase 1b: probe video durations to build timeline ─── */
+  report("Analisando duração dos clipes...", 11);
+
+  type ClipMeta = { duration: number };
+  const clipMetas: ClipMeta[] = [];
+
+  for (let i = 0; i < n; i++) {
+    const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(clipData[i]!.blob) });
+    const videoTrack = await input.getPrimaryVideoTrack();
+    const dur = videoTrack ? await videoTrack.computeDuration() : 0;
+    clipMetas.push({ duration: dur });
+  }
+
+  const totalDuration = clipMetas.reduce((sum, m) => sum + m.duration, 0);
+
+  /* ─ Phase 2: build mixed audio timeline ────────────────── */
+  let mixedChunks: AudioBuffer[] = [];
+
+  if (needsAudio) {
+    report("Mixando áudio...", 13);
+
+    let musicPCM: Float32Array[] | null = null;
+    if (audioUrl) {
+      const musicBuffer = await decodeAudioUrl(audioUrl);
+      musicPCM = resampleToMixRate(musicBuffer);
+    }
+
+    let sampleOffset = 0;
+    const clipAudioInfos: ClipAudioInfo[] = clipMetas.map((meta, i) => {
+      const lengthSamples = Math.ceil(meta.duration * MIX_SAMPLE_RATE);
+      const info: ClipAudioInfo = {
+        pcm: clipData[i]!.clipAudioPCM?.pcm ?? null,
+        startSample: sampleOffset,
+        lengthSamples,
+      };
+      sampleOffset += lengthSamples;
+      return info;
+    });
+
+    const masterTimeline = buildMixedTimeline(clipAudioInfos, musicPCM, musicVolume, totalDuration);
+    mixedChunks = timelineToChunks(masterTimeline);
+  }
+
+  /* ─ Phase 3: encode video + feed pre-mixed audio ──────── */
   const target = new BufferTarget();
-  const output = new Output({
-    format: new Mp4OutputFormat(),
-    target,
-  });
+  const output = new Output({ format: new Mp4OutputFormat(), target });
 
   const canvas = new OffscreenCanvas(width, height);
   const ctx = canvas.getContext("2d")!;
 
-  const videoSource = new CanvasSource(canvas, {
-    codec: "avc",
-    bitrate: QUALITY_HIGH,
-  });
+  const videoSource = new CanvasSource(canvas, { codec: "avc", bitrate: QUALITY_HIGH });
   output.addVideoTrack(videoSource);
 
-  const anyClipHasAudio = clips.some((c) => c.hasAudio);
-  const needsAudio = !!audioUrl || anyClipHasAudio;
-
   let audioSource: AudioBufferSource | null = null;
-  let musicBuffers: AudioBuffer[] = [];
-
-  if (needsAudio) {
-    audioSource = new AudioBufferSource({
-      codec: "aac",
-      bitrate: QUALITY_HIGH,
-    });
+  if (needsAudio && mixedChunks.length > 0) {
+    audioSource = new AudioBufferSource({ codec: "aac", bitrate: QUALITY_HIGH });
     output.addAudioTrack(audioSource);
-  }
-
-  if (audioUrl) {
-    report("Decodificando música...", 3);
-    musicBuffers = await decodeAudioToBuffers(audioUrl);
   }
 
   await output.start();
 
   let globalTime = 0;
   const frameDuration = 1 / fps;
-  let musicBufferIndex = 0;
+  let audioChunkIdx = 0;
 
-  const n = clips.length;
-  const spanEncode = needsAudio ? 88 : 92;
-  const basePct = needsAudio ? 8 : 4;
+  const spanEncode = 82;
+  const basePct = 15;
 
   for (let i = 0; i < n; i++) {
-    const clip = clips[i]!;
-    report(`Baixando clipe ${i + 1} de ${n}...`, basePct + (i / n) * 6);
+    report(`Abrindo clipe ${i + 1} de ${n}...`, basePct + (i / n) * 3);
 
-    const blob = await fetchBlobWithRetry(clip.url, (attempt) => {
-      report(`Clipe ${i + 1}: reconectando (${attempt}/3)...`, basePct + (i / n) * 6);
-    });
-
-    report(`Abrindo clipe ${i + 1} de ${n}...`, basePct + 6 + (i / n) * 4);
-
-    const input = new Input({
-      formats: ALL_FORMATS,
-      source: new BlobSource(blob),
-    });
-
+    const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(clipData[i]!.blob) });
     const videoTrack = await input.getPrimaryVideoTrack();
     if (!videoTrack) continue;
 
     const decodable = await videoTrack.canDecode();
     if (!decodable) continue;
 
-    let clipAudioSink: InstanceType<typeof import("mediabunny").AudioBufferSink> | null = null;
-    if (clip.hasAudio) {
-      const audioTrack = await input.getPrimaryAudioTrack();
-      if (audioTrack) {
-        const { AudioBufferSink } = await import("mediabunny");
-        clipAudioSink = new AudioBufferSink(audioTrack);
-      }
-    }
-
     const { VideoSampleSink } = await import("mediabunny");
     const sink = new VideoSampleSink(videoTrack);
-    const duration = await videoTrack.computeDuration();
+    const duration = clipMetas[i]!.duration;
     const totalFrames = Math.ceil(duration * fps);
 
     let tempCanvas: OffscreenCanvas | null = null;
     let tempCtx: OffscreenCanvasRenderingContext2D | null = null;
-
-    const clipStartTime = globalTime;
-    let lastClipAudioTime = 0;
 
     for (let f = 0; f < totalFrames; f++) {
       const time = f / fps;
@@ -323,31 +446,9 @@ async function composeWithMediabunny({
         await videoSource.add(globalTime, frameDuration);
 
         if (audioSource) {
-          const chunkSecond = Math.floor(globalTime);
-          if (chunkSecond >= (clipStartTime > 0 ? Math.floor(clipStartTime) : 0) + Math.floor(time)) {
-            let clipAudioBuf: AudioBuffer | null = null;
-            if (clipAudioSink && time >= lastClipAudioTime) {
-              const wrapped = await clipAudioSink.getBuffer(time);
-              if (wrapped) {
-                clipAudioBuf = wrapped.buffer;
-                lastClipAudioTime = time + (wrapped.duration || 1);
-              }
-            }
-
-            const musicBuf = musicBufferIndex < musicBuffers.length ? musicBuffers[musicBufferIndex]! : null;
-            const shouldAdvanceMusic = musicBuf && globalTime >= musicBufferIndex;
-
-            if (clipAudioBuf || shouldAdvanceMusic) {
-              const mixed = mixAudioChunks(
-                clipAudioBuf,
-                shouldAdvanceMusic ? musicBuf : null,
-                musicVolume,
-              );
-              await audioSource.add(mixed);
-              if (shouldAdvanceMusic) musicBufferIndex++;
-            } else if (!clipAudioBuf && musicBuf && f === 0 && time === 0) {
-              // First frame of a clip with no audio -- still feed music
-            }
+          while (audioChunkIdx < mixedChunks.length && audioChunkIdx <= globalTime) {
+            await audioSource.add(mixedChunks[audioChunkIdx]!);
+            audioChunkIdx++;
           }
         }
 
@@ -360,22 +461,21 @@ async function composeWithMediabunny({
       if (f === 0 || f === totalFrames - 1 || f % Math.max(1, Math.floor(totalFrames / 25)) === 0) {
         report(
           `Codificando clipe ${i + 1}/${n} — quadro ${f + 1} de ${totalFrames}`,
-          basePct + 10 + (i + inner) / n * spanEncode,
+          basePct + 3 + (i + inner) / n * spanEncode,
         );
       }
     }
 
     report(
       `Clipe ${i + 1}/${n} concluído`,
-      basePct + 10 + (i + 1) / n * spanEncode,
+      basePct + 3 + (i + 1) / n * spanEncode,
     );
   }
 
   if (audioSource) {
-    while (musicBufferIndex < musicBuffers.length && musicBufferIndex <= globalTime) {
-      const mixed = mixAudioChunks(null, musicBuffers[musicBufferIndex]!, musicVolume);
-      await audioSource.add(mixed);
-      musicBufferIndex++;
+    while (audioChunkIdx < mixedChunks.length) {
+      await audioSource.add(mixedChunks[audioChunkIdx]!);
+      audioChunkIdx++;
     }
   }
 
@@ -385,6 +485,8 @@ async function composeWithMediabunny({
   report("Concluído", 100);
   return new Blob([target.buffer!], { type: "video/mp4" });
 }
+
+/* ── MediaRecorder fallback ─────────────────────────────── */
 
 async function composeWithMediaRecorder({
   clips,
@@ -413,7 +515,6 @@ async function composeWithMediaRecorder({
   const audioCtx = new AudioContext();
   const dest = audioCtx.createMediaStreamDestination();
 
-  let musicSource: MediaElementAudioSourceNode | null = null;
   let musicGain: GainNode | null = null;
   let audioEl: HTMLAudioElement | null = null;
 
@@ -425,10 +526,10 @@ async function composeWithMediaRecorder({
     audioEl.volume = 1;
     await new Promise<void>((resolve) => { audioEl!.oncanplaythrough = () => resolve(); audioEl!.load(); });
 
-    musicSource = audioCtx.createMediaElementSource(audioEl);
+    const elSource = audioCtx.createMediaElementSource(audioEl);
     musicGain = audioCtx.createGain();
     musicGain.gain.value = musicVolume;
-    musicSource.connect(musicGain);
+    elSource.connect(musicGain);
     musicGain.connect(dest);
   }
 
@@ -457,9 +558,9 @@ async function composeWithMediaRecorder({
     report(`Gravando clipe ${i + 1} de ${nc}...`, 15 + (i / nc) * 75);
 
     if (clip.hasAudio) {
-      await playClipToCanvasWithAudio(clip.url, ctx, width, height, audioCtx, dest, musicGain, musicVolume);
+      await playClipWithAudio(clip.url, ctx, width, height, audioCtx, dest, musicGain, musicVolume);
     } else {
-      await playClipToCanvas(clip.url, ctx, width, height);
+      await playClipMuted(clip.url, ctx, width, height);
     }
   }
 
@@ -476,7 +577,7 @@ async function composeWithMediaRecorder({
   return new Blob(chunks, { type: mimeType });
 }
 
-function playClipToCanvas(
+function playClipMuted(
   url: string,
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -514,7 +615,7 @@ function playClipToCanvas(
   });
 }
 
-function playClipToCanvasWithAudio(
+function playClipWithAudio(
   url: string,
   ctx: CanvasRenderingContext2D,
   width: number,
@@ -538,13 +639,12 @@ function playClipToCanvasWithAudio(
       try {
         clipSource = audioCtx.createMediaElementSource(video);
         clipSource.connect(dest);
-        clipSource.connect(audioCtx.destination);
       } catch {
-        // may already be connected
+        // already connected
       }
 
       if (musicGain) {
-        musicGain.gain.setTargetAtTime(baseMusicVolume * DUCK_FACTOR, audioCtx.currentTime, 0.05);
+        musicGain.gain.setTargetAtTime(baseMusicVolume * DUCK_FACTOR, audioCtx.currentTime, 0.1);
       }
 
       video.play().catch(() => {});
@@ -565,7 +665,7 @@ function playClipToCanvasWithAudio(
       ctx.drawImage(video, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
 
       if (musicGain) {
-        musicGain.gain.setTargetAtTime(baseMusicVolume, audioCtx.currentTime, 0.05);
+        musicGain.gain.setTargetAtTime(baseMusicVolume, audioCtx.currentTime, 0.1);
       }
       if (clipSource) {
         try { clipSource.disconnect(); } catch { /* ok */ }
@@ -577,6 +677,8 @@ function playClipToCanvasWithAudio(
     video.src = url;
   });
 }
+
+/* ── Utilities ──────────────────────────────────────────── */
 
 function getSupportedMimeType(): string {
   const types = [

@@ -22,7 +22,7 @@ import {
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
 import { listAdapters } from "@/lib/adapters";
-import { DEFAULT_AUDIO_MIX, type AudioMixSettings } from "@/lib/composition/compose";
+import { type AudioMixSettings } from "@/lib/composition/compose";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },

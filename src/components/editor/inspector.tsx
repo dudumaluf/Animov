@@ -1,9 +1,20 @@
 "use client";
 
 import Image from "next/image";
-import { useState, useRef } from "react";
+import { useState, useRef, useEffect } from "react";
 import { useProjectStore } from "@/stores/project-store";
-import { X, Maximize2, ChevronDown, Trash2, Upload, Clapperboard } from "lucide-react";
+import {
+  X,
+  Maximize2,
+  ChevronDown,
+  Trash2,
+  Upload,
+  Clapperboard,
+  ArrowDownToLine,
+  Play,
+  Pause,
+  Loader2,
+} from "lucide-react";
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
@@ -218,37 +229,143 @@ function PresetSelector({
   );
 }
 
-function ExportButton({ onExport }: { onExport: () => Promise<void> | void }) {
-  const [exporting, setExporting] = useState(false);
-  const readyCount = useProjectStore((s) => s.scenes.filter((sc) => sc.status === "ready").length);
+function formatAudioTime(s: number) {
+  if (!Number.isFinite(s)) return "0:00";
+  const m = Math.floor(s / 60);
+  const sec = Math.floor(s % 60);
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
 
-  const handleExport = async () => {
-    if (exporting) return;
-    setExporting(true);
-    try { await onExport(); } finally { setExporting(false); }
+function MusicTrackPlayer({ src }: { src: string }) {
+  const audioRef = useRef<HTMLAudioElement>(null);
+  const barRef = useRef<HTMLDivElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [current, setCurrent] = useState(0);
+  const [duration, setDuration] = useState(0);
+
+  useEffect(() => {
+    const a = audioRef.current;
+    if (!a) return;
+    const onTime = () => setCurrent(a.currentTime);
+    const onMeta = () => setDuration(Number.isFinite(a.duration) ? a.duration : 0);
+    const onEnded = () => setPlaying(false);
+    a.addEventListener("timeupdate", onTime);
+    a.addEventListener("loadedmetadata", onMeta);
+    a.addEventListener("ended", onEnded);
+    return () => {
+      a.removeEventListener("timeupdate", onTime);
+      a.removeEventListener("loadedmetadata", onMeta);
+      a.removeEventListener("ended", onEnded);
+    };
+  }, [src]);
+
+  const toggle = () => {
+    const a = audioRef.current;
+    if (!a) return;
+    if (a.paused) {
+      void a.play();
+      setPlaying(true);
+    } else {
+      a.pause();
+      setPlaying(false);
+    }
   };
 
+  const seek = (e: React.MouseEvent<HTMLDivElement>) => {
+    const a = audioRef.current;
+    const bar = barRef.current;
+    if (!a || !bar || !duration) return;
+    const rect = bar.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const pct = Math.max(0, Math.min(1, x / rect.width));
+    a.currentTime = pct * duration;
+  };
+
+  const pct = duration > 0 ? (current / duration) * 100 : 0;
+
   return (
-    <button
-      onClick={handleExport}
-      disabled={readyCount < 1 || exporting}
-      className="mt-3 w-full rounded-lg bg-accent-gold py-2.5 font-mono text-label-sm uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80 disabled:cursor-not-allowed disabled:opacity-30"
-    >
-      {exporting ? "Exportando..." : "Baixar Edit Final"}
-    </button>
+    <div className="pt-1">
+      <audio ref={audioRef} src={src} preload="metadata" />
+      <div className="flex items-center gap-2">
+        <button
+          type="button"
+          onClick={toggle}
+          className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-white transition-colors hover:bg-white/10"
+          aria-label={playing ? "Pausar" : "Reproduzir"}
+        >
+          {playing ? <Pause size={14} className="text-white" /> : <Play size={14} className="text-white" />}
+        </button>
+        <div className="min-w-0 flex-1">
+          <div
+            ref={barRef}
+            role="slider"
+            tabIndex={0}
+            aria-valuenow={Math.round(pct)}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            onClick={seek}
+            onKeyDown={(e) => {
+              const a = audioRef.current;
+              if (!a || !duration) return;
+              if (e.key === "ArrowLeft") {
+                a.currentTime = Math.max(0, a.currentTime - 5);
+              } else if (e.key === "ArrowRight") {
+                a.currentTime = Math.min(duration, a.currentTime + 5);
+              }
+            }}
+            className="relative h-1 w-full cursor-pointer rounded-full bg-white/20 outline-none focus:ring-1 focus:ring-white/30"
+          >
+            <span
+              className="absolute left-0 top-0 h-full rounded-full bg-white/70"
+              style={{ width: `${pct}%` }}
+            />
+          </div>
+          <div className="mt-0.5 flex justify-between font-mono text-[9px] text-white/45">
+            <span>{formatAudioTime(current)}</span>
+            <span>{formatAudioTime(duration)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
-function EditPreview({ musicUrl, onClose }: { musicUrl: string | null; onClose: () => void }) {
+function EditPreview({
+  musicUrl,
+  onClose,
+  onExport,
+}: {
+  musicUrl: string | null;
+  onClose: () => void;
+  onExport?: () => void | Promise<void>;
+}) {
   const preview = useProjectStore((s) => s.scenes.find((sc) => sc.status === "ready" && sc.videoUrl));
+  const readyForExport = useProjectStore((s) => s.scenes.some((sc) => sc.status === "ready" && sc.videoUrl));
   const videoRef = useRef<HTMLVideoElement>(null);
   const audioRef = useRef<HTMLAudioElement>(null);
+  const [exporting, setExporting] = useState(false);
 
   const syncPlay = () => {
     videoRef.current?.play();
-    if (audioRef.current && musicUrl) { audioRef.current.currentTime = 0; audioRef.current.play(); }
+    if (audioRef.current && musicUrl) {
+      audioRef.current.currentTime = 0;
+      void audioRef.current.play();
+    }
   };
-  const syncPause = () => { videoRef.current?.pause(); audioRef.current?.pause(); };
+  const syncPause = () => {
+    videoRef.current?.pause();
+    audioRef.current?.pause();
+  };
+
+  const handleExportClick = async () => {
+    if (!onExport || exporting || !readyForExport) return;
+    setExporting(true);
+    try {
+      await onExport();
+    } finally {
+      setExporting(false);
+    }
+  };
 
   return (
     <div className="relative aspect-video w-full bg-white/5">
@@ -257,8 +374,10 @@ function EditPreview({ musicUrl, onClose }: { musicUrl: string | null; onClose: 
           ref={videoRef}
           src={preview.videoUrl}
           className="h-full w-full cursor-pointer object-cover"
-          loop playsInline muted={!musicUrl}
-          onClick={() => videoRef.current?.paused ? syncPlay() : syncPause()}
+          loop
+          playsInline
+          muted={!musicUrl}
+          onClick={() => (videoRef.current?.paused ? syncPlay() : syncPause())}
         />
       ) : preview ? (
         <Image src={preview.photoDataUrl ?? preview.photoUrl} alt="edit" fill className="object-cover" unoptimized />
@@ -268,12 +387,31 @@ function EditPreview({ musicUrl, onClose }: { musicUrl: string | null; onClose: 
         </div>
       )}
       {musicUrl && <audio ref={audioRef} src={musicUrl} loop />}
-      <button
-        onClick={onClose}
-        className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-      >
-        <X size={12} />
-      </button>
+      <div className="absolute right-2 top-2 flex items-center gap-1">
+        {onExport && (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              void handleExportClick();
+            }}
+            disabled={!readyForExport || exporting}
+            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white disabled:cursor-not-allowed disabled:opacity-30"
+            title="Baixar edit final"
+            aria-label="Baixar edit final"
+          >
+            {exporting ? <Loader2 size={12} className="animate-spin" /> : <ArrowDownToLine size={12} />}
+          </button>
+        )}
+        <button
+          type="button"
+          onClick={onClose}
+          className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+          aria-label="Fechar painel"
+        >
+          <X size={12} />
+        </button>
+      </div>
     </div>
   );
 }
@@ -295,19 +433,21 @@ function MusicSection({
   if (musicUrl) {
     return (
       <div>
-        <label className="mb-2 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-          Trilha Sonora
-        </label>
-        <div className="space-y-2">
-          <audio src={musicUrl} controls className="h-8 w-full opacity-80" />
+        <div className="mb-2 flex items-center justify-between">
+          <span className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+            Trilha sonora
+          </span>
           <button
+            type="button"
             onClick={clearMusic}
-            className="flex items-center gap-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:text-red-400"
+            className="flex h-7 w-7 items-center justify-center rounded-md text-white/50 transition-colors hover:bg-white/5 hover:text-red-400"
+            title="Remover trilha"
+            aria-label="Remover trilha"
           >
-            <Trash2 size={10} />
-            Remover trilha
+            <Trash2 size={14} />
           </button>
         </div>
+        <MusicTrackPlayer src={musicUrl} />
       </div>
     );
   }
@@ -379,7 +519,6 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
-  const sceneIndex = useProjectStore((s) => s.scenes.findIndex((sc) => sc.id === s.selectedSceneId));
   const setScenePreset = useProjectStore((s) => s.setScenePreset);
   const setSceneDuration = useProjectStore((s) => s.setSceneDuration);
   const generateScene = useProjectStore((s) => s.generateScene);
@@ -388,6 +527,7 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
   const modelId = useProjectStore((s) => s.modelId);
   const setModelId = useProjectStore((s) => s.setModelId);
   const durations = getDurations(modelId);
+  const showModelPicker = listAdapters().length > 1;
 
   const musicPrompt = useProjectStore((s) => s.musicPrompt);
   const musicUrl = useProjectStore((s) => s.musicUrl);
@@ -407,44 +547,60 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
       }`}
     >
       {scene && selectedSceneId && showScene && (
-        <div className="flex h-full w-64 flex-col">
-          <div className="relative aspect-video w-full bg-white/5">
+        <div className="flex h-full min-h-0 w-64 flex-col">
+          <div className="relative aspect-video w-full shrink-0 bg-white/5">
             {scene.status === "ready" && scene.videoUrl ? (
               <video src={scene.videoUrl} className="h-full w-full object-cover" muted loop autoPlay playsInline />
             ) : (
               <Image
                 src={scene.photoDataUrl ?? scene.photoUrl}
-                alt={`Cena ${sceneIndex + 1}`}
-                fill className="object-cover" unoptimized
+                alt="Pré-visualização da cena"
+                fill
+                className="object-cover"
+                unoptimized
               />
             )}
-            <button
-              onClick={() => selectScene(null)}
-              className="absolute right-2 top-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-            >
-              <X size={12} />
-            </button>
+            <div className="absolute right-2 top-2 flex items-center gap-1">
+              {scene.status === "ready" && scene.videoUrl && (
+                <button
+                  type="button"
+                  onClick={() => downloadVideoBlob(scene.videoUrl!, "cena.mp4")}
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+                  title="Baixar cena"
+                  aria-label="Baixar cena"
+                >
+                  <ArrowDownToLine size={12} />
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={() => selectScene(null)}
+                className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+                aria-label="Fechar painel"
+              >
+                <X size={12} />
+              </button>
+            </div>
             {scene.status === "ready" && scene.videoUrl && onPreviewVideo && (
               <button
+                type="button"
                 onClick={() => onPreviewVideo(scene.videoUrl!)}
                 className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+                aria-label="Tela cheia"
               >
                 <Maximize2 size={12} />
               </button>
             )}
           </div>
 
-          <div className="flex-1 overflow-y-auto px-3 py-3">
-            {/* Header: cena + model chip */}
-            <div className="flex items-center justify-between">
-              <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                Cena {sceneIndex + 1}
-              </p>
-              <ModelChip modelId={modelId} onChange={setModelId} />
-            </div>
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
+            {showModelPicker && (
+              <div className="flex items-center justify-end">
+                <ModelChip modelId={modelId} onChange={setModelId} />
+              </div>
+            )}
 
-            {/* Movimento */}
-            <div className="mt-3">
+            <div className={showModelPicker ? "mt-3" : undefined}>
               <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
                 Movimento
               </label>
@@ -454,23 +610,17 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
               />
             </div>
 
-            {/* Duracao + custo/status inline */}
             <div className="mt-3">
-              <div className="mb-1.5 flex items-center justify-between">
-                <label className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                  Duração
-                </label>
-                <span className="flex items-center gap-1.5 font-mono text-[10px] text-text-secondary">
-                  <span className="text-accent-gold/80">{scene.costCredits} cr.</span>
-                  <span className="opacity-40">·</span>
-                  <StatusDot status={scene.status} />
-                  <StatusLabel status={scene.status} />
-                </span>
-              </div>
-              <div className={`grid gap-1 ${durations.length > 4 ? "grid-cols-6" : durations.length > 2 ? "grid-cols-4" : "grid-cols-2"}`}>
+              <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                Duração
+              </label>
+              <div
+                className={`grid gap-1 ${durations.length > 4 ? "grid-cols-6" : durations.length > 2 ? "grid-cols-4" : "grid-cols-2"}`}
+              >
                 {durations.map((d) => (
                   <button
                     key={d}
+                    type="button"
                     onClick={() => setSceneDuration(selectedSceneId, d)}
                     className={`rounded-md border py-1 font-mono text-[10px] transition-all ${
                       scene.duration === d
@@ -484,46 +634,56 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
               </div>
             </div>
 
-            {/* Actions */}
-            <button
-              disabled={isGenerating}
-              onClick={() => generateScene(selectedSceneId)}
-              className="mt-3 w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
-            >
-              {scene.status === "ready" ? "Regenerar cena" : scene.status === "generating" ? "Gerando..." : "Gerar esta cena"}
-            </button>
+            <div className="min-h-4 flex-1" aria-hidden />
 
-            {onEditImage && (
+            <div className="mt-auto shrink-0 space-y-2 pt-2">
               <button
-                onClick={() => onEditImage(selectedSceneId)}
-                className="mt-1.5 w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
+                type="button"
+                disabled={isGenerating}
+                onClick={() => generateScene(selectedSceneId)}
+                className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
               >
-                Editar imagem
+                {scene.status === "ready"
+                  ? "Regenerar cena"
+                  : scene.status === "generating"
+                    ? "Gerando..."
+                    : "Gerar esta cena"}
               </button>
-            )}
 
-            {scene.status === "ready" && scene.videoUrl && (
-              <button
-                onClick={() => downloadVideoBlob(scene.videoUrl!, "cena.mp4")}
-                className="mt-1.5 w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-white/20 hover:text-[var(--text)]"
-              >
-                Baixar cena
-              </button>
-            )}
+              {onEditImage && (
+                <button
+                  type="button"
+                  onClick={() => onEditImage(selectedSceneId)}
+                  className="w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
+                >
+                  Editar imagem
+                </button>
+              )}
+
+              <div className="flex items-center justify-between border-t border-white/5 pt-2 font-mono text-[10px] text-text-secondary">
+                <span className="text-accent-gold/80">{scene.costCredits} cr.</span>
+                <span className="flex items-center gap-1.5">
+                  <StatusDot status={scene.status} />
+                  <StatusLabel status={scene.status} />
+                </span>
+              </div>
+            </div>
           </div>
         </div>
       )}
 
       {showEdit && (
-        <div className="flex h-full w-64 flex-col">
-          <EditPreview musicUrl={musicUrl} onClose={() => useProjectStore.setState({ editNodeSelected: false })} />
+        <div className="flex h-full min-h-0 w-64 flex-col">
+          <EditPreview
+            musicUrl={musicUrl}
+            onClose={() => useProjectStore.setState({ editNodeSelected: false })}
+            onExport={onExport}
+          />
 
-          <div className="flex-1 overflow-y-auto px-3 py-3">
-            <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-              Edit Final
-            </p>
+          <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
+            <div className="min-h-4 flex-1" aria-hidden />
 
-            <div className="mt-3">
+            <div className="mt-auto shrink-0 space-y-3">
               <MusicSection
                 musicUrl={musicUrl}
                 musicPrompt={musicPrompt}
@@ -533,27 +693,31 @@ export function Inspector({ onPreviewVideo, onExport, onEditImage }: { onPreview
                 clearMusic={clearMusic}
                 setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
               />
-            </div>
 
-            <div className="mt-3 rounded-lg border border-white/5 p-3">
-              <span className="block font-mono text-[9px] uppercase text-text-secondary">Composição</span>
-              <div className="mt-2 space-y-1">
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] text-text-secondary">Cenas prontas</span>
-                  <span className="font-mono text-[11px] text-accent-gold">
-                    {useProjectStore.getState().scenes.filter((s) => s.status === "ready").length}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[10px] text-text-secondary">Trilha sonora</span>
-                  <span className="font-mono text-[11px]">
-                    {musicUrl ? <span className="text-green-400">✓</span> : <span className="text-text-secondary">—</span>}
-                  </span>
+              <div className="rounded-lg border border-white/5 px-3 py-2">
+                <span className="block font-mono text-[9px] uppercase tracking-wider text-text-secondary">
+                  Composição
+                </span>
+                <div className="mt-1.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10px] text-text-secondary">Cenas prontas</span>
+                    <span className="font-mono text-[11px] text-accent-gold">
+                      {useProjectStore.getState().scenes.filter((s) => s.status === "ready").length}
+                    </span>
+                  </div>
+                  <div className="flex items-center justify-between">
+                    <span className="font-mono text-[10px] text-text-secondary">Trilha</span>
+                    <span className="font-mono text-[11px]">
+                      {musicUrl ? (
+                        <span className="text-green-400">✓</span>
+                      ) : (
+                        <span className="text-text-secondary">—</span>
+                      )}
+                    </span>
+                  </div>
                 </div>
               </div>
             </div>
-
-            {onExport && <ExportButton onExport={onExport} />}
           </div>
         </div>
       )}

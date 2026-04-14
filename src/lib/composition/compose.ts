@@ -209,8 +209,10 @@ function buildMixedTimeline(
       const copyLen = Math.min(src.length, clip.lengthSamples, totalSamples - clip.startSample);
       for (let i = 0; i < copyLen; i++) {
         let fade = 1;
-        if (i < clipFadeInSamples) fade = i / clipFadeInSamples;
-        if (i > copyLen - clipFadeOutSamples) fade = Math.min(fade, (copyLen - i) / clipFadeOutSamples);
+        if (clipFadeInSamples > 0 && i < clipFadeInSamples) fade = i / clipFadeInSamples;
+        if (clipFadeOutSamples > 0 && i > copyLen - clipFadeOutSamples) {
+          fade = Math.min(fade, Math.max(0, (copyLen - i) / clipFadeOutSamples));
+        }
         dst[clip.startSample + i] = (dst[clip.startSample + i] ?? 0) + src[i]! * clip.volume * fade;
       }
     }
@@ -225,36 +227,45 @@ function buildMixedTimeline(
     const attackAlpha = mix.duckingAttack > 0 ? 1 / (mix.duckingAttack * MIX_SAMPLE_RATE) : 1;
     const releaseAlpha = mix.duckingRelease > 0 ? 1 / (mix.duckingRelease * MIX_SAMPLE_RATE) : 1;
 
+    const musicLen = Math.min(musicPCM[0]!.length, totalSamples);
+
+    // Pre-compute the ducking gain envelope once (mono), shared across channels
+    const duckEnvelope = new Float32Array(musicLen);
+    let envGain = mix.musicVolume;
+
+    for (let i = 0; i < musicLen; i++) {
+      let targetGain = mix.musicVolume;
+
+      if (clipMono) {
+        const winStart = Math.max(0, i - Math.floor(rmsWindow / 2));
+        const winEnd = Math.min(clipMono.length, winStart + rmsWindow);
+        let sum = 0;
+        for (let j = winStart; j < winEnd; j++) {
+          sum += clipMono[j]! * clipMono[j]!;
+        }
+        const rms = Math.sqrt(sum / (winEnd - winStart));
+        if (rms > SPEECH_THRESHOLD) {
+          targetGain = mix.musicVolume * (1 - mix.duckingIntensity * (1 - DUCK_MIN_GAIN));
+        }
+        const alpha = rms > SPEECH_THRESHOLD ? attackAlpha : releaseAlpha;
+        envGain += (targetGain - envGain) * alpha;
+      }
+
+      let musicFade = 1;
+      if (i < musicFadeInSamples) musicFade = i / musicFadeInSamples;
+      if (musicFadeOutSamples > 0 && i > musicLen - musicFadeOutSamples) {
+        musicFade = Math.min(musicFade, (musicLen - i) / musicFadeOutSamples);
+      }
+
+      duckEnvelope[i] = envGain * musicFade;
+    }
+
     for (let ch = 0; ch < MIX_CHANNELS; ch++) {
       const dst = master[ch]!;
       const src = musicPCM[ch]!;
-      const len = Math.min(src.length, totalSamples);
 
-      let currentGain = mix.musicVolume;
-
-      for (let i = 0; i < len; i++) {
-        let targetGain = mix.musicVolume;
-
-        if (clipMono) {
-          const winStart = Math.max(0, i - Math.floor(rmsWindow / 2));
-          const winEnd = Math.min(clipMono.length, winStart + rmsWindow);
-          let sum = 0;
-          for (let j = winStart; j < winEnd; j++) {
-            sum += clipMono[j]! * clipMono[j]!;
-          }
-          const rms = Math.sqrt(sum / (winEnd - winStart));
-          if (rms > SPEECH_THRESHOLD) {
-            targetGain = mix.musicVolume * (1 - mix.duckingIntensity * (1 - DUCK_MIN_GAIN));
-          }
-          const alpha = rms > SPEECH_THRESHOLD ? attackAlpha : releaseAlpha;
-          currentGain += (targetGain - currentGain) * alpha;
-        }
-
-        let musicFade = 1;
-        if (i < musicFadeInSamples) musicFade = i / musicFadeInSamples;
-        if (i > len - musicFadeOutSamples) musicFade = Math.min(musicFade, (len - i) / musicFadeOutSamples);
-
-        const mixed = dst[i]! + src[i]! * currentGain * musicFade;
+      for (let i = 0; i < musicLen; i++) {
+        const mixed = dst[i]! + src[i]! * duckEnvelope[i]!;
         dst[i] = Math.max(-1, Math.min(1, mixed));
       }
     }

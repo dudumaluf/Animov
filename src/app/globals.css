@@ -38,6 +38,13 @@
     --input: 0 0% 16%;
     --ring: 0 0% 50%;
     --radius: 0.5rem;
+
+    /* Recipe category color tokens (space-separated RGB for rgb() + alpha) */
+    --rc-time: 232 169 77;
+    --rc-polish: 111 184 255;
+    --rc-staging: 143 166 128;
+    --rc-material: 201 132 98;
+    --rc-asset: 168 168 160;
   }
 
   /* ─── Light mode ─── */
@@ -70,6 +77,12 @@
     --border: 0 0% 90%;
     --input: 0 0% 90%;
     --ring: 0 0% 64%;
+
+    --rc-time: 220 150 60;
+    --rc-polish: 70 140 210;
+    --rc-staging: 115 140 100;
+    --rc-material: 180 105 75;
+    --rc-asset: 130 130 125;
   }
 
   html {

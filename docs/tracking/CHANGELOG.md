@@ -197,3 +197,118 @@
 - Composer node nao implementado
 - Crossfade entre cenas nao implementado
 - Hacks e fixes pontuais que precisam revisao
+
+---
+
+## Sessao 7 — 13 abril 2026
+
+**Foco: Persistencia robusta, recipes system, asset editing, timeline dual-mode, trim nao-destrutivo, upload video, export 9:16, audio mix**
+
+### Persistencia robusta
+
+- IDs UUID estaveis para cenas (sobrevivem reorder/reload sem regenerar)
+- `hasEditNode`, `videoVersions`, `transitions`, `music`, `audioMix`, `exportAspectRatio` persistidos em metadata + colunas dedicadas
+- Videos gerados movidos para Supabase Storage (sem data/blob URLs efemeras)
+- Upload de transicoes pra fal.ai Storage pra URLs data/blob
+- Export/Import de projeto em JSON portavel (`src/lib/project-portable.ts`)
+- Fix de combined name+metadata updates na API `/api/projects/[id]`
+
+### Editor UX
+
+- Harmonizacao do Inspector (cena + Edit Final com mesmo layout e hierarquia)
+- Smart Canvas pan/zoom (anchor no mouse, scroll = scrub no modo timeline)
+- Model chip compacto + **Kling V3** (duracao 3-15s range) vs **Kling O1** (5/10s)
+- Context menu portal (sem clipping quando perto da borda do viewport)
+- Correcoes de upload de transicoes (fix 413/422)
+- Progress indicator no export com steps granulares
+- Botao "Gerar/Renderizar" + "Baixar ultima versao" no edit node
+
+### Recipes System (novo)
+
+- Migration `00007_recipes.sql` com `recipe_categories` + `recipes` + RLS + seed
+- Admin CRUD em `/admin/recipes` com slugify, categorias color-coded, duplicate, edit, delete
+- `RecipesDrawer` deslizante com search e categorias
+- Drag recipe -> prompt field (drop zone)
+- `RecipeChip` compacto (pilula color-coded alinhada com thumbnails de referencia)
+- API `/api/edit-image/compose-from-recipe` integrando `vision_system_prompt` + `prompt_template`
+- Fluxo: 1 recipe ativa + prompt customizado (LLM compoe prompt final pro nano-banana-2)
+- Quick-actions ficam como recipes no catalogo
+
+### Asset Editing (novo)
+
+- `AssetEditModal` + `AssetContextMenu` (double-click ou right-click em referencias)
+- Quick actions: "remove background", "white background" + edicoes custom in-place
+- Atualiza asset in-place (substitui thumbnail + URL original)
+- A/B `CompareSlider` compartilhado com fix de `clipPath` (escala correta do original)
+- Drag-to-place de referencias existentes em cima da imagem acima (ponto + Vision LLM compositor que considera luz, perspectiva, integracao)
+
+### Timeline Mode (novo)
+
+- `viewMode: "canvas" | "timeline"` em `timeline-store.ts`
+- Dual-mode seamless (cards crescem em timeline mantendo rounded corners intactos)
+- Playhead + scrub + play/pause + auto-follow opcional
+- `SpriteFrame` para scrubbing instantaneo (sprite sheet gerado no background)
+- `VideoMirror` copia frames ativos para canvas (elimina flash de preto na troca entre clipes)
+- Pre-montagem do proximo segmento (transicao seamless, sem delay de carregamento)
+- Preview modular: `TheaterView` (full cinematico) + `HeadlinePreview` (flutuante)
+- Notificacao de progresso de staging sprites (single ou multi-step)
+- Scroll = zoom no canvas mode; scroll = scrub no timeline mode
+
+### Playback de imagem em timeline (novo)
+
+- `TheaterView` + `HeadlinePreview` renderizam still image via `next/image` quando so existe `poster` (sem `videoUrl`)
+- Cena image-only participa do playback/scrub com `scene.duration` como duracao efetiva
+- Fim do "Foco..." placeholder para cenas image-only
+
+### Trim Nao-Destrutivo (novo)
+
+- Migration `00008_scene_trim.sql` (`trim_start` / `trim_end` nullable `numeric(6,3)`)
+- `Scene.trimStart` / `Scene.trimEnd` no store + acao `setSceneTrim`
+- Edge handles no `film-strip` (ew-resize, visiveis no hover em modo timeline)
+- `TrimHandle` component com drag pointer -> seconds conversion
+- Campos numericos `TrimControls` no inspector (com botao "Limpar")
+- `buildSegments` recalcula duracao efetiva por segmento (`trimEnd - trimStart`)
+- `use-timeline-engine` com helper `sourceOffsetFor` (seek correto em activate, scrub, drift correction, premount)
+- Export: `composeWithMediabunny` respeita `sourceStart`/`sourceEnd` em video + PCM slicing em audio
+- `project-portable` inclui `trimStart` / `trimEnd` no export/import
+
+### Fix: preservacao do duration efetivo apos reload
+
+- `loadFromSupabase` agora usa `duration: dur` (stored effective) em vez de `dbVersions[active].duration ?? dur` (native)
+- Garante que hover label do card mostra duracao trimada corretamente apos reload
+
+### Video Upload node (novo)
+
+- `sourceType: "video-upload"` para importar MP4 proprios no edit
+- Probe automatico de duracao + extracao de thumbnail
+- Audio do video importado respeitado no export (Mediabunny AAC)
+- Tratamento como scene normal no store (seleciona, inspeciona, reordena, trima, deleta)
+
+### Export 9:16
+
+- Novo aspect ratio `exportAspectRatio: "16:9" | "9:16"` persistido em metadata
+- Composicao adapta dimensions + padding conforme o modo
+- Toggle visual no inspector do Edit node
+
+### Audio Mix
+
+- Volume por clip + volume da trilha (slider por clip que tem audio)
+- Fade in/out da musica (comeco + fim do edit)
+- Ducking automatico (musica abaixa quando clip com audio toca, curva suave)
+- `DEFAULT_AUDIO_MIX` + persistencia via metadata
+- Controles integrados ao layout do inspector (sem slider solto)
+
+### Fixes tecnicos
+
+- `useCallback` movido antes de early return em `SortableSceneCard` (ESLint rules-of-hooks)
+- `<img>` -> `next/image` com `fill + unoptimized` em `TheaterView` e `HeadlinePreview`
+- Transicoes preservam status no `rebuildTransitions` (sem regressao ao alterar cenas vizinhas)
+- ESLint + TS zero warnings apos Fase 2 do trim
+- `DEFAULT_AUDIO_MIX` unused import removido (build Vercel)
+
+### Tarefas explicitas pro proximo PR
+
+- Separar **clip duration** (hover do card, timeline) de **generation target** (grid 5s/10s do inspector) em campos distintos
+- Crossfade client-side entre cenas (ainda aberto)
+- Admin UI para troca de FAL_KEY (ainda aberto)
+- Debug view completo no inspector (vision JSON + prompt gerado + custo por cena)

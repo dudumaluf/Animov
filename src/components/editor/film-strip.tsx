@@ -1,9 +1,11 @@
 "use client";
 
 import Image from "next/image";
-import { useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useProjectStore } from "@/stores/project-store";
+import { useTimelineStore } from "@/stores/timeline-store";
+import { videoRegistry } from "@/lib/timeline/video-registry";
 import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame, Pencil, ImageIcon, Film } from "lucide-react";
 import {
   DndContext,
@@ -22,6 +24,21 @@ import { CSS } from "@dnd-kit/utilities";
 
 import { getPresetLabel } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
+import { SpriteFrame } from "@/components/editor/sprite-frame";
+import { spritePreloader } from "@/lib/timeline/sprite-preloader";
+import { useEditorSettingsStore } from "@/stores/editor-settings-store";
+
+const MIN_TIMELINE_CARD_WIDTH = 96;
+const TIMELINE_CARD_HEIGHT = 120;
+const TIMELINE_RIBBON_HEIGHT = 80;
+const MIN_RIBBON_CARD_WIDTH = 56;
+
+function canHoverPlay(): boolean {
+  const ts = useTimelineStore.getState();
+  const hoverEnabled = useEditorSettingsStore.getState().behavior.hoverPlayEnabled;
+  if (!hoverEnabled) return false;
+  return !(ts.isPlaying || ts.isScrubbing);
+}
 
 const CURATED_DURATIONS: Record<string, number[]> = {
   "kling-v3-pro": [3, 5, 7, 10, 12, 15],
@@ -35,6 +52,46 @@ function NodeProcessingOverlay({ label }: { label?: string }) {
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-black/50">
       <Loader2 size={16} className="animate-spin text-accent-gold" />
       {label && <span className="font-mono text-[9px] text-accent-gold">{label}</span>}
+    </div>
+  );
+}
+
+/** Min duration window when trimming (both sides combined, per scene). */
+const MIN_TRIM_WINDOW = 0.5;
+/** Image-only scenes: bounds for the right-edge drag. */
+const IMAGE_MIN_DURATION = 1;
+const IMAGE_MAX_DURATION = 30;
+
+type TrimSide = "left" | "right";
+
+/**
+ * Thin draggable bar docked to the left/right edge of a timeline card.
+ * Only visible on hover of the parent `group`, doesn't interfere with the
+ * sort handle (GripVertical) because dnd-kit's PointerSensor only responds to
+ * the designated listeners — we stopPropagation on pointerdown anyway.
+ */
+function TrimHandle({
+  side,
+  hint,
+  onPointerDown,
+}: {
+  side: TrimSide;
+  hint?: string;
+  onPointerDown: (e: React.PointerEvent) => void;
+}) {
+  return (
+    <div
+      onPointerDown={onPointerDown}
+      onClick={(e) => e.stopPropagation()}
+      onDoubleClick={(e) => e.stopPropagation()}
+      onContextMenu={(e) => e.stopPropagation()}
+      title={hint}
+      className={`absolute top-0 bottom-0 z-30 w-[8px] cursor-ew-resize select-none opacity-0 transition-opacity group-hover:opacity-100 ${
+        side === "left" ? "left-0" : "right-0"
+      }`}
+      style={{ touchAction: "none" }}
+    >
+      <div className="absolute inset-y-1 left-1/2 w-[2px] -translate-x-1/2 rounded-sm bg-accent-gold/70 shadow-[0_0_6px_rgba(255,200,80,0.45)]" />
     </div>
   );
 }
@@ -57,7 +114,90 @@ function SortableSceneCard({
   const removeScene = useProjectStore((s) => s.removeScene);
   const setActiveVersion = useProjectStore((s) => s.setActiveVersion);
   const sceneIndex = useProjectStore((s) => s.scenes.findIndex((sc) => sc.id === sceneId));
+  const viewMode = useTimelineStore((s) => s.viewMode);
+  const pixelsPerSecond = useTimelineStore((s) => s.pixelsPerSecond);
+  const isScrubbing = useTimelineStore((s) => s.isScrubbing);
+  const activeSegmentId = useTimelineStore((s) => s.activeSegmentId);
+  const segmentLocalOffset = useTimelineStore((s) => s.segmentLocalOffset);
+  const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  const videoRegister = useCallback(
+    (el: HTMLVideoElement | null) => {
+      videoRegistry.set(sceneId, el);
+    },
+    [sceneId],
+  );
+
+  /**
+   * Creates a pointer handler that, on drag, converts pixel deltas into
+   * seconds (via `pixelsPerSecond`) and live-commits to the project store.
+   * Image-only cards use `setSceneDuration`; video cards use `setSceneTrim`.
+   * Captures initial values at pointerdown so successive moves don't stack.
+   * Declared above the `if (!scene)` early-return to satisfy rules-of-hooks.
+   */
+  const beginTrimDrag = useCallback(
+    (side: TrimSide) => (e: React.PointerEvent) => {
+      const current = useProjectStore
+        .getState()
+        .scenes.find((sc) => sc.id === sceneId);
+      if (!current) return;
+      const isVideoClip =
+        current.status === "ready" && !!current.videoUrl;
+      if (!isVideoClip && side === "left") return;
+
+      e.stopPropagation();
+      e.preventDefault();
+
+      const startX = e.clientX;
+      const startDuration = current.duration;
+      const startTrimStart = current.trimStart ?? 0;
+      const activeVer = current.videoVersions?.[current.activeVersion];
+      const native =
+        activeVer?.duration && activeVer.duration > 0
+          ? activeVer.duration
+          : current.duration;
+      const startTrimEnd = current.trimEnd ?? native;
+
+      const pps = Math.max(1, useTimelineStore.getState().pixelsPerSecond);
+
+      const onMove = (me: PointerEvent) => {
+        const dx = (me.clientX - startX) / pps;
+        if (isVideoClip) {
+          if (side === "left") {
+            const next = Math.max(
+              0,
+              Math.min(startTrimEnd - MIN_TRIM_WINDOW, startTrimStart + dx),
+            );
+            useProjectStore
+              .getState()
+              .setSceneTrim(sceneId, { trimStart: next });
+          } else {
+            const next = Math.max(
+              startTrimStart + MIN_TRIM_WINDOW,
+              Math.min(native, startTrimEnd + dx),
+            );
+            useProjectStore
+              .getState()
+              .setSceneTrim(sceneId, { trimEnd: next });
+          }
+        } else if (side === "right") {
+          const next = Math.max(
+            IMAGE_MIN_DURATION,
+            Math.min(IMAGE_MAX_DURATION, startDuration + dx),
+          );
+          useProjectStore.getState().setSceneDuration(sceneId, next);
+        }
+      };
+      const onUp = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+    },
+    [sceneId],
+  );
 
   if (!scene) return null;
   const isSelected = selectedSceneId === sceneId;
@@ -65,6 +205,8 @@ function SortableSceneCard({
   const isProcessing = scene.status === "processing";
   const isGenerating = scene.status === "generating";
   const isUploadedVideo = scene.sourceType === "video-upload";
+  const cardHeight = timelineRibbon ? TIMELINE_RIBBON_HEIGHT : TIMELINE_CARD_HEIGHT;
+  const minCardWidth = timelineRibbon ? MIN_RIBBON_CARD_WIDTH : MIN_TIMELINE_CARD_WIDTH;
 
   const handleContextMenu = (e: React.MouseEvent) => {
     e.preventDefault();
@@ -105,16 +247,26 @@ function SortableSceneCard({
     }
   };
 
-  const style = {
+  const baseStyle: React.CSSProperties = {
     transform: CSS.Transform.toString(transform),
     transition,
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 50 : undefined,
   };
+  const style: React.CSSProperties =
+    viewMode === "timeline"
+      ? {
+          ...baseStyle,
+          width: `${Math.max(minCardWidth, scene.duration * pixelsPerSecond)}px`,
+          height: cardHeight,
+        }
+      : baseStyle;
 
   return (
     <div
       ref={setNodeRef}
+      data-timeline-id={sceneId}
+      data-duration={scene.duration}
       style={style}
       onClick={(e) => { e.stopPropagation(); selectScene(sceneId); }}
       onContextMenu={handleContextMenu}
@@ -123,24 +275,52 @@ function SortableSceneCard({
           onPreviewVideo(scene.videoUrl);
         }
       }}
-      className={`group relative flex w-48 shrink-0 cursor-pointer overflow-hidden rounded-xl border transition-colors ${
+      className={`group relative flex shrink-0 cursor-pointer overflow-hidden rounded-xl border transition-colors ${
+        viewMode === "canvas" ? "w-48" : ""
+      } ${
         isSelected
           ? "border-accent-gold/50 ring-1 ring-accent-gold/20"
           : "border-white/5 hover:border-white/10"
       }`}
     >
-      <div className="relative aspect-[16/10] w-full bg-white/5">
+      <div className={`relative w-full bg-white/5 ${viewMode === "timeline" ? "h-full" : "aspect-[16/10]"}`}>
         {scene.status === "ready" && scene.videoUrl ? (
-          <video
-            src={scene.videoUrl}
-            className="h-full w-full object-cover"
-            draggable={false}
-            muted
-            loop
-            playsInline
-            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
-            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
-          />
+          <>
+            <video
+              ref={videoRegister}
+              src={scene.videoUrl}
+              crossOrigin="anonymous"
+              className="h-full w-full object-cover"
+              draggable={false}
+              muted
+              loop
+              playsInline
+              preload="auto"
+              onMouseEnter={(e) => {
+                if (!canHoverPlay()) return;
+                (e.target as HTMLVideoElement).play();
+              }}
+              onMouseLeave={(e) => {
+                if (useTimelineStore.getState().isPlaying) return;
+                const v = e.target as HTMLVideoElement;
+                v.pause();
+                v.currentTime = 0;
+              }}
+            />
+            {/* Sprite overlay: shows instant thumbnail frame while scrubbing in
+                timeline mode. Hides automatically during playback or when
+                this card is not the active segment, revealing the real video. */}
+            {viewMode === "timeline" &&
+              isScrubbing &&
+              scene.sprite &&
+              activeSegmentId === sceneId && (
+                <SpriteFrame
+                  sprite={scene.sprite}
+                  progress={segmentLocalOffset / Math.max(0.001, scene.duration)}
+                  className="absolute inset-0 h-full w-full object-cover"
+                />
+              )}
+          </>
         ) : isProcessing ? (
           <div className="flex h-full w-full items-center justify-center bg-white/[0.03]" />
         ) : (
@@ -219,13 +399,30 @@ function SortableSceneCard({
                 </button>
               </div>
             )}
-            <span className="font-mono text-[10px] text-white/60">{scene.duration}s</span>
+            <span className="font-mono text-[10px] text-white/60">{Math.round(scene.duration * 10) / 10}s</span>
             <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
               <GripVertical size={10} className="text-white/40 hover:text-white/70" />
             </div>
           </div>
         </div>
       </div>
+
+      {viewMode === "timeline" && !isProcessing && !isGenerating && (
+        <>
+          {hasVideo && (
+            <TrimHandle
+              side="left"
+              hint={`Início: ${((scene.trimStart ?? 0)).toFixed(1)}s`}
+              onPointerDown={beginTrimDrag("left")}
+            />
+          )}
+          <TrimHandle
+            side="right"
+            hint={`Duração: ${(Math.round(scene.duration * 10) / 10).toFixed(1)}s`}
+            onPointerDown={beginTrimDrag("right")}
+          />
+        </>
+      )}
 
       {contextMenu && createPortal(
         <>
@@ -555,16 +752,42 @@ function TransitionNode({
   const transition = useProjectStore((s) => s.transitions.find((t) => t.id === transitionId));
   const fromScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === fromSceneId));
   const removeTransition = useProjectStore((s) => s.removeTransition);
+  const viewMode = useTimelineStore((s) => s.viewMode);
+  const pixelsPerSecond = useTimelineStore((s) => s.pixelsPerSecond);
+  const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
+
+  const videoRegister = useCallback(
+    (el: HTMLVideoElement | null) => {
+      videoRegistry.set(transitionId, el);
+    },
+    [transitionId],
+  );
 
   if (!transition || transition.status === "idle") return null;
 
   const isGenerating = transition.status === "generating";
   const isFailed = transition.status === "failed";
   const isReady = transition.status === "ready" && transition.videoUrl;
+  const transDuration = transition.costCredits || 5;
+
+  const transCardHeight = timelineRibbon ? TIMELINE_RIBBON_HEIGHT : TIMELINE_CARD_HEIGHT;
+  const transMinWidth = timelineRibbon ? MIN_RIBBON_CARD_WIDTH : MIN_TIMELINE_CARD_WIDTH;
+  const wrapperStyle: React.CSSProperties | undefined =
+    viewMode === "timeline"
+      ? {
+          width: `${Math.max(transMinWidth, transDuration * pixelsPerSecond)}px`,
+          height: transCardHeight,
+        }
+      : undefined;
 
   return (
     <div
-      className="group relative flex w-48 shrink-0 cursor-pointer overflow-hidden rounded-xl border border-accent-gold/20 self-start"
+      data-timeline-id={transitionId}
+      data-duration={transDuration}
+      style={wrapperStyle}
+      className={`group relative flex shrink-0 cursor-pointer overflow-hidden rounded-xl border border-accent-gold/20 self-start ${
+        viewMode === "canvas" ? "w-48" : ""
+      }`}
       onClick={(e) => e.stopPropagation()}
       onDoubleClick={() => {
         if (isReady && transition.videoUrl && onPreviewVideo) {
@@ -572,17 +795,28 @@ function TransitionNode({
         }
       }}
     >
-      <div className="relative aspect-[16/10] w-full bg-white/5">
+      <div className={`relative w-full bg-white/5 ${viewMode === "timeline" ? "h-full" : "aspect-[16/10]"}`}>
         {isReady && transition.videoUrl ? (
           <video
+            ref={videoRegister}
             src={transition.videoUrl}
+            crossOrigin="anonymous"
             className="h-full w-full object-cover"
             draggable={false}
             muted
             loop
             playsInline
-            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
-            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+            preload="auto"
+            onMouseEnter={(e) => {
+              if (!canHoverPlay()) return;
+              (e.target as HTMLVideoElement).play();
+            }}
+            onMouseLeave={(e) => {
+              if (useTimelineStore.getState().isPlaying) return;
+              const v = e.target as HTMLVideoElement;
+              v.pause();
+              v.currentTime = 0;
+            }}
           />
         ) : fromScene ? (
           <Image
@@ -634,6 +868,8 @@ function EditNode({ onExport }: { onExport: () => void }) {
   const selectEditNode = useProjectStore((s) => s.selectEditNode);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const musicUrl = useProjectStore((s) => s.musicUrl);
+  const viewMode = useTimelineStore((s) => s.viewMode);
+  const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
   const readyScenes = scenes.filter((s) => s.status === "ready" && s.videoUrl);
   const readyTransitions = transitions.filter((t) => t.status === "ready" && t.videoUrl);
   const readyCount = readyScenes.length + readyTransitions.length;
@@ -642,9 +878,15 @@ function EditNode({ onExport }: { onExport: () => void }) {
     + readyTransitions.reduce((sum, t) => sum + (t.costCredits ?? 5), 0);
   const previewScene = readyScenes[0];
 
+  const ribbonActive = viewMode === "timeline" && timelineRibbon;
+  const wrapperStyle: React.CSSProperties | undefined = ribbonActive
+    ? { height: TIMELINE_RIBBON_HEIGHT }
+    : undefined;
+
   return (
     <div
-      className={`group relative flex w-48 shrink-0 cursor-pointer overflow-hidden rounded-xl border transition-colors ${
+      style={wrapperStyle}
+      className={`group relative flex ${ribbonActive ? "w-36" : "w-48"} shrink-0 cursor-pointer overflow-hidden rounded-xl border transition-colors ${
         editNodeSelected
           ? "border-accent-gold/50 ring-1 ring-accent-gold/20"
           : "border-white/5 hover:border-white/10"
@@ -655,13 +897,22 @@ function EditNode({ onExport }: { onExport: () => void }) {
         {previewScene?.videoUrl ? (
           <video
             src={previewScene.videoUrl}
+            crossOrigin="anonymous"
             className="h-full w-full object-cover"
             draggable={false}
             muted
             loop
             playsInline
-            onMouseEnter={(e) => (e.target as HTMLVideoElement).play()}
-            onMouseLeave={(e) => { const v = e.target as HTMLVideoElement; v.pause(); v.currentTime = 0; }}
+            onMouseEnter={(e) => {
+              if (!canHoverPlay()) return;
+              (e.target as HTMLVideoElement).play();
+            }}
+            onMouseLeave={(e) => {
+              if (useTimelineStore.getState().isPlaying) return;
+              const v = e.target as HTMLVideoElement;
+              v.pause();
+              v.currentTime = 0;
+            }}
           />
         ) : previewScene ? (
           <Image
@@ -709,6 +960,14 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
   const transitions = useProjectStore((s) => s.transitions);
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
   const reorderScenes = useProjectStore((s) => s.reorderScenes);
+  const viewMode = useTimelineStore((s) => s.viewMode);
+  const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
+
+  useEffect(() => {
+    if (viewMode !== "timeline") return;
+    const urls = scenes.map((s) => s.sprite?.url).filter(Boolean) as string[];
+    spritePreloader.preloadMany(urls);
+  }, [viewMode, scenes]);
 
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 8 } }),
@@ -725,13 +984,19 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
   };
 
   const sceneIds = scenes.map((s) => s.id);
+  const isTimeline = viewMode === "timeline";
+  const isRibbon = isTimeline && timelineRibbon;
+  const outerGap = isTimeline ? "gap-0" : "gap-1.5";
+  const innerGap = isTimeline ? "gap-0" : "gap-1.5";
+  const edgeGap = isTimeline ? "ml-2" : "";
+  const verticalPadding = isRibbon ? "py-2" : "py-4";
 
   return (
     <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
       <SortableContext items={sceneIds} strategy={horizontalListSortingStrategy}>
-        <div className="flex items-start gap-1.5 py-4">
+        <div className={`flex items-start ${outerGap} ${verticalPadding}`}>
           {scenes.map((scene, i) => (
-            <div key={scene.id} className="flex items-start gap-1.5">
+            <div key={scene.id} className={`flex items-start ${innerGap}`}>
               <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} onEditImage={onEditImage} />
               {i < scenes.length - 1 && (() => {
                 const transId = `t-${scene.id}-${scenes[i + 1]!.id}`;
@@ -739,19 +1004,21 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
                 const transVisible = trans && trans.status !== "idle";
                 return (
                   <>
-                    <InsertMenu
-                      position="between"
-                      insertIndex={i + 1}
-                      hasScenesOnBothSides={true}
-                      fromSceneId={scene.id}
-                      toSceneId={scenes[i + 1]?.id}
-                    />
+                    {!isTimeline && (
+                      <InsertMenu
+                        position="between"
+                        insertIndex={i + 1}
+                        hasScenesOnBothSides={true}
+                        fromSceneId={scene.id}
+                        toSceneId={scenes[i + 1]?.id}
+                      />
+                    )}
                     <TransitionNode
                       fromSceneId={scene.id}
                       toSceneId={scenes[i + 1]!.id}
                       onPreviewVideo={onPreviewVideo}
                     />
-                    {transVisible && (
+                    {transVisible && !isTimeline && (
                       <InsertMenu
                         position="between"
                         insertIndex={i + 1}
@@ -766,21 +1033,27 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
             </div>
           ))}
           {!hasEditNode && (
-            <InsertMenu
-              position="end"
-              insertIndex={scenes.length}
-              hasScenesOnBothSides={false}
-            />
-          )}
-          {hasEditNode && onExport && (
-            <>
+            <div className={edgeGap}>
               <InsertMenu
                 position="end"
                 insertIndex={scenes.length}
                 hasScenesOnBothSides={false}
-                variant="equals"
               />
-              <EditNode onExport={onExport} />
+            </div>
+          )}
+          {hasEditNode && onExport && (
+            <>
+              <div className={edgeGap}>
+                <InsertMenu
+                  position="end"
+                  insertIndex={scenes.length}
+                  hasScenesOnBothSides={false}
+                  variant="equals"
+                />
+              </div>
+              <div className={isTimeline ? "ml-2" : ""}>
+                <EditNode onExport={onExport} />
+              </div>
             </>
           )}
         </div>

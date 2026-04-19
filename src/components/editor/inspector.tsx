@@ -23,6 +23,8 @@ import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
 import { listAdapters } from "@/lib/adapters";
 import { type AudioMixSettings } from "@/lib/composition/compose";
+import { InspectorPreviewVideo } from "@/components/editor/video-mirror";
+import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
@@ -111,6 +113,97 @@ function getModelShortName(displayName: string): string {
   if (displayName.includes("V3")) return "V3 Pro";
   if (displayName.includes("O1")) return "O1 Pro";
   return displayName.split(" ").slice(0, 2).join(" ");
+}
+
+/**
+ * Trim controls for video-backed scenes. Non-destructive: edits `trimStart`
+ * and `trimEnd` in seconds (0..nativeDuration) and lets the store derive the
+ * effective `duration`. Image-only scenes are handled by the `Duração` grid.
+ */
+function TrimControls({
+  scene,
+  onChange,
+}: {
+  scene: {
+    trimStart?: number;
+    trimEnd?: number;
+    duration: number;
+    activeVersion: number;
+    videoVersions?: { url: string; duration: number }[];
+  };
+  onChange: (trim: { trimStart?: number | null; trimEnd?: number | null }) => void;
+}) {
+  const activeVer = scene.videoVersions?.[scene.activeVersion];
+  const native =
+    activeVer?.duration && activeVer.duration > 0
+      ? activeVer.duration
+      : scene.duration;
+  const trimStart = scene.trimStart ?? 0;
+  const trimEnd = scene.trimEnd ?? native;
+  const hasTrim = scene.trimStart !== undefined || scene.trimEnd !== undefined;
+
+  return (
+    <div className="mt-3">
+      <div className="mb-1.5 flex items-center justify-between">
+        <label className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+          Trim
+        </label>
+        {hasTrim && (
+          <button
+            type="button"
+            onClick={() => onChange({ trimStart: null, trimEnd: null })}
+            className="font-mono text-[9px] uppercase tracking-wide text-text-secondary transition-colors hover:text-accent-gold"
+          >
+            Limpar
+          </button>
+        )}
+      </div>
+      <div className="space-y-1.5 font-mono text-[11px]">
+        <div className="flex items-center justify-between">
+          <span className="text-text-secondary">Início</span>
+          <DragValue
+            value={trimStart}
+            onChange={(v) =>
+              onChange({
+                trimStart: Math.max(0, Math.min(trimEnd - 0.5, v)),
+              })
+            }
+            min={0}
+            max={Math.max(0, native - 0.5)}
+            step={0.1}
+            sensitivity={0.05}
+            suffix="s"
+            displayMultiplier={1}
+            decimals={1}
+          />
+        </div>
+        <div className="flex items-center justify-between">
+          <span className="text-text-secondary">Fim</span>
+          <DragValue
+            value={trimEnd}
+            onChange={(v) =>
+              onChange({
+                trimEnd: Math.max(trimStart + 0.5, Math.min(native, v)),
+              })
+            }
+            min={0.5}
+            max={native}
+            step={0.1}
+            sensitivity={0.05}
+            suffix="s"
+            displayMultiplier={1}
+            decimals={1}
+          />
+        </div>
+        <div className="flex items-center justify-between text-text-secondary/70">
+          <span>Duração efetiva</span>
+          <span className="text-white/80">
+            {(Math.round((trimEnd - trimStart) * 10) / 10).toFixed(1)}s
+          </span>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function StatusDot({ status }: { status: "idle" | "generating" | "ready" | "failed" | "processing" }) {
@@ -445,6 +538,7 @@ function EditPreview({
         <video
           ref={videoRef}
           src={preview.videoUrl}
+          crossOrigin="anonymous"
           className="h-full w-full cursor-pointer object-cover"
           loop
           playsInline
@@ -681,6 +775,7 @@ export function Inspector({
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
   const setScenePreset = useProjectStore((s) => s.setScenePreset);
   const setSceneDuration = useProjectStore((s) => s.setSceneDuration);
+  const setSceneTrim = useProjectStore((s) => s.setSceneTrim);
   const generateScene = useProjectStore((s) => s.generateScene);
   const isGenerating = useProjectStore((s) => s.isGenerating);
   const selectScene = useProjectStore((s) => s.selectScene);
@@ -704,6 +799,8 @@ export function Inspector({
   const showScene = !!scene && !!selectedSceneId;
   const showEdit = editNodeSelected && !selectedSceneId;
   const isOpen = showScene || showEdit;
+  const previewPlacement = useEditorSettingsStore((s) => s.layout.previewPlacement);
+  const showInspectorPreview = previewPlacement === "inspector";
 
   return (
     <aside
@@ -713,50 +810,97 @@ export function Inspector({
     >
       {scene && selectedSceneId && showScene && (
         <div className="flex h-full min-h-0 w-64 flex-col">
-          <div className="relative aspect-video w-full shrink-0 bg-white/5">
-            {scene.status === "ready" && scene.videoUrl ? (
-              <video src={scene.videoUrl} className="h-full w-full object-cover" muted loop autoPlay playsInline />
-            ) : (
-              <Image
-                src={scene.photoDataUrl ?? scene.photoUrl}
-                alt="Pré-visualização da cena"
-                fill
-                className="object-cover"
-                unoptimized
-              />
-            )}
-            <div className="absolute right-2 top-2 flex items-center gap-1">
-              {scene.status === "ready" && scene.videoUrl && (
+          {showInspectorPreview ? (
+            <div className="relative aspect-video w-full shrink-0 bg-white/5">
+              {scene.status === "ready" && scene.videoUrl ? (
+                <InspectorPreviewVideo
+                  sceneId={scene.id}
+                  videoUrl={scene.videoUrl}
+                  poster={scene.photoDataUrl ?? scene.photoUrl}
+                  sprite={scene.sprite}
+                  duration={scene.duration}
+                />
+              ) : (
+                <Image
+                  src={scene.photoDataUrl ?? scene.photoUrl}
+                  alt="Pré-visualização da cena"
+                  fill
+                  className="object-cover"
+                  unoptimized
+                />
+              )}
+              <div className="absolute right-2 top-2 flex items-center gap-1">
+                {scene.status === "ready" && scene.videoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => downloadVideoBlob(scene.videoUrl!, "cena.mp4")}
+                    className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+                    title="Baixar cena"
+                    aria-label="Baixar cena"
+                  >
+                    <ArrowDownToLine size={12} />
+                  </button>
+                )}
                 <button
                   type="button"
-                  onClick={() => downloadVideoBlob(scene.videoUrl!, "cena.mp4")}
+                  onClick={() => selectScene(null)}
                   className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-                  title="Baixar cena"
-                  aria-label="Baixar cena"
+                  aria-label="Fechar painel"
                 >
-                  <ArrowDownToLine size={12} />
+                  <X size={12} />
+                </button>
+              </div>
+              {scene.status === "ready" && scene.videoUrl && onPreviewVideo && (
+                <button
+                  type="button"
+                  onClick={() => onPreviewVideo(scene.videoUrl!)}
+                  className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+                  aria-label="Tela cheia"
+                >
+                  <Maximize2 size={12} />
                 </button>
               )}
-              <button
-                type="button"
-                onClick={() => selectScene(null)}
-                className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-                aria-label="Fechar painel"
-              >
-                <X size={12} />
-              </button>
             </div>
-            {scene.status === "ready" && scene.videoUrl && onPreviewVideo && (
-              <button
-                type="button"
-                onClick={() => onPreviewVideo(scene.videoUrl!)}
-                className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-                aria-label="Tela cheia"
-              >
-                <Maximize2 size={12} />
-              </button>
-            )}
-          </div>
+          ) : (
+            // Preview lives elsewhere (headline/theater) — show only a compact
+            // chrome row so the close button + download stay reachable.
+            <div className="flex shrink-0 items-center justify-between gap-1 border-b border-white/5 px-3 py-2">
+              <span className="font-mono text-[10px] uppercase tracking-widest text-text-secondary">
+                Cena
+              </span>
+              <div className="flex items-center gap-1">
+                {scene.status === "ready" && scene.videoUrl && (
+                  <button
+                    type="button"
+                    onClick={() => downloadVideoBlob(scene.videoUrl!, "cena.mp4")}
+                    className="flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                    title="Baixar cena"
+                    aria-label="Baixar cena"
+                  >
+                    <ArrowDownToLine size={12} />
+                  </button>
+                )}
+                {scene.status === "ready" && scene.videoUrl && onPreviewVideo && (
+                  <button
+                    type="button"
+                    onClick={() => onPreviewVideo(scene.videoUrl!)}
+                    className="flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                    aria-label="Tela cheia"
+                  >
+                    <Maximize2 size={12} />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={() => selectScene(null)}
+                  className="flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
+                  aria-label="Fechar painel"
+                >
+                  <X size={12} />
+                </button>
+              </div>
+            </div>
+          )}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
             {scene.sourceType === "video-upload" ? (
@@ -784,6 +928,12 @@ export function Inspector({
                     </div>
                   )}
                 </div>
+                {scene.status === "ready" && scene.videoUrl && (
+                  <TrimControls
+                    scene={scene}
+                    onChange={(trim) => setSceneTrim(selectedSceneId, trim)}
+                  />
+                )}
                 <div className="min-h-4 flex-1" aria-hidden />
                 <div className="mt-auto shrink-0 pt-2">
                   <div className="flex items-center justify-between font-mono text-[10px] text-text-secondary">
@@ -833,6 +983,13 @@ export function Inspector({
                     ))}
                   </div>
                 </div>
+
+                {scene.status === "ready" && scene.videoUrl && (
+                  <TrimControls
+                    scene={scene}
+                    onChange={(trim) => setSceneTrim(selectedSceneId, trim)}
+                  />
+                )}
 
                 <div className="min-h-4 flex-1" aria-hidden />
 

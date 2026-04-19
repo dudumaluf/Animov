@@ -1,7 +1,7 @@
 # Animov.ai — Roadmap
 
 > Checklist ticavel. Marcar `[x]` conforme itens sao concluidos.
-> Atualizado: 11 abril 2026.
+> Atualizado: 13 abril 2026.
 
 ---
 
@@ -9,7 +9,7 @@
 
 - [x] 1.1 Repo + Next.js 14 + Tailwind + shadcn/ui + TS strict
 - [x] 1.2 Supabase schema (11 tabelas) + RLS + seed admin + seed models/presets
-- [x] 1.3 Auth email/password + layout protegido + admin auto (ddmaluf@gmail.com)
+- [x] 1.3 Auth email/password + layout protegido + admin auto ([ddmaluf@gmail.com](mailto:ddmaluf@gmail.com))
 - [x] 1.4 PROGRESS.md inicializado
 
 ---
@@ -29,23 +29,24 @@
 - [x] 2.11 Alinhamento/tamanho customizavel pra headlines
 - [x] 2.12 Scroll suave entre secoes
 - [x] 2.13 How-it-works scroll-driven step highlight
-- [x] 2.14 Gradient fade hero → how-it-works
+- [x] 2.14 Gradient fade hero -> how-it-works
 - [x] 2.15 Navegacao reorganizada (Inicio, Presets, Como funciona, Planos)
 - [x] 2.16 Leva escondido por default + Shift+M
 - [x] 2.17 Botoes pricing alinhados
 
 ### Pendencias (nao bloqueiam):
+
 - [ ] 2.P1 Responsivo + fallback mobile sem R3F
 - [ ] 2.P2 prefers-reduced-motion
 - [ ] 2.P3 Tree-shake Leva do build de producao
 
 ---
 
-## Fase 3 — Editor Shell [EM ANDAMENTO]
+## Fase 3 — Editor Shell [COMPLETA]
 
 - [x] 3.1 Rota `/editor/[projectId]` + layout full-screen (sem sidebar)
 - [x] 3.2 Upload de fotos com drag-drop + Supabase Storage
-- [ ] 3.3 Drag-drop reorder de cenas (dnd-kit) — store pronto, UX nao
+- [x] 3.3 Drag-drop reorder de cenas (dnd-kit)
 - [x] 3.4 Cards de transicao automaticos (toggle on/off)
 - [x] 3.5 Inspector colapsavel (preset, duracao, custo, status)
 - [x] 3.6 Toolbar (nome editavel, contador, custo, botao Gerar, status save)
@@ -55,8 +56,6 @@
 - [x] 3.10 Persistencia Supabase (auto-save 3s, load on mount)
 - [x] 3.11 Persistencia localStorage (cache, sobrevive refresh)
 - [x] 3.12 `/editor/new` cria projeto no Supabase e redireciona
-
-### Faltando na Fase 3:
 - [x] 3.13 Drag-drop reorder visual com dnd-kit
 - [x] 3.14 Regenerar cena individual (botao no inspector)
 - [x] 3.15 Deletar projeto (dashboard)
@@ -67,7 +66,7 @@
 
 ---
 
-## Fase 4 — Pipeline de Geracao [EM ANDAMENTO]
+## Fase 4 — Pipeline de Geracao [COMPLETA]
 
 - [x] 4.1 API route `/api/generate-scene`
 - [x] 4.1b Auth check no generate-scene
@@ -75,62 +74,130 @@
 - [x] 4.2 Vision LLM via fal.ai OpenRouter (fast/smart tiers)
 - [x] 4.3 VideoModelAdapter interface + registry
 - [x] 4.4 Adapter Kling O1 Pro (first-last frame)
+- [x] 4.4b Adapter Kling V3 (3-15s range)
 - [ ] 4.5 Adapter Seedance 2.0 (gate: ler doc fal.ai)
 - [ ] 4.6 Adapter Wan (gate: ler doc fal.ai)
 - [ ] 4.7 Adapter LTX Video (gate: ler doc fal.ai)
 - [ ] 4.8 Adapter Kling 2.6 Pro (gate: ler doc fal.ai)
 - [x] 4.9 Catalogo de 7 presets single-image com vision schemas + prompt templates
-- [x] 4.10 Prompt builder 3 camadas (Vision → JSON → Template)
-- [ ] 4.11 4 presets dual-image (transicoes) — schemas + templates
-- [ ] 4.12 Geracao de transicoes com start/end frame
+- [x] 4.10 Prompt builder 3 camadas (Vision -> JSON -> Template)
+- [x] 4.11 4 presets dual-image (transicoes) — schemas + templates
+- [x] 4.12 Geracao de transicoes com start/end frame
 - [x] 4.13 Composicao client-side (Mediabunny — WebCodecs + H.264 MP4)
 - [x] 4.14 Fallback composicao (MediaRecorder)
-- [ ] 4.15 Upload render final → Supabase Storage + tabela `final_renders`
-- [ ] 4.16 Gravar `generation_logs` em cada geracao (debug)
+- [x] 4.15 Upload render final -> Supabase Storage + tabela `final_renders`
+- [x] 4.16 Gravar `generation_logs` em cada geracao (debug)
 - [ ] 4.17 Google OAuth (alem de email/password)
 
 ---
 
-## Fase 4b — Editor Avancado [PLANEJADO]
+## Fase 4b — Editor Avancado [QUASE COMPLETA]
 
 ### Onda 1 — Core do Edit
+
 - [x] 4b.1 Context menu "+" inteligente (opcoes por posicao)
 - [x] 4b.2 Preset UX — dropdown com simbolos de direcao
 - [x] 4b.3 Edit node (composicao visual no film strip)
 - [x] 4b.4 Cards full-bleed (info so no hover, video play no hover)
 - [x] 4b.5 Download individual por cena
 - [x] 4b.6 Click canvas fecha inspector
-- [ ] 4b.7 Crossfade client-side entre cenas (sem custo AI)
-- [ ] 4b.8 Transicao AI — last frame + first frame → video intermediario
+- [ ] 4b.7 Crossfade client-side entre cenas (sem custo AI) — context menu tem placeholder, falta implementacao
+- [x] 4b.8 Transicao AI — last frame + first frame -> video intermediario
 - [x] 4b.9 Musica: adapter Minimax Music 2.6 + API route + Edit node inspector
 
 ### Onda 2 — Nodes e Versoes
+
 - [ ] 4b.10 Node de texto/titulo (overlay no video final)
 - [ ] 4b.11 Node de imagem/logo (PNG transparente, overlay)
-- [ ] 4b.12 Multi-version por cena (gerar com presets diferentes, escolher qual usar "1/3")
-- [ ] 4b.13 Connector inteligente entre ultimo video e edit node (hover → "+" com opcoes)
-- [ ] 4b.14 Musica mixada no export final (audio sobre video no Mediabunny)
+- [x] 4b.12 Multi-version por cena (gerar com presets diferentes, escolher qual usar "1/3")
+- [x] 4b.13 Connector inteligente entre ultimo video e edit node (hover -> "+" com opcoes)
+- [x] 4b.14 Musica mixada no export final (audio sobre video no Mediabunny)
 
 ### Onda 3 — Audio Avancado
-- [ ] 4b.15 Upload de MP3 custom (alem de gerar AI)
+
+- [x] 4b.15 Upload de MP3 custom (alem de gerar AI)
 - [ ] 4b.16 Corte no beat da musica (sync cortes de cena com beats)
-- [ ] 4b.17 Volume control / fade in/out na trilha
+- [x] 4b.17 Volume control / fade in/out na trilha + ducking automatico
 
 ### Onda 4 — Admin & Debug
-- [ ] 4b.18 Preset Recipe Manager (admin: criar/editar/ver system prompts, vision schemas)
-- [ ] 4b.19 Debug view no inspector (vision data, prompt gerado, custo por cena)
-- [ ] 4b.20 Prompt influenciado por input do usuario (modelo, preset, opcoes afetam estrategia)
+
+- [x] 4b.18 Preset Recipe Manager (admin: criar/editar/ver system prompts, vision schemas)
+- [ ] 4b.19 Debug view no inspector (vision data, prompt gerado, custo por cena) — admin tem generations com debug, falta integrar no inspector
+- [ ] 4b.20 Prompt influenciado por input do usuario (modelo, preset, opcoes afetam estrategia) — parcial via recipes system
 
 ---
 
-## Fase 5 — Admin [NAO INICIADA]
+## Fase 4c — Timeline + Trim + Asset Editing [COMPLETA]
 
-- [ ] 5.1 Rota `/admin` com guard (ja existe placeholder)
-- [ ] 5.2 CRUD de usuarios + promover/despromover admin
-- [ ] 5.3 Creditos manuais (conceder/remover com motivo)
-- [ ] 5.4 Visualizacao de geracoes + projetos + debug mode (vision JSON, prompts, custos)
+### Timeline Dual-Mode
+
+- [x] 4c.1 `viewMode: "canvas" | "timeline"` com troca seamless (cards crescem mantendo rounded corners)
+- [x] 4c.2 Playhead + scrub + play/pause + auto-follow opcional
+- [x] 4c.3 Sprite frames para scrubbing instantaneo (`SpriteFrame`)
+- [x] 4c.4 `VideoMirror` copia frames ativos para canvas (elimina flash de preto)
+- [x] 4c.5 Pre-montagem do proximo segmento (transicao seamless)
+- [x] 4c.6 Preview modular (`TheaterView` + `HeadlinePreview`)
+- [x] 4c.7 Playback de imagem em timeline (cena image-only renderiza no preview)
+- [x] 4c.8 Scroll = zoom no canvas; scroll = scrub no timeline
+- [x] 4c.9 Notificacao de progresso de staging sprites
+
+### Trim Nao-Destrutivo
+
+- [x] 4c.10 Migration `00008_scene_trim.sql` (`trim_start` / `trim_end`)
+- [x] 4c.11 `Scene.trimStart` / `Scene.trimEnd` + acao `setSceneTrim` no store
+- [x] 4c.12 Edge handles no `film-strip` (ew-resize, visiveis em modo timeline)
+- [x] 4c.13 `TrimControls` no inspector (campos numericos + botao limpar)
+- [x] 4c.14 `buildSegments` + `use-timeline-engine` respeitam trim (seek, scrub, drift, premount)
+- [x] 4c.15 Export `composeWithMediabunny` respeita `sourceStart`/`sourceEnd` em video + PCM audio
+- [x] 4c.16 Fix: `loadFromSupabase` preserva duracao efetiva apos reload
+
+### Asset Editing
+
+- [x] 4c.17 `AssetEditModal` + `AssetContextMenu` (double-click / right-click)
+- [x] 4c.18 Quick actions ("remove background", "white background") + edicoes custom
+- [x] 4c.19 A/B `CompareSlider` compartilhado (fix de clipPath)
+- [x] 4c.20 Drag-to-place de referencias (Vision LLM composer)
+
+### Recipes System
+
+- [x] 4c.21 Migration `00007_recipes.sql` (`recipe_categories` + `recipes` + RLS + seed)
+- [x] 4c.22 Admin CRUD em `/admin/recipes` (slugify, duplicate, edit, delete, categorias)
+- [x] 4c.23 `RecipesDrawer` deslizante + drag -> prompt
+- [x] 4c.24 `RecipeChip` compacto (pilula color-coded)
+- [x] 4c.25 API `/api/edit-image/compose-from-recipe` (vision_system_prompt + prompt_template)
+
+### Video Upload + Export
+
+- [x] 4c.26 Video upload nodes (`sourceType: "video-upload"`)
+- [x] 4c.27 Probe automatico de duracao + thumbnail
+- [x] 4c.28 Audio do video importado respeitado no export
+- [x] 4c.29 Export 9:16 (alem de 16:9)
+- [x] 4c.30 Project portable (JSON import/export)
+
+---
+
+## Fase 4d — Pending Polish [PLANEJADO]
+
+- [ ] 4d.1 **Separar clip duration vs generation target** (hover do card = clip; grid 5/10s = target exclusivo do inspector)
+- [ ] 4d.2 Crossfade client-side entre cenas (herdado de 4b.7)
+- [ ] 4d.3 Node de texto/titulo overlay (herdado de 4b.10)
+- [ ] 4d.4 Node de imagem/logo overlay (herdado de 4b.11)
+- [ ] 4d.5 Beat sync na musica (herdado de 4b.16)
+- [ ] 4d.6 Admin: troca de FAL_KEY write-only (herdado de 5.5)
+- [ ] 4d.7 Debug view completo no inspector (vision data + prompt + custo) — completar 4b.19/4b.20
+- [ ] 4d.8 Adapters adicionais (Seedance, Wan, LTX, Kling 2.6 Pro) — 4.5-4.8
+- [ ] 4d.9 Google OAuth — 4.17
+
+---
+
+## Fase 5 — Admin [QUASE COMPLETA]
+
+- [x] 5.1 Rota `/admin` com guard
+- [x] 5.2 CRUD de usuarios + promover/despromover admin
+- [x] 5.3 Creditos manuais (conceder/remover com motivo)
+- [x] 5.4 Visualizacao de geracoes + projetos + debug mode (vision JSON, prompts, custos)
 - [ ] 5.5 Troca de FAL_KEY (write-only, nunca exibe)
-- [ ] 5.6 Metricas basicas (uso diario, custo total, top users)
+- [x] 5.6 Metricas basicas (uso diario, custo total, top users)
 
 ---
 
@@ -139,18 +206,18 @@
 - [ ] 6.1 Compartilhamento publico `/v/[slug]`
 - [ ] 6.2 Historico de projetos no dashboard (thumbnails, busca, filtros)
 - [ ] 6.3 Galeria de videos gerados (independente de projeto)
-- [ ] 6.4 Regeneracao de cena individual
+- [x] 6.4 Regeneracao de cena individual
 - [ ] 6.5 Empty states, loading states, error states em todas as telas
 - [ ] 6.6 QA completo (cross-browser, edge cases)
 - [ ] 6.7 SEO/OG tags na landing e paginas publicas
 
-**→ Launch V1**
+**-> Launch V1**
 
 ---
 
 ## Fase 7 — Pagamento (V2) [FUTURO]
 
-- [ ] 7.1 Webhook Pagar.me/Stripe/Asaas → credita automaticamente
+- [ ] 7.1 Webhook Pagar.me/Stripe/Asaas -> credita automaticamente
 - [ ] 7.2 Planos recorrentes (Free, Starter, Pro)
 - [ ] 7.3 Checkout avulso (top-up de creditos)
 - [ ] 7.4 Pagina `/conta` com historico de pagamentos

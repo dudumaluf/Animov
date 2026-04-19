@@ -21,23 +21,34 @@ type VisionOutput = {
 
 export async function callVision({
   imageUrl,
+  imageUrls,
   systemPrompt,
+  userPrompt,
   tier = "fast",
+  maxTokens = 500,
 }: {
-  imageUrl: string;
+  imageUrl?: string;
+  imageUrls?: string[];
   systemPrompt: string;
+  userPrompt?: string;
   tier?: "fast" | "smart";
+  maxTokens?: number;
 }): Promise<{ data: Record<string, unknown>; rawOutput: string; cost: number }> {
   const model = TIER_MODELS[tier] ?? TIER_MODELS.fast!;
 
+  const urls = imageUrls ?? (imageUrl ? [imageUrl] : []);
+  if (urls.length === 0) {
+    throw new Error("callVision: imageUrl or imageUrls is required");
+  }
+
   const result = await fal.subscribe(MODEL_ID, {
     input: {
-      image_urls: [imageUrl],
-      prompt: "Respond ONLY in valid JSON matching the schema described in your instructions. No markdown, no explanation, just the JSON object.",
+      image_urls: urls,
+      prompt: userPrompt ?? "Respond ONLY in valid JSON matching the schema described in your instructions. No markdown, no explanation, just the JSON object.",
       system_prompt: systemPrompt,
       model,
       temperature: 0.2,
-      max_tokens: 500,
+      max_tokens: maxTokens,
     },
     logs: true,
   }) as unknown as { data: VisionOutput };

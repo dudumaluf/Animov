@@ -49,6 +49,8 @@ export function sceneToPortable(s: Scene): PortableScene | null {
     activeVersion: s.activeVersion ?? 0,
     costCredits: s.costCredits,
     sourceType: s.sourceType,
+    trimStart: s.trimStart,
+    trimEnd: s.trimEnd,
   };
 }
 
@@ -72,6 +74,8 @@ export function portableToScene(p: PortableScene): Scene {
     activeVersion: active,
     costCredits: p.costCredits,
     sourceType: p.sourceType,
+    trimStart: p.trimStart,
+    trimEnd: p.trimEnd,
   };
 }
 

@@ -1,14 +1,28 @@
 "use client";
 
-import { useEffect, useRef, useState, useCallback } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
 import { useProjectStore } from "@/stores/project-store";
+import { useTimelineStore } from "@/stores/timeline-store";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { FilmStrip } from "@/components/editor/film-strip";
 import { Inspector } from "@/components/editor/inspector";
+import { InspectorRail } from "@/components/editor/inspector-rail";
 import { DropZone } from "@/components/editor/drop-zone";
 import { VideoPreviewModal } from "@/components/editor/video-preview-modal";
 import { ImageEditModal } from "@/components/editor/image-edit-modal";
+import { Playhead } from "@/components/editor/playhead";
+import { TransportBar } from "@/components/editor/transport-bar";
+import { TimelineRuler } from "@/components/editor/timeline-ruler";
+import { ViewModeToggle } from "@/components/editor/view-mode-toggle";
+import { BackgroundTasksIndicator } from "@/components/editor/background-tasks-indicator";
+import { LayoutBar } from "@/components/editor/layout-bar";
+import { TheaterView } from "@/components/editor/theater-view";
+import { HeadlinePreview } from "@/components/editor/headline-preview";
+import { SettingsModal } from "@/components/editor/settings-modal";
+import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { composeVideos, downloadBlob, type ComposeProgress } from "@/lib/composition/compose";
+import { buildSegments, findNextSceneTime, findPreviousSceneTime, timeToSegment, totalDuration } from "@/lib/timeline/segments";
+import { useTimelineEngine } from "@/hooks/use-timeline-engine";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 
 const ZOOM_MIN = 0.3;
@@ -23,13 +37,21 @@ export default function EditorPage({
   params: { projectId: string };
 }) {
   const scenes = useProjectStore((s) => s.scenes);
+  const transitions = useProjectStore((s) => s.transitions);
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const isDirty = useProjectStore((s) => s.isDirty);
   const isLoading = useProjectStore((s) => s.isLoading);
   const initProject = useProjectStore((s) => s.initProject);
   const saveToSupabase = useProjectStore((s) => s.saveToSupabase);
-
+  const musicUrl = useProjectStore((s) => s.musicUrl);
+  const audioMix = useProjectStore((s) => s.audioMix);
+  const viewMode = useTimelineStore((s) => s.viewMode);
+  const timelineSeek = useTimelineStore((s) => s.seek);
+  const timelineTogglePlay = useTimelineStore((s) => s.togglePlay);
+  const previewPlacement = useEditorSettingsStore((s) => s.layout.previewPlacement);
+  const inspectorDensity = useEditorSettingsStore((s) => s.layout.inspectorDensity);
+  const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
   const [mounted, setMounted] = useState(false);
@@ -42,15 +64,71 @@ export default function EditorPage({
   const [panX, setPanX] = useState(0);
   const [panY, setPanY] = useState(0);
   const [isPanning, setIsPanning] = useState(false);
-  const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0 });
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0, startTime: 0 });
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const mainFlexRef = useRef<HTMLDivElement>(null);
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const inspectorOpen = !!(selectedSceneId || editNodeSelected);
 
-  useEffect(() => { setMounted(true); }, []);
+  const segments = useMemo(
+    () => buildSegments(scenes, transitions),
+    [scenes, transitions],
+  );
+
+  const segmentsRef = useRef(segments);
+  useEffect(() => { segmentsRef.current = segments; }, [segments]);
+  const zoomRef = useRef(zoom);
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+
+  useTimelineEngine({
+    segments,
+    viewportRef,
+    contentRef,
+    mainFlexRef,
+    musicUrl: musicUrl ?? null,
+    musicVolume: audioMix.musicVolume,
+    panX,
+    setPanX,
+    zoom,
+  });
+
+  useEffect(() => {
+    if (viewMode !== "timeline") return;
+
+    // On timeline mode enter, ensure the inspector is showing the scene at
+    // the current playhead. This keeps the preview panel useful by default.
+    const initialState = useTimelineStore.getState();
+    const initial = timeToSegment(segments, initialState.currentTime).segment;
+    let lastSceneId: string | null = null;
+    if (initial && initial.kind === "scene") {
+      lastSceneId = initial.sceneId;
+      useProjectStore.getState().selectScene(initial.sceneId);
+    }
+
+    // Keep the preview in sync as the playhead crosses segment boundaries
+    // during both playback and scrubbing (only the transition when the
+    // scene actually changes — not every frame).
+    const unsub = useTimelineStore.subscribe((state) => {
+      if (!state.isPlaying && !state.isScrubbing) return;
+      const { segment } = timeToSegment(segments, state.currentTime);
+      if (!segment || segment.kind !== "scene") return;
+      if (segment.sceneId !== lastSceneId) {
+        lastSceneId = segment.sceneId;
+        useProjectStore.getState().selectScene(segment.sceneId);
+      }
+    });
+    return () => unsub();
+  }, [viewMode, segments]);
+
+  useEffect(() => {
+    setMounted(true);
+    const autoFollowDefault = useEditorSettingsStore.getState().behavior.autoFollowDefault;
+    useTimelineStore.getState().setAutoFollow(autoFollowDefault);
+  }, []);
 
   useEffect(() => {
     if (mounted) initProject(params.projectId);
@@ -96,19 +174,98 @@ export default function EditorPage({
     setCanvasMode("fit");
   }, []);
 
-  // Refit when inspector toggles, scenes change, or window resizes
+  // Refit when inspector toggles, scenes change, or window resizes (canvas mode only)
   useEffect(() => {
+    if (viewMode !== "canvas") return;
     if (canvasMode === "fit") {
       const timer = setTimeout(fitToView, 50);
       return () => clearTimeout(timer);
     }
-  }, [inspectorOpen, scenes.length, canvasMode, fitToView]);
+  }, [inspectorOpen, scenes.length, canvasMode, fitToView, viewMode]);
 
   useEffect(() => {
-    const onResize = () => { if (canvasMode === "fit") fitToView(); };
+    const onResize = () => {
+      if (viewMode === "canvas" && canvasMode === "fit") fitToView();
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [canvasMode, fitToView]);
+  }, [canvasMode, fitToView, viewMode]);
+
+  // When switching to timeline mode: reset zoom/pan so strip is at native scale
+  useLayoutEffect(() => {
+    if (viewMode === "timeline") {
+      setZoom(1);
+      setPanX(0);
+      setPanY(0);
+      setCanvasMode("free");
+    }
+  }, [viewMode]);
+
+  // When ribbon mode activates, auto-fit horizontal zoom so the whole track
+  // fits in the compressed viewport. Recomputes when the window resizes or
+  // the segment list changes. Leaving ribbon resets zoom to 1.
+  useLayoutEffect(() => {
+    if (!timelineRibbon || viewMode !== "timeline") return;
+    const compute = () => {
+      const vp = viewportRef.current;
+      if (!vp) return;
+      const pps = useTimelineStore.getState().pixelsPerSecond;
+      const total = totalDuration(segments);
+      if (total <= 0 || pps <= 0) return;
+      const vw = vp.clientWidth;
+      const contentW = total * pps;
+      if (contentW <= 0) return;
+      const fit = Math.min(1, vw / contentW);
+      setZoom(Math.max(0.1, fit));
+      setPanX(0);
+    };
+    compute();
+    const ro = new ResizeObserver(compute);
+    if (viewportRef.current) ro.observe(viewportRef.current);
+    window.addEventListener("resize", compute);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", compute);
+    };
+  }, [timelineRibbon, viewMode, segments]);
+
+  useLayoutEffect(() => {
+    if (!timelineRibbon && viewMode === "timeline") {
+      // Leaving ribbon — restore neutral zoom/pan so the normal timeline looks
+      // like it always did before Foco was entered.
+      setZoom(1);
+      setPanX(0);
+    }
+  }, [timelineRibbon, viewMode]);
+
+  // Theater is intrinsically a playback experience — if the user ships from
+  // canvas to Foco we flip into timeline so the ribbon shows the right cards
+  // and the engine can actually play. We remember the previous view mode so
+  // exiting Foco restores it.
+  const prevViewModeRef = useRef<typeof viewMode | null>(null);
+  useLayoutEffect(() => {
+    if (previewPlacement !== "theater") return;
+    const tl = useTimelineStore.getState();
+    if (tl.viewMode !== "timeline") {
+      prevViewModeRef.current = tl.viewMode;
+      tl.setViewMode("timeline");
+    }
+  }, [previewPlacement]);
+  useLayoutEffect(() => {
+    if (previewPlacement === "theater") return;
+    const saved = prevViewModeRef.current;
+    if (saved && useTimelineStore.getState().viewMode === "timeline") {
+      useTimelineStore.getState().setViewMode(saved);
+    }
+    prevViewModeRef.current = null;
+  }, [previewPlacement]);
+
+  useEffect(() => {
+    if (viewMode === "canvas") {
+      const t = setTimeout(fitToView, 50);
+      return () => clearTimeout(t);
+    }
+  }, [viewMode, fitToView]);
 
   // Prevent browser-level pinch zoom when over the editor
   useEffect(() => {
@@ -123,11 +280,11 @@ export default function EditorPage({
 
   // Initial fit
   useEffect(() => {
-    if (mounted && scenes.length > 0) {
+    if (mounted && scenes.length > 0 && viewMode === "canvas") {
       const timer = setTimeout(fitToView, 200);
       return () => clearTimeout(timer);
     }
-  }, [mounted, fitToView, scenes.length]);
+  }, [mounted, fitToView, scenes.length, viewMode]);
 
   // Pan handlers
   const handleMouseDown = useCallback((e: React.MouseEvent) => {
@@ -135,21 +292,52 @@ export default function EditorPage({
     if (target !== viewportRef.current && !target.hasAttribute("data-canvas-bg")) return;
     e.preventDefault();
     setIsPanning(true);
-    panStart.current = { x: e.clientX, y: e.clientY, panX, panY };
-  }, [panX, panY]);
+    panStart.current = {
+      x: e.clientX,
+      y: e.clientY,
+      panX,
+      panY,
+      startTime: useTimelineStore.getState().currentTime,
+    };
+    // In timeline mode, treat canvas drag as scrub — so mark scrubbing active
+    if (viewMode === "timeline" && useTimelineStore.getState().autoFollow) {
+      useTimelineStore.getState().setScrubbing(true);
+    }
+  }, [panX, panY, viewMode]);
 
   const handleMouseMove = useCallback((e: React.MouseEvent) => {
     if (!isPanning) return;
     const dx = e.clientX - panStart.current.x;
     const dy = e.clientY - panStart.current.y;
-    setPanX(panStart.current.panX + dx);
-    setPanY(panStart.current.panY + dy);
-    setCanvasMode("free");
-  }, [isPanning]);
+
+    if (viewMode === "timeline") {
+      const state = useTimelineStore.getState();
+      if (state.autoFollow) {
+        // Pan-as-scrub: dragging the canvas is equivalent to scrubbing.
+        // Dragging right (dx>0) should reveal earlier content under the stationary
+        // playhead, which means currentTime decreases.
+        const pps = state.pixelsPerSecond;
+        const total = totalDuration(segments);
+        const deltaT = -dx / Math.max(1, pps * Math.max(0.001, zoom));
+        const newTime = Math.max(0, Math.min(total, panStart.current.startTime + deltaT));
+        timelineSeek(newTime);
+      } else {
+        // autoFollow off: free-pan horizontally (locked vertically)
+        setPanX(panStart.current.panX + dx);
+      }
+    } else {
+      setPanX(panStart.current.panX + dx);
+      setPanY(panStart.current.panY + dy);
+      setCanvasMode("free");
+    }
+  }, [isPanning, viewMode, segments, zoom, timelineSeek]);
 
   const handleMouseUp = useCallback(() => {
+    if (isPanning && viewMode === "timeline" && useTimelineStore.getState().isScrubbing) {
+      useTimelineStore.getState().setScrubbing(false);
+    }
     setIsPanning(false);
-  }, []);
+  }, [isPanning, viewMode]);
 
   // Wheel / trackpad zoom toward cursor
   // Must use native listener to be able to preventDefault on non-passive wheel
@@ -162,20 +350,52 @@ export default function EditorPage({
     const onWheel = (e: WheelEvent) => {
       e.preventDefault();
 
+      const tlState = useTimelineStore.getState();
+
+      // Timeline mode: wheel/trackpad scroll = scrub. Pinch is also treated as
+      // scrub for now (canvas-zoom doesn't apply to timeline). Use whichever
+      // axis has the bigger delta to support both vertical wheels and
+      // horizontal trackpad scrolls.
+      if (tlState.viewMode === "timeline") {
+        const pps = tlState.pixelsPerSecond;
+        const z = zoomRef.current || 1;
+        const total = totalDuration(segmentsRef.current);
+        const delta = Math.abs(e.deltaX) > Math.abs(e.deltaY) ? e.deltaX : e.deltaY;
+        if (delta === 0) return;
+        const deltaT = delta / Math.max(1, pps * z);
+        const newTime = Math.max(0, Math.min(total, tlState.currentTime + deltaT));
+        tlState.seek(newTime);
+        return;
+      }
+
+      // Pinch gesture (Mac trackpad) arrives as wheel + ctrlKey/metaKey with
+      // small deltas. Two-finger scroll is a plain wheel with larger deltas.
       const isPinch = e.ctrlKey || e.metaKey;
-      // Trackpad two-finger scroll sends larger deltaY (20-100px) vs pinch (~0.5-5)
-      const sensitivity = isPinch ? 0.008 : 0.004;
-      const rawDelta = -e.deltaY * sensitivity;
+      const sensitivity = isPinch ? 0.012 : 0.002;
+      // Clamp raw delta per event so a single aggressive trackpad swipe can't
+      // swing zoom by >20% — keeps the anchor feeling stable under the cursor.
+      const clamped = Math.max(-80, Math.min(80, e.deltaY));
+      // Exponential so each tick multiplies zoom instead of adding a flat
+      // amount — feels proportional across the entire zoom range.
+      const factor = Math.exp(-clamped * sensitivity);
 
       setZoom((prevZoom) => {
-        const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, prevZoom + rawDelta));
+        const newZoom = Math.max(ZOOM_MIN, Math.min(ZOOM_MAX, prevZoom * factor));
         if (newZoom === prevZoom) return prevZoom;
 
+        // Measure AFTER we know we're zooming — rect is stable within the frame.
         const rect = vp.getBoundingClientRect();
+        // transform-origin for contentRef is "center center" and the flex
+        // layout centers it inside vp, so contentCenter == vpCenter in screen
+        // coords. cx/cy are the cursor's offset from that shared center.
         const cx = e.clientX - rect.left - rect.width / 2;
         const cy = e.clientY - rect.top - rect.height / 2;
 
         const scale = newZoom / prevZoom;
+        // Keep the content point under the cursor in place:
+        //   screen = vpCenter + pan + local*zoom
+        //   solving for newPan given same local after zoom →
+        //   newPan = cursor - scale*(cursor - pan)
         setPanX((px) => cx - scale * (cx - px));
         setPanY((py) => cy - scale * (cy - py));
 
@@ -188,13 +408,35 @@ export default function EditorPage({
     return () => vp.removeEventListener("wheel", onWheel);
   }, [viewportReady]);
 
+  // Remember the last non-foco preset so `Esc` or `F` from foco reverts cleanly.
+  const lastNonFocoPreset = useRef<"edicao" | "revisao" | "livre">("edicao");
+  useEffect(() => {
+    const unsub = useEditorSettingsStore.subscribe((state) => {
+      const p = state.layout.preset;
+      if (p === "edicao" || p === "revisao" || p === "livre") {
+        lastNonFocoPreset.current = p;
+      }
+    });
+    return () => unsub();
+  }, []);
+
   // Keyboard shortcuts
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
+      const target = e.target as HTMLElement | null;
+      const isTyping =
+        target?.tagName === "INPUT" ||
+        target?.tagName === "TEXTAREA" ||
+        target?.isContentEditable;
+
       if ((e.ctrlKey || e.metaKey) && e.key === "s") {
         e.preventDefault();
         saveToSupabase();
-      } else if (e.key === "=" || e.key === "+") {
+        return;
+      }
+      if (isTyping) return;
+
+      if (e.key === "=" || e.key === "+") {
         e.preventDefault();
         setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP));
         setCanvasMode("free");
@@ -204,11 +446,47 @@ export default function EditorPage({
         setCanvasMode("free");
       } else if (e.key === "0") {
         fitToView();
+      } else if (e.key === "1" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        useEditorSettingsStore.getState().applyPreset("edicao");
+      } else if (e.key === "2" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        useEditorSettingsStore.getState().applyPreset("revisao");
+      } else if (e.key === "3" && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        useEditorSettingsStore.getState().applyPreset("foco");
+      } else if ((e.key === "f" || e.key === "F") && !e.metaKey && !e.ctrlKey && !e.altKey) {
+        e.preventDefault();
+        const cur = useEditorSettingsStore.getState().layout.preset;
+        if (cur === "foco") {
+          useEditorSettingsStore.getState().applyPreset(lastNonFocoPreset.current);
+        } else {
+          useEditorSettingsStore.getState().applyPreset("foco");
+        }
+      } else if (e.key === "Escape") {
+        const cur = useEditorSettingsStore.getState().layout.preset;
+        if (cur === "foco") {
+          e.preventDefault();
+          useEditorSettingsStore.getState().applyPreset(lastNonFocoPreset.current);
+        }
+      } else if (viewMode === "timeline" && e.code === "Space") {
+        e.preventDefault();
+        timelineTogglePlay();
+      } else if (viewMode === "timeline" && e.key === "ArrowLeft") {
+        e.preventDefault();
+        const t = useTimelineStore.getState().currentTime;
+        const prev = findPreviousSceneTime(segments, t - 0.05);
+        timelineSeek(prev);
+      } else if (viewMode === "timeline" && e.key === "ArrowRight") {
+        e.preventDefault();
+        const t = useTimelineStore.getState().currentTime;
+        const next = findNextSceneTime(segments, t);
+        timelineSeek(next);
       }
     };
     window.addEventListener("keydown", handler);
     return () => window.removeEventListener("keydown", handler);
-  }, [saveToSupabase, fitToView]);
+  }, [saveToSupabase, fitToView, viewMode, segments, timelineTogglePlay, timelineSeek]);
 
   const handleExport = useCallback(async () => {
     const state = useProjectStore.getState();
@@ -218,15 +496,28 @@ export default function EditorPage({
     setComposing(true);
     setExportProgress({ message: "Iniciando...", percent: 0 });
     try {
-      const clips: { url: string; hasAudio: boolean; durationHint?: number; clipVolume?: number }[] = [];
+      const clips: { url: string; hasAudio: boolean; durationHint?: number; clipVolume?: number; sourceStart?: number; sourceEnd?: number }[] = [];
       for (let i = 0; i < allScenes.length; i++) {
         const scene = allScenes[i]!;
         if (scene.status === "ready" && scene.videoUrl) {
+          const activeVer = scene.videoVersions?.[scene.activeVersion];
+          const native =
+            activeVer?.duration && activeVer.duration > 0
+              ? activeVer.duration
+              : scene.duration;
+          const sourceStart = scene.trimStart;
+          const sourceEnd = scene.trimEnd;
           clips.push({
             url: scene.videoUrl,
             hasAudio: scene.sourceType === "video-upload",
-            durationHint: scene.duration,
+            // durationHint is the effective window so probe logic clamps correctly.
+            durationHint:
+              sourceStart !== undefined || sourceEnd !== undefined
+                ? (sourceEnd ?? native) - (sourceStart ?? 0)
+                : scene.duration,
             clipVolume: scene.audioVolume ?? 1,
+            sourceStart,
+            sourceEnd,
           });
         }
         if (i < allScenes.length - 1) {
@@ -297,29 +588,56 @@ export default function EditorPage({
   }
 
   const isEmpty = scenes.length === 0;
+  const isTheater = previewPlacement === "theater";
+  const inspectorHidden = inspectorDensity === "hidden" || isTheater;
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0A0A09]">
-      <EditorToolbar onExportVideo={handleExport} />
+      <EditorToolbar onExportVideo={handleExport} onOpenSettings={() => setSettingsOpen(true)} />
 
       {isEmpty ? (
         <div className="flex flex-1 items-center justify-center p-8">
           <DropZone />
         </div>
       ) : (
-        <div className="flex flex-1 overflow-hidden">
-          {/* Canvas area */}
-          <div className="relative flex-1 overflow-hidden">
+        <div
+          ref={mainFlexRef}
+          className={`flex flex-1 overflow-hidden ${isTheater ? "flex-col" : "flex-row"}`}
+        >
+          {/* Theater big preview (Foco preset) */}
+          {isTheater && (
+            <div className="relative flex-1 overflow-hidden">
+              <TheaterView />
+              <LayoutBar />
+            </div>
+          )}
+
+          {/* Canvas area — full height in normal modes, compressed ribbon in theater */}
+          <div
+            className={`relative overflow-hidden ${
+              isTheater
+                ? "h-[112px] shrink-0 border-t border-white/5"
+                : "flex-1"
+            }`}
+          >
             <div
               ref={viewportRef}
               data-canvas-bg="true"
-              className="flex h-full w-full items-center justify-center overflow-hidden touch-none select-none"
+              className={`relative flex h-full w-full overflow-hidden touch-none select-none ${
+                viewMode === "timeline"
+                  ? "items-center justify-start"
+                  : "items-center justify-center"
+              }`}
               style={isPanning ? { cursor: "grabbing" } : undefined}
               onMouseDown={handleMouseDown}
               onMouseMove={handleMouseMove}
               onMouseUp={handleMouseUp}
               onMouseLeave={handleMouseUp}
               onClick={(e) => {
+                // In timeline mode the inspector should stay open (always
+                // showing the current scene under the playhead), so don't
+                // deselect on background clicks.
+                if (viewMode === "timeline") return;
                 if (e.target === e.currentTarget || (e.target as HTMLElement).hasAttribute("data-canvas-bg")) {
                   useProjectStore.getState().selectScene(null);
                 }
@@ -330,65 +648,121 @@ export default function EditorPage({
                 className=""
                 style={{
                   transform: `translate(${panX}px, ${panY}px) scale(${zoom})`,
-                  transformOrigin: "center center",
+                  transformOrigin: viewMode === "timeline" ? "left center" : "center center",
                 }}
               >
                 <FilmStrip onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} onEditImage={setEditingSceneId} />
               </div>
+
+              <TimelineRuler
+                segments={segments}
+                viewportRef={viewportRef}
+                mainFlexRef={mainFlexRef}
+                panX={panX}
+                zoom={zoom}
+              />
+
+              <Playhead
+                segments={segments}
+                viewportRef={viewportRef}
+                contentRef={contentRef}
+                mainFlexRef={mainFlexRef}
+                zoom={zoom}
+                panX={panX}
+              />
+
+              <BackgroundTasksIndicator />
             </div>
 
-            {/* Zoom controls */}
-            <div className="absolute bottom-4 left-4 z-20 flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm">
-              <button
-                onClick={() => { setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP)); setCanvasMode("free"); }}
-                className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                title="Zoom out (-)"
-              >
-                <ZoomOut size={14} />
-              </button>
-              <button
-                onClick={fitToView}
-                className="flex h-7 items-center justify-center rounded px-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                title="Fit to view (0)"
-              >
-                {Math.round(zoom * 100)}%
-              </button>
-              <button
-                onClick={() => { setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP)); setCanvasMode("free"); }}
-                className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                title="Zoom in (+)"
-              >
-                <ZoomIn size={14} />
-              </button>
-              <div className="mx-0.5 h-4 w-px bg-white/5" />
-              <button
-                onClick={fitToView}
-                className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
-                  canvasMode === "fit"
-                    ? "text-accent-gold"
-                    : "text-text-secondary hover:bg-white/5 hover:text-[var(--text)]"
-                }`}
-                title="Fit all (0)"
-              >
-                <Maximize size={14} />
-              </button>
-            </div>
+            {previewPlacement === "headline" && !isTheater && (
+              <HeadlinePreview
+                viewportRef={viewportRef}
+                mainFlexRef={mainFlexRef}
+              />
+            )}
 
-            {/* Mode indicator */}
-            {canvasMode === "free" && (
-              <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
-                <button
-                  onClick={fitToView}
-                  className="rounded-full border border-white/5 bg-[#0A0A09]/90 px-3 py-1 font-mono text-[9px] text-text-secondary backdrop-blur-sm transition-colors hover:text-accent-gold"
-                >
-                  Press 0 or click to refit
-                </button>
+            {/* Layout presets anchored in the canvas area (not fixed) so it
+                never overlaps the inspector. In theater we render a separate
+                instance inside the theater wrapper. */}
+            {!isTheater && <LayoutBar />}
+
+            {/* Zoom controls + view mode toggle — hidden in theater (ribbon has no room) */}
+            {!isTheater && (
+              <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2">
+                <div className="flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm">
+                  <button
+                    onClick={() => { setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP)); setCanvasMode("free"); }}
+                    className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+                    title="Zoom out (-)"
+                  >
+                    <ZoomOut size={14} />
+                  </button>
+                  <button
+                    onClick={fitToView}
+                    className="flex h-7 items-center justify-center rounded px-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+                    title="Fit to view (0)"
+                  >
+                    {Math.round(zoom * 100)}%
+                  </button>
+                  <button
+                    onClick={() => { setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP)); setCanvasMode("free"); }}
+                    className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+                    title="Zoom in (+)"
+                  >
+                    <ZoomIn size={14} />
+                  </button>
+                  <div className="mx-0.5 h-4 w-px bg-white/5" />
+                  <button
+                    onClick={fitToView}
+                    className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+                      canvasMode === "fit" && viewMode === "canvas"
+                        ? "text-accent-gold"
+                        : "text-text-secondary hover:bg-white/5 hover:text-[var(--text)]"
+                    }`}
+                    title="Fit all (0)"
+                  >
+                    <Maximize size={14} />
+                  </button>
+                </div>
+                <ViewModeToggle />
               </div>
+            )}
+
+            {/* Mode indicator / Transport bar */}
+            {viewMode === "timeline" ? (
+              <TransportBar segments={segments} viewportRef={viewportRef} mainFlexRef={mainFlexRef} />
+            ) : (
+              !isTheater && canvasMode === "free" && (
+                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-20">
+                  <button
+                    onClick={fitToView}
+                    className="rounded-full border border-white/5 bg-[#0A0A09]/90 px-3 py-1 font-mono text-[9px] text-text-secondary backdrop-blur-sm transition-colors hover:text-accent-gold"
+                  >
+                    Press 0 or click to refit
+                  </button>
+                </div>
+              )
             )}
           </div>
 
-          {/* Inspector (flex, not overlay) */}
-          <Inspector onPreviewVideo={setPreviewVideoUrl} onExport={handleExport} onDownloadLast={lastExportBlobUrl ? handleDownloadLast : undefined} onEditImage={setEditingSceneId} />
+          {/* Inspector — rendered unless fully hidden (theater or density=hidden).
+              "railed" mode swaps the full sidebar for a 44px rail with overlay on demand. */}
+          {!inspectorHidden && inspectorDensity === "railed" ? (
+            <InspectorRail
+              onPreviewVideo={setPreviewVideoUrl}
+              onExport={handleExport}
+              onDownloadLast={lastExportBlobUrl ? handleDownloadLast : undefined}
+              onEditImage={setEditingSceneId}
+            />
+          ) : null}
+          {!inspectorHidden && inspectorDensity === "full" ? (
+            <Inspector
+              onPreviewVideo={setPreviewVideoUrl}
+              onExport={handleExport}
+              onDownloadLast={lastExportBlobUrl ? handleDownloadLast : undefined}
+              onEditImage={setEditingSceneId}
+            />
+          ) : null}
         </div>
       )}
 
@@ -453,6 +827,8 @@ export default function EditorPage({
           </div>
         </div>
       )}
+
+      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
     </div>
   );
 }

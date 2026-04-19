@@ -288,8 +288,10 @@ function SaveIndicator({ isSaving, isDirty, hasScenes }: { isSaving: boolean; is
 
 export function EditorToolbar({
   onExportVideo,
+  onOpenSettings,
 }: {
   onExportVideo?: () => void;
+  onOpenSettings?: () => void;
 }) {
   const {
     projectName,
@@ -485,8 +487,8 @@ export function EditorToolbar({
       type: "action",
       label: "Configuracoes",
       icon: <Settings size={14} />,
-      disabled: true,
-      onClick: () => {},
+      disabled: !onOpenSettings,
+      onClick: () => { onOpenSettings?.(); },
     },
     { type: "separator" },
     { type: "info", label: "Cenas", value: String(scenes.length) },

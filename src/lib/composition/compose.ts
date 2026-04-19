@@ -20,6 +20,13 @@ export type ClipInfo = {
   hasAudio: boolean;
   durationHint?: number;
   clipVolume?: number;
+  /**
+   * Non-destructive trim (seconds into source). When set, composition only
+   * renders frames/audio in [sourceStart, sourceEnd). `sourceEnd` defaults to
+   * the native duration of the source when omitted.
+   */
+  sourceStart?: number;
+  sourceEnd?: number;
 };
 
 export type AudioMixSettings = {
@@ -389,15 +396,24 @@ async function composeWithMediabunny({
   /* ─ Phase 1b: probe video durations to build timeline ─── */
   report("Analisando duração dos clipes...", 11);
 
-  type ClipMeta = { duration: number };
+  type ClipMeta = { duration: number; sourceStart: number; sourceEnd: number };
   const clipMetas: ClipMeta[] = [];
 
   for (let i = 0; i < n; i++) {
+    const clip = clips[i]!;
     const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(clipData[i]!.blob) });
     const videoTrack = await input.getPrimaryVideoTrack();
-    const dur = videoTrack ? await videoTrack.computeDuration() : 0;
-    const hint = clips[i]!.durationHint ?? 0;
-    clipMetas.push({ duration: Math.max(dur, hint) });
+    const native = videoTrack ? await videoTrack.computeDuration() : 0;
+    const hint = clip.durationHint ?? 0;
+    const fullDuration = Math.max(native, hint);
+    // Trim window: honor sourceStart/sourceEnd if provided, clamp to source.
+    const sourceStart = Math.max(0, Math.min(fullDuration, clip.sourceStart ?? 0));
+    const sourceEnd = Math.max(
+      sourceStart,
+      Math.min(fullDuration, clip.sourceEnd ?? fullDuration),
+    );
+    const duration = Math.max(0, sourceEnd - sourceStart);
+    clipMetas.push({ duration, sourceStart, sourceEnd });
   }
 
   const totalDuration = clipMetas.reduce((sum, m) => sum + m.duration, 0);
@@ -417,8 +433,18 @@ async function composeWithMediabunny({
     let sampleOffset = 0;
     const clipAudioInfos: ClipAudioInfo[] = clipMetas.map((meta, i) => {
       const lengthSamples = Math.ceil(meta.duration * MIX_SAMPLE_RATE);
+      const rawPcm = clipData[i]!.clipAudioPCM?.pcm ?? null;
+      // Non-destructive trim applied to source PCM: slice by sourceStart
+      // and clamp to the window length so mixing only hears the kept range.
+      let pcm = rawPcm;
+      if (rawPcm && (meta.sourceStart > 0 || meta.duration > 0)) {
+        const startSample = Math.max(0, Math.floor(meta.sourceStart * MIX_SAMPLE_RATE));
+        pcm = rawPcm.map((ch) =>
+          ch.slice(startSample, startSample + lengthSamples),
+        );
+      }
       const info: ClipAudioInfo = {
-        pcm: clipData[i]!.clipAudioPCM?.pcm ?? null,
+        pcm,
         startSample: sampleOffset,
         lengthSamples,
         volume: clips[i]!.clipVolume ?? 1,
@@ -469,6 +495,7 @@ async function composeWithMediabunny({
     const { VideoSampleSink } = await import("mediabunny");
     const sink = new VideoSampleSink(videoTrack);
     const duration = clipMetas[i]!.duration;
+    const sourceStart = clipMetas[i]!.sourceStart;
     const totalFrames = Math.ceil(duration * fps);
 
     let tempCanvas: OffscreenCanvas | null = null;
@@ -476,7 +503,8 @@ async function composeWithMediabunny({
     let hasDrawnFrame = false;
 
     for (let f = 0; f < totalFrames; f++) {
-      const time = f / fps;
+      // Offset by sourceStart so trimmed clips decode the correct window.
+      const time = sourceStart + f / fps;
       const sample = await sink.getSample(time);
 
       if (sample) {

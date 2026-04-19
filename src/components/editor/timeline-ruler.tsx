@@ -1,0 +1,164 @@
+"use client";
+
+import { useLayoutEffect, useRef, useState } from "react";
+import { useTimelineStore } from "@/stores/timeline-store";
+import {
+  useEditorSettingsStore,
+  type RulerDensityMode,
+} from "@/stores/editor-settings-store";
+import { totalDuration, type Segment } from "@/lib/timeline/segments";
+import { useStableCenterX } from "@/hooks/use-stable-center";
+
+const RULER_HEIGHT = 24;
+
+/**
+ * Candidate major-tick intervals in seconds. We walk the list in order and
+ * pick the smallest stop whose on-screen spacing is >= target.
+ */
+const INTERVAL_STOPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600] as const;
+
+/**
+ * Compute a human-friendly major-tick interval such that labels end up roughly
+ * `target` pixels apart on screen. `dense` packs more labels, `sparse` spreads
+ * them further apart; `auto` uses the default 100px target.
+ */
+function computeMajorInterval(
+  effectivePps: number,
+  densityMode: RulerDensityMode,
+): number {
+  if (effectivePps <= 0) return INTERVAL_STOPS[0];
+  const target =
+    densityMode === "dense" ? 60 : densityMode === "sparse" ? 180 : 110;
+  for (const s of INTERVAL_STOPS) {
+    if (s * effectivePps >= target) return s;
+  }
+  return INTERVAL_STOPS[INTERVAL_STOPS.length - 1]!;
+}
+
+function formatTimeLabel(s: number): string {
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const sec = s % 60;
+  if (sec === 0) return `${m}m`;
+  return `${m}:${sec.toString().padStart(2, "0")}`;
+}
+
+export function TimelineRuler({
+  segments,
+  viewportRef,
+  mainFlexRef,
+  panX,
+  zoom,
+}: {
+  segments: Segment[];
+  viewportRef: React.RefObject<HTMLDivElement | null>;
+  mainFlexRef: React.RefObject<HTMLDivElement | null>;
+  panX: number;
+  zoom: number;
+}) {
+  const viewMode = useTimelineStore((s) => s.viewMode);
+  const pixelsPerSecond = useTimelineStore((s) => s.pixelsPerSecond);
+  const rulerSettings = useEditorSettingsStore((s) => s.ruler);
+  const stableCenterX = useStableCenterX(viewportRef, mainFlexRef);
+
+  const [viewportWidth, setViewportWidth] = useState(0);
+  const rulerRef = useRef<HTMLDivElement>(null);
+
+  useLayoutEffect(() => {
+    const el = viewportRef.current;
+    if (!el) return;
+    const update = () => setViewportWidth(el.clientWidth);
+    update();
+    const ro = new ResizeObserver(update);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [viewportRef]);
+
+  if (viewMode !== "timeline") return null;
+  if (!rulerSettings.visible) return null;
+  if (segments.length === 0) return null;
+
+  const total = totalDuration(segments);
+  const effectivePps = pixelsPerSecond * zoom;
+  const majorInterval = computeMajorInterval(effectivePps, rulerSettings.densityMode);
+  const minorInterval = Math.max(
+    0.5,
+    majorInterval >= 10
+      ? majorInterval / 5
+      : majorInterval >= 5
+        ? majorInterval / 5
+        : 1,
+  );
+
+  const minorTicks: number[] = [];
+  const majorTicks: number[] = [];
+  const epsilon = 1e-3;
+
+  for (let t = 0; t <= total + epsilon; t += minorInterval) {
+    const rounded = Math.round(t * 1000) / 1000;
+    const isMajor = Math.abs(rounded % majorInterval) < epsilon
+      || Math.abs((rounded % majorInterval) - majorInterval) < epsilon;
+    if (isMajor) majorTicks.push(rounded);
+    else minorTicks.push(rounded);
+  }
+
+  const endX = panX + total * effectivePps;
+
+  return (
+    <div
+      ref={rulerRef}
+      className="pointer-events-none absolute left-0 right-0 top-0 z-30 overflow-hidden border-b border-white/5 bg-[#0A0A09]/70 backdrop-blur-sm"
+      style={{ height: RULER_HEIGHT }}
+    >
+      {minorTicks.map((t) => {
+        const x = panX + t * effectivePps;
+        if (x < -4 || x > viewportWidth + 4) return null;
+        return (
+          <div
+            key={`min-${t}`}
+            className="absolute top-0 bg-white/10"
+            style={{ left: x, width: 1, height: 4 }}
+          />
+        );
+      })}
+
+      {majorTicks.map((t) => {
+        const x = panX + t * effectivePps;
+        if (x < -40 || x > viewportWidth + 40) return null;
+        return (
+          <div
+            key={`maj-${t}`}
+            className="absolute top-0"
+            style={{ left: x }}
+          >
+            <div
+              className="absolute top-0 bg-white/25"
+              style={{ width: 1, height: 7 }}
+            />
+            <span
+              className="absolute top-[8px] left-1 whitespace-nowrap font-mono text-[9px] tabular-nums text-text-secondary/60"
+            >
+              {formatTimeLabel(t)}
+            </span>
+          </div>
+        );
+      })}
+
+      {endX >= -4 && endX <= viewportWidth + 4 && (
+        <div
+          className="absolute top-0 bg-white/30"
+          style={{ left: endX, width: 1, height: RULER_HEIGHT }}
+          aria-hidden="true"
+        />
+      )}
+
+      {stableCenterX > 0 && (
+        <div
+          className="absolute inset-y-0 bg-accent-gold/25"
+          style={{ left: stableCenterX - 0.5, width: 1 }}
+          aria-hidden="true"
+        />
+      )}
+    </div>
+  );
+}

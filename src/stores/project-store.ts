@@ -9,8 +9,20 @@ import {
 import { DEFAULT_MODEL_ID } from "@/lib/adapters";
 import { extractVideoThumbnail } from "@/lib/utils/video-thumbnail";
 import { type AudioMixSettings, DEFAULT_AUDIO_MIX } from "@/lib/composition/compose";
+import { stageVideoForTimeline } from "@/lib/staging/video-staging";
 
 export type VideoVersion = { url: string; duration: number };
+
+export type SceneStagingStatus = "pending" | "ready" | "failed";
+
+export type SceneSprite = {
+  url: string;
+  frames: number;
+  columns: number;
+  rows: number;
+  thumbWidth: number;
+  thumbHeight: number;
+};
 
 export type Scene = {
   id: string;
@@ -25,6 +37,16 @@ export type Scene = {
   costCredits: number;
   sourceType?: "image" | "video-upload";
   audioVolume?: number;
+  stagingStatus?: SceneStagingStatus;
+  sprite?: SceneSprite;
+  /**
+   * Non-destructive trim window for video scenes (seconds into source).
+   * Timeline playback only renders [trimStart, trimEnd] of the source video.
+   * Image-only scenes ignore these (they use `duration` directly).
+   * null/undefined = no trim (play full source).
+   */
+  trimStart?: number;
+  trimEnd?: number;
 };
 
 export type Transition = {
@@ -74,6 +96,10 @@ export type ProjectStore = {
   reorderScenes: (fromIndex: number, toIndex: number) => void;
   setScenePreset: (sceneId: string, presetId: string) => void;
   setSceneDuration: (sceneId: string, duration: number) => void;
+  setSceneTrim: (
+    sceneId: string,
+    trim: { trimStart?: number | null; trimEnd?: number | null },
+  ) => void;
   setActiveVersion: (sceneId: string, version: number) => void;
   updateSceneImage: (sceneId: string, newImageUrl: string) => void;
 
@@ -180,6 +206,73 @@ async function persistVideoToStorage(
   } catch (err) {
     console.error("[persist-video]", err);
     return null;
+  }
+}
+
+/**
+ * Kicks off background staging for a scene after its video is in Supabase
+ * storage. Extracts a sprite-sheet of thumbnails and stores the metadata on
+ * the scene. Non-blocking; progressive via stagingStatus transitions:
+ * undefined -> "pending" -> "ready" | "failed".
+ *
+ * Defined at module scope using a function declaration (hoisted) so the store
+ * methods can reference it before it runs. The useProjectStore reference
+ * inside is resolved lazily at call time, so the forward reference is safe.
+ */
+async function kickoffStaging(
+  sceneId: string,
+  videoUrl: string,
+  duration: number,
+): Promise<void> {
+  if (!videoUrl || !videoUrl.startsWith("http")) return;
+
+  const state = useProjectStore.getState();
+  const scene = state.scenes.find((s) => s.id === sceneId);
+  if (!scene) return;
+  // Skip if we already have a sprite for THIS exact videoUrl. If the user
+  // regenerates the scene, the new videoUrl will differ and we'll re-stage.
+  if (scene.sprite && scene.videoUrl === videoUrl && scene.stagingStatus === "ready") return;
+  if (scene.stagingStatus === "pending") return;
+
+  const projectId = state.supabaseProjectId ?? state.projectId;
+
+  useProjectStore.setState((st) => ({
+    scenes: st.scenes.map((s) =>
+      s.id === sceneId ? { ...s, stagingStatus: "pending" as const } : s,
+    ),
+  }));
+
+  try {
+    const sprite = await stageVideoForTimeline({
+      sceneId,
+      videoUrl,
+      projectId,
+      duration,
+    });
+    if (sprite) {
+      useProjectStore.setState((st) => ({
+        scenes: st.scenes.map((s) =>
+          s.id === sceneId
+            ? { ...s, stagingStatus: "ready" as const, sprite }
+            : s,
+        ),
+        isDirty: true,
+      }));
+      void useProjectStore.getState().saveToSupabase();
+    } else {
+      useProjectStore.setState((st) => ({
+        scenes: st.scenes.map((s) =>
+          s.id === sceneId ? { ...s, stagingStatus: "failed" as const } : s,
+        ),
+      }));
+    }
+  } catch (err) {
+    console.error("[kickoff-staging]", err);
+    useProjectStore.setState((st) => ({
+      scenes: st.scenes.map((s) =>
+        s.id === sceneId ? { ...s, stagingStatus: "failed" as const } : s,
+      ),
+    }));
   }
 }
 
@@ -478,6 +571,7 @@ export const useProjectStore = create<ProjectStore>()(
                 ),
                 isDirty: true,
               }));
+              void kickoffStaging(id, videoUrl, thumb.duration);
             } catch (err) {
               console.error("[addVideoUpload]", err);
               set((state) => ({
@@ -544,6 +638,7 @@ export const useProjectStore = create<ProjectStore>()(
               ),
               isDirty: true,
             }));
+            void kickoffStaging(id, videoUrl, thumb.duration);
           } catch (err) {
             console.error("[insertVideoAt]", err);
             set((state) => ({
@@ -685,6 +780,54 @@ export const useProjectStore = create<ProjectStore>()(
           scenes: state.scenes.map((s) =>
             s.id === sceneId ? { ...s, duration, costCredits: s.status === "ready" ? s.costCredits : duration } : s,
           ),
+          isDirty: true,
+        }));
+      },
+
+      setSceneTrim: (sceneId, trim) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+
+            const prevStart = s.trimStart;
+            const prevEnd = s.trimEnd;
+
+            const nextStart =
+              trim.trimStart === null
+                ? undefined
+                : trim.trimStart === undefined
+                  ? prevStart
+                  : Math.max(0, trim.trimStart);
+            const nextEnd =
+              trim.trimEnd === null
+                ? undefined
+                : trim.trimEnd === undefined
+                  ? prevEnd
+                  : Math.max(0, trim.trimEnd);
+
+            // For video-backed scenes, update effective duration from the
+            // trim window so the timeline + inspector stay in sync without
+            // extra bookkeeping downstream.
+            const isVideo = s.status === "ready" && !!s.videoUrl;
+            let nextDuration = s.duration;
+            if (isVideo) {
+              const activeVer = s.videoVersions?.[s.activeVersion];
+              const native =
+                activeVer?.duration && activeVer.duration > 0
+                  ? activeVer.duration
+                  : s.duration;
+              const start = nextStart ?? 0;
+              const end = nextEnd ?? native;
+              nextDuration = Math.max(0.1, end - start);
+            }
+
+            return {
+              ...s,
+              trimStart: nextStart,
+              trimEnd: nextEnd,
+              duration: nextDuration,
+            };
+          }),
           isDirty: true,
         }));
       },
@@ -929,19 +1072,21 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
               : s.video_url ? [{ url: s.video_url, duration: dur }] : [];
             const activeVer = Number(s.active_version) || 0;
             const clampedVer = Math.min(activeVer, Math.max(0, dbVersions.length - 1));
+            const trimStart = typeof s.trim_start === "number" ? s.trim_start : undefined;
+            const trimEnd = typeof s.trim_end === "number" ? s.trim_end : undefined;
             return {
               id: s.id,
               photoUrl: s.photo_url,
               photoDataUrl: s.photo_url,
               presetId: s.prompt_generated ?? "push_in_serene",
-              duration: dbVersions[clampedVer]?.duration ?? dur,
+              duration: dur,
               status: s.status === "pending" ? "idle" : s.status,
               videoUrl: dbVersions[clampedVer]?.url ?? s.video_url ?? undefined,
               videoVersions: dbVersions,
@@ -949,6 +1094,8 @@ export const useProjectStore = create<ProjectStore>()(
               costCredits: s.cost_credits,
               sourceType: s.source_type === "video-upload" ? "video-upload" : undefined,
               audioVolume: typeof s.audio_volume === "number" ? s.audio_volume : undefined,
+              trimStart,
+              trimEnd,
             };
           });
 
@@ -972,6 +1119,15 @@ export const useProjectStore = create<ProjectStore>()(
                 musicVolume: typeof meta.musicVolume === "number" ? meta.musicVolume : DEFAULT_AUDIO_MIX.musicVolume,
               };
 
+          const sceneStaging: Record<string, SceneSprite> = meta.sceneStaging ?? {};
+          scenes.forEach((s) => {
+            const sprite = sceneStaging[s.id];
+            if (sprite && typeof sprite.url === "string") {
+              s.sprite = sprite;
+              s.stagingStatus = "ready";
+            }
+          });
+
           set({
             supabaseProjectId: supabaseId,
             projectId: supabaseId,
@@ -990,6 +1146,34 @@ export const useProjectStore = create<ProjectStore>()(
             isDirty: false,
             isGenerating: false,
           });
+
+          // Backfill sprite staging for scenes that already have a persisted
+          // videoUrl but no sprite yet (older projects, or new scenes loaded
+          // before their staging completed). Runs sequentially with a small
+          // delay so we don't saturate the network on project open.
+          if (typeof window !== "undefined") {
+            const toStage = scenes.filter(
+              (s) =>
+                s.status === "ready" &&
+                s.videoUrl &&
+                s.videoUrl.startsWith("http") &&
+                !s.sprite,
+            );
+            if (toStage.length > 0) {
+              setTimeout(() => {
+                void (async () => {
+                  for (const s of toStage) {
+                    if (!s.videoUrl) continue;
+                    try {
+                      await kickoffStaging(s.id, s.videoUrl, s.duration);
+                    } catch {
+                      /* continue to next scene */
+                    }
+                  }
+                })();
+              }, 1500);
+            }
+          }
         } catch (err) {
           console.error("[loadFromSupabase]", err);
           set({ isLoading: false });
@@ -1069,6 +1253,8 @@ export const useProjectStore = create<ProjectStore>()(
                 active_version: s.activeVersion ?? 0,
                 source_type: s.sourceType ?? "image",
                 audio_volume: s.audioVolume ?? 1,
+                trim_start: typeof s.trimStart === "number" ? s.trimStart : null,
+                trim_end: typeof s.trimEnd === "number" ? s.trimEnd : null,
               };
             })
             .filter(Boolean);
@@ -1084,6 +1270,11 @@ export const useProjectStore = create<ProjectStore>()(
             cost_credits: t.costCredits,
           }));
 
+          const sceneStaging: Record<string, SceneSprite> = {};
+          state.scenes.forEach((s) => {
+            if (s.sprite) sceneStaging[s.id] = s.sprite;
+          });
+
           const payload: Record<string, unknown> = {
             name: state.projectName,
             metadata: {
@@ -1092,6 +1283,7 @@ export const useProjectStore = create<ProjectStore>()(
               musicUrl: state.musicUrl || undefined,
               exportAspectRatio: state.exportAspectRatio !== "16:9" ? state.exportAspectRatio : undefined,
               audioMix: state.audioMix,
+              sceneStaging: Object.keys(sceneStaging).length > 0 ? sceneStaging : undefined,
             },
           };
 
@@ -1177,6 +1369,7 @@ export const useProjectStore = create<ProjectStore>()(
                 }),
                 isDirty: true,
               }));
+              void kickoffStaging(scene.id, permUrl, realDuration);
             });
           } catch (err) {
             console.error(`[generate] scene ${scene.id}:`, err);
@@ -1244,6 +1437,7 @@ export const useProjectStore = create<ProjectStore>()(
               }),
               isDirty: true,
             }));
+            void kickoffStaging(sceneId, permUrl, realDuration);
           });
         } catch (err) {
           console.error(`[generate] scene ${sceneId}:`, err);

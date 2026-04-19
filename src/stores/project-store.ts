@@ -277,13 +277,30 @@ async function kickoffStaging(
 }
 
 async function uploadPhoto(file: File, projectId: string): Promise<string> {
-  const formData = new FormData();
-  formData.append("file", file);
-  formData.append("projectId", projectId);
-  const res = await fetch("/api/upload", { method: "POST", body: formData });
-  if (!res.ok) throw new Error("Upload failed");
-  const data = await res.json();
-  return data.url;
+  // Use signed-URL pattern to bypass Vercel's 4.5MB function body limit.
+  // Client PUTs the file directly to Supabase Storage.
+  const res = await fetch("/api/upload", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      filename: file.name || `photo.${(file.type.split("/")[1] ?? "jpg")}`,
+      contentType: file.type || "image/jpeg",
+      projectId,
+    }),
+  });
+  if (!res.ok) throw new Error("Failed to get signed upload URL");
+  const { signedUrl, publicUrl } = (await res.json()) as {
+    signedUrl: string;
+    publicUrl: string;
+  };
+
+  const putRes = await fetch(signedUrl, {
+    method: "PUT",
+    headers: { "Content-Type": file.type || "image/jpeg" },
+    body: file,
+  });
+  if (!putRes.ok) throw new Error("Photo upload failed");
+  return publicUrl;
 }
 
 async function uploadVideoToStorage(
@@ -335,6 +352,41 @@ async function resolveSceneFile(
     }
   }
   return file ?? null;
+}
+
+/**
+ * Ensures the scene has a usable HTTPS URL (Supabase Storage) that can be sent
+ * to `/api/generate-scene` as JSON, bypassing Vercel's 4.5MB request body limit.
+ * If the scene only has a blob:/data: URL or a pending upload, this uploads
+ * on-demand and patches the store so subsequent calls are cheap.
+ */
+async function ensureSceneHttpsPhotoUrl(
+  scene: Scene,
+  photoFiles: Record<string, File>,
+  projectId: string,
+): Promise<string | null> {
+  if (
+    scene.photoUrl &&
+    scene.photoUrl.startsWith("https://") &&
+    scene.photoUrl !== PLACEHOLDER_IMG
+  ) {
+    return scene.photoUrl;
+  }
+  const file = await resolveSceneFile(scene, photoFiles);
+  if (!file) return null;
+  try {
+    const url = await uploadPhoto(file, projectId);
+    useProjectStore.setState((state) => ({
+      scenes: state.scenes.map((s) =>
+        s.id === scene.id ? { ...s, photoUrl: url } : s,
+      ),
+      isDirty: true,
+    }));
+    return url;
+  } catch (err) {
+    console.error("[ensureSceneHttpsPhotoUrl]", err);
+    return null;
+  }
 }
 
 async function resolveSceneHttpsUrl(
@@ -1325,25 +1377,30 @@ export const useProjectStore = create<ProjectStore>()(
         for (const scene of state.scenes) {
           if (scene.status === "ready") continue;
 
-          const file = await resolveSceneFile(scene, state._photoFiles);
-          if (!file) continue;
+          const pid = state.supabaseProjectId ?? state.projectId;
+          const httpsUrl = await ensureSceneHttpsPhotoUrl(
+            scene,
+            state._photoFiles,
+            pid,
+          );
+          if (!httpsUrl) continue;
 
           get().updateSceneStatus(scene.id, "generating");
 
           try {
-            const formData = new FormData();
-            formData.append("photo", file);
-            formData.append("presetId", scene.presetId);
-            formData.append("duration", String(scene.duration));
-            formData.append("modelId", state.modelId);
-
             const res = await fetch("/api/generate-scene", {
               method: "POST",
-              body: formData,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({
+                photoUrl: httpsUrl,
+                presetId: scene.presetId,
+                duration: scene.duration,
+                modelId: state.modelId,
+              }),
             });
 
             if (!res.ok) {
-              const err = await res.json();
+              const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
               throw new Error(err.error ?? "Failed");
             }
 
@@ -1353,7 +1410,6 @@ export const useProjectStore = create<ProjectStore>()(
             get().updateSceneStatus(scene.id, "ready", data.videoUrl, realCost, realDuration);
 
             const falVideoUrl = data.videoUrl;
-            const pid = get().supabaseProjectId ?? get().projectId;
             persistVideoToStorage(falVideoUrl, pid, scene.id).then((permUrl) => {
               if (!permUrl) return;
               set((st) => ({
@@ -1388,9 +1444,14 @@ export const useProjectStore = create<ProjectStore>()(
 
         set({ isGenerating: true });
 
-        const file = await resolveSceneFile(scene, state._photoFiles);
-        if (!file) {
-          console.error(`[generate] No photo available for scene ${sceneId}`);
+        const pid = state.supabaseProjectId ?? state.projectId;
+        const httpsUrl = await ensureSceneHttpsPhotoUrl(
+          scene,
+          state._photoFiles,
+          pid,
+        );
+        if (!httpsUrl) {
+          console.error(`[generate] No photo URL available for scene ${sceneId}`);
           set({ isGenerating: false });
           return;
         }
@@ -1398,19 +1459,19 @@ export const useProjectStore = create<ProjectStore>()(
         get().updateSceneStatus(sceneId, "generating");
 
         try {
-          const formData = new FormData();
-          formData.append("photo", file);
-          formData.append("presetId", scene.presetId);
-          formData.append("duration", String(scene.duration));
-          formData.append("modelId", state.modelId);
-
           const res = await fetch("/api/generate-scene", {
             method: "POST",
-            body: formData,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              photoUrl: httpsUrl,
+              presetId: scene.presetId,
+              duration: scene.duration,
+              modelId: state.modelId,
+            }),
           });
 
           if (!res.ok) {
-            const errBody = await res.json();
+            const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
             console.error(`[generate] API error for scene ${sceneId}:`, errBody);
             throw new Error(errBody.error ?? "Failed");
           }
@@ -1421,7 +1482,6 @@ export const useProjectStore = create<ProjectStore>()(
           get().updateSceneStatus(sceneId, "ready", data.videoUrl, realCost, realDuration);
 
           const falVideoUrl = data.videoUrl;
-          const pid = get().supabaseProjectId ?? get().projectId;
           persistVideoToStorage(falVideoUrl, pid, sceneId).then((permUrl) => {
             if (!permUrl) return;
             set((st) => ({

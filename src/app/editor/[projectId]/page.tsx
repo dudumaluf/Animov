@@ -776,7 +776,14 @@ export default function EditorPage({
       {editingSceneId && (() => {
         const editScene = useProjectStore.getState().scenes.find((s) => s.id === editingSceneId);
         if (!editScene) return null;
-        const imgUrl = editScene.photoDataUrl ?? editScene.photoUrl;
+        // Prefer Supabase HTTPS URL over the inline data URL: Vercel function
+        // bodies are capped at 4.5MB, and a ~8MB photo becomes ~11MB as base64
+        // inside a JSON payload and is rejected with 413 before reaching the
+        // route handler.
+        const imgUrl =
+          editScene.photoUrl && editScene.photoUrl.startsWith("https://")
+            ? editScene.photoUrl
+            : editScene.photoDataUrl ?? editScene.photoUrl;
         return (
           <ImageEditModal
             imageUrl={imgUrl}

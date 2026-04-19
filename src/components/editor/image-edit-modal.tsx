@@ -443,7 +443,12 @@ export function ImageEditModal({
       setQuickActionBusy({ refKey, recipeId: recipe.id });
       setError(null);
       try {
-        const sourceUrl = target.dataUrl ?? target.url;
+        // Prefer HTTPS URL (Supabase) to avoid Vercel's 4.5MB body cap;
+        // fallback to dataUrl only for pending/unsaved references.
+        const sourceUrl =
+          target.url && target.url.startsWith("https://")
+            ? target.url
+            : target.dataUrl ?? target.url;
 
         const composeRes = await fetch(
           "/api/edit-image/compose-from-recipe",
@@ -736,9 +741,13 @@ export function ImageEditModal({
       const orderedRefs = hasPositioned
         ? [...positioned, ...globals]
         : references;
+      // Prefer HTTPS URLs (Supabase / fal) over inline dataUrls to avoid
+      // Vercel's 4.5MB body cap on /api/edit-image JSON payloads.
       const refUrls = orderedRefs
         .filter((r) => r.dataUrl || r.url)
-        .map((r) => r.dataUrl ?? r.url);
+        .map((r) =>
+          r.url && r.url.startsWith("https://") ? r.url : r.dataUrl ?? r.url,
+        );
 
       if (hasRecipe) {
         // Recipe flow: have the server compose the final prompt, with optional
@@ -1086,7 +1095,11 @@ export function ImageEditModal({
               if (!refItem) return null;
               return (
                 <AssetEditModal
-                  sourceUrl={refItem.dataUrl ?? refItem.url}
+                  sourceUrl={
+                    refItem.url && refItem.url.startsWith("https://")
+                      ? refItem.url
+                      : refItem.dataUrl ?? refItem.url
+                  }
                   sourceLabel={refItem.label}
                   initialRecipe={assetEditing.initialRecipe ?? null}
                   onClose={() => setAssetEditing(null)}

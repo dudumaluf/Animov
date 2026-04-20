@@ -215,6 +215,13 @@ export default function EditorPage({
   // When ribbon mode activates, auto-fit horizontal zoom so the whole track
   // fits in the compressed viewport. Recomputes when the window resizes or
   // the segment list changes. Leaving ribbon resets zoom to 1.
+  //
+  // NOTE: when auto-follow is ON, we intentionally DON'T force panX=0 here —
+  // the engine's sync effect is the single authority for pan in that mode.
+  // Writing 0 pre-emptively creates a flash (or a stuck state in prod builds
+  // where React doesn't re-invoke the engine effect just because ResizeObserver
+  // fired). When auto-follow is OFF, panX=0 is the right default after a
+  // fit-zoom recompute so the user sees the full track from the start.
   useLayoutEffect(() => {
     if (!timelineRibbon || viewMode !== "timeline") return;
     const compute = () => {
@@ -228,7 +235,9 @@ export default function EditorPage({
       if (contentW <= 0) return;
       const fit = Math.min(1, vw / contentW);
       setZoom(Math.max(0.1, fit));
-      setPanX(0);
+      if (!useTimelineStore.getState().autoFollow) {
+        setPanX(0);
+      }
     };
     compute();
     const ro = new ResizeObserver(compute);

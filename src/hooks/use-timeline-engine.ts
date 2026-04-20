@@ -262,6 +262,14 @@ export function useTimelineEngine({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isScrubbing]);
 
+  // Stable signature that changes when the segment list meaningfully mutates
+  // (add/remove/reorder). Used as a dep below so the engine re-syncs panX
+  // whenever the filmstrip layout shifts — without this, adding a scene
+  // mid-session would leave the playhead stuck at the previous pan offset.
+  const segmentSignature = segments
+    .map((s) => `${s.id}:${s.duration.toFixed(3)}`)
+    .join("|");
+
   useEffect(() => {
     if (viewMode !== "timeline") return;
     if (isPlaying || isScrubbing) return;
@@ -288,8 +296,66 @@ export function useTimelineEngine({
     return () => {
       if (rafId !== null) cancelAnimationFrame(rafId);
     };
+    // Deps include `zoom` (ribbon fit-zoom / manual zoom), `segmentSignature`
+    // (scene add/remove/reorder/trim), and `layoutKey` (preset shuffle), on top
+    // of the obvious playback/mode flags. In React StrictMode (dev) the double
+    // mount papers over missing deps by running the effect twice; production
+    // is single-mount and won't forgive an incomplete dep list — which is how
+    // "works locally, broken on Vercel" symptoms sneak in.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, currentTime, isPlaying, isScrubbing, autoFollow, layoutKey]);
+  }, [
+    viewMode,
+    currentTime,
+    isPlaying,
+    isScrubbing,
+    autoFollow,
+    layoutKey,
+    zoom,
+    segmentSignature,
+  ]);
+
+  // ResizeObserver-driven re-sync: covers every layout shift that doesn't
+  // flow through our React state (window resize, inspector slide-in animation,
+  // font load causing reflow, etc.). Without this, production builds can leave
+  // the playhead stuck at the pre-resize panX because no dep of the sync
+  // effect above flipped. The compute cost is negligible (one rAF per resize,
+  // and `syncPanToCurrentTime` already short-circuits when the delta is
+  // below `PAN_SNAP_EPSILON`).
+  useEffect(() => {
+    if (viewMode !== "timeline") return;
+    const vp = viewportRef.current;
+    const mf = mainFlexRef.current;
+    if (!vp && !mf) return;
+
+    let rafId: number | null = null;
+    const resync = () => {
+      if (!useTimelineStore.getState().autoFollow) return;
+      if (useTimelineStore.getState().isPlaying) return;
+      if (useTimelineStore.getState().isScrubbing) return;
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      rafId = requestAnimationFrame(() => {
+        const t = useTimelineStore.getState().currentTime;
+        const { segment, localOffset } = timeToSegment(segmentsRef.current, t);
+        if (segment) {
+          const ok = syncPanToCurrentTime(segment, localOffset);
+          if (!ok) syncPanToCurrentTimeLinear(t);
+        } else {
+          syncPanToCurrentTimeLinear(t);
+        }
+      });
+    };
+
+    const ro = new ResizeObserver(resync);
+    if (vp) ro.observe(vp);
+    if (mf) ro.observe(mf);
+    window.addEventListener("resize", resync);
+    return () => {
+      ro.disconnect();
+      window.removeEventListener("resize", resync);
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [viewMode]);
 
   useEffect(() => {
     if (!isPlaying || viewMode !== "timeline") {

@@ -60,7 +60,7 @@ export async function PATCH(
   }
 
   if (Array.isArray(body.scenes) && body.scenes.length > 0) {
-    const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number; video_versions?: unknown[]; active_version?: number; source_type?: string; trim_start?: number | null; trim_end?: number | null }, i: number) => ({
+    const scenesToUpsert = body.scenes.map((s: { id?: string; photo_url: string; preset_key: string; duration: number; status: string; video_url?: string; cost_credits: number; video_versions?: unknown[]; active_version?: number; source_type?: string; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null }, i: number) => ({
       ...(s.id ? { id: s.id } : {}),
       project_id: params.id,
       order_index: i,
@@ -75,6 +75,10 @@ export async function PATCH(
       source_type: s.source_type ?? "image",
       trim_start: typeof s.trim_start === "number" ? s.trim_start : null,
       trim_end: typeof s.trim_end === "number" ? s.trim_end : null,
+      generation_target_seconds:
+        typeof s.generation_target_seconds === "number"
+          ? s.generation_target_seconds
+          : null,
     }));
 
     const existingIds = scenesToUpsert.filter((s: { id?: string }) => s.id).map((s: { id: string }) => s.id);
@@ -97,15 +101,33 @@ export async function PATCH(
   }
 
   if (Array.isArray(body.transitions) && body.transitions.length > 0) {
-    const transToUpsert = body.transitions.map((t: { from_scene_id: string; to_scene_id: string; video_url?: string; status: string; cost_credits?: number }, i: number) => ({
-      project_id: params.id,
-      from_scene_id: t.from_scene_id,
-      to_scene_id: t.to_scene_id,
-      order_index: i,
-      video_url: t.video_url ?? null,
-      status: t.status === "idle" ? "pending" : t.status,
-      cost_credits: t.cost_credits ?? 0,
-    }));
+    const transToUpsert = body.transitions.map(
+      (
+        t: {
+          from_scene_id: string;
+          to_scene_id: string;
+          video_url?: string;
+          status: string;
+          cost_credits?: number;
+          duration_seconds?: number | null;
+          sprite_json?: unknown;
+          staging_status?: string | null;
+        },
+        i: number,
+      ) => ({
+        project_id: params.id,
+        from_scene_id: t.from_scene_id,
+        to_scene_id: t.to_scene_id,
+        order_index: i,
+        video_url: t.video_url ?? null,
+        status: t.status === "idle" ? "pending" : t.status,
+        cost_credits: t.cost_credits ?? 0,
+        duration_seconds:
+          typeof t.duration_seconds === "number" ? t.duration_seconds : null,
+        sprite_json: t.sprite_json ?? null,
+        staging_status: t.staging_status ?? null,
+      }),
+    );
 
     const { error } = await supabase.from("transitions").upsert(transToUpsert, {
       onConflict: "project_id,from_scene_id,to_scene_id",

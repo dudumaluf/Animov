@@ -1,6 +1,6 @@
 "use client";
 
-import { useLayoutEffect, useRef, useState } from "react";
+import { memo, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTimelineStore } from "@/stores/timeline-store";
 import {
   useEditorSettingsStore,
@@ -12,15 +12,16 @@ import { useStableCenterX } from "@/hooks/use-stable-center";
 const RULER_HEIGHT = 24;
 
 /**
- * Candidate major-tick intervals in seconds. We walk the list in order and
- * pick the smallest stop whose on-screen spacing is >= target.
+ * Candidate major-tick intervals in seconds. Covers common human-readable
+ * cadences (1s, 2s, 5s, ...) so the ruler never surprises with odd numbers.
+ * 3 and 4 are intentionally excluded to keep cadences predictable.
  */
 const INTERVAL_STOPS = [1, 2, 5, 10, 15, 30, 60, 120, 300, 600] as const;
 
 /**
  * Compute a human-friendly major-tick interval such that labels end up roughly
  * `target` pixels apart on screen. `dense` packs more labels, `sparse` spreads
- * them further apart; `auto` uses the default 100px target.
+ * them further apart; `auto` uses the default 110px target.
  */
 function computeMajorInterval(
   effectivePps: number,
@@ -43,7 +44,7 @@ function formatTimeLabel(s: number): string {
   return `${m}:${sec.toString().padStart(2, "0")}`;
 }
 
-export function TimelineRuler({
+function TimelineRulerInner({
   segments,
   viewportRef,
   mainFlexRef,
@@ -74,41 +75,65 @@ export function TimelineRuler({
     return () => ro.disconnect();
   }, [viewportRef]);
 
+  const total = useMemo(() => totalDuration(segments), [segments]);
+  const effectivePps = Math.max(0.01, pixelsPerSecond * zoom);
+  const majorInterval = useMemo(
+    () => computeMajorInterval(effectivePps, rulerSettings.densityMode),
+    [effectivePps, rulerSettings.densityMode],
+  );
+
+  // Ticks now cover BOTH the content range and the visible viewport range, so
+  // when the user pans past `total` they still see a reference grid instead
+  // of an empty bar. We skip generation when either is 0 to avoid infinite
+  // loops on initial render.
+  const { minorTicks, majorTicks } = useMemo(() => {
+    const minor: number[] = [];
+    const major: number[] = [];
+    if (effectivePps <= 0 || majorInterval <= 0) return { minorTicks: minor, majorTicks: major };
+
+    const minorInterval = Math.max(
+      0.5,
+      majorInterval >= 10
+        ? majorInterval / 5
+        : majorInterval >= 5
+          ? majorInterval / 5
+          : 1,
+    );
+
+    // Start slightly before the visible area if we've panned to the right
+    // (panX < 0), so ticks appear from the moment they scroll into view.
+    const startT = Math.max(0, Math.floor(-panX / effectivePps / minorInterval) * minorInterval);
+    // End at whichever is later: the content end, or the right edge of the
+    // viewport. Cap to a sane upper bound so weird zooms don't explode.
+    const viewportEnd = (viewportWidth - panX) / effectivePps;
+    const endT = Math.min(
+      Math.max(total, viewportEnd) + minorInterval,
+      60 * 60 * 4, // 4 hours ceiling
+    );
+
+    const epsilon = 1e-3;
+    for (let t = startT; t <= endT + epsilon; t += minorInterval) {
+      const rounded = Math.round(t * 1000) / 1000;
+      const isMajor =
+        Math.abs(rounded % majorInterval) < epsilon ||
+        Math.abs((rounded % majorInterval) - majorInterval) < epsilon;
+      if (isMajor) major.push(rounded);
+      else minor.push(rounded);
+    }
+    return { minorTicks: minor, majorTicks: major };
+  }, [total, effectivePps, majorInterval, panX, viewportWidth]);
+
   if (viewMode !== "timeline") return null;
   if (!rulerSettings.visible) return null;
   if (segments.length === 0) return null;
-
-  const total = totalDuration(segments);
-  const effectivePps = pixelsPerSecond * zoom;
-  const majorInterval = computeMajorInterval(effectivePps, rulerSettings.densityMode);
-  const minorInterval = Math.max(
-    0.5,
-    majorInterval >= 10
-      ? majorInterval / 5
-      : majorInterval >= 5
-        ? majorInterval / 5
-        : 1,
-  );
-
-  const minorTicks: number[] = [];
-  const majorTicks: number[] = [];
-  const epsilon = 1e-3;
-
-  for (let t = 0; t <= total + epsilon; t += minorInterval) {
-    const rounded = Math.round(t * 1000) / 1000;
-    const isMajor = Math.abs(rounded % majorInterval) < epsilon
-      || Math.abs((rounded % majorInterval) - majorInterval) < epsilon;
-    if (isMajor) majorTicks.push(rounded);
-    else minorTicks.push(rounded);
-  }
 
   const endX = panX + total * effectivePps;
 
   return (
     <div
       ref={rulerRef}
-      className="pointer-events-none absolute left-0 right-0 top-0 z-30 overflow-hidden border-b border-white/5 bg-[#0A0A09]/70 backdrop-blur-sm"
-      style={{ height: RULER_HEIGHT }}
+      className="pointer-events-none absolute left-0 right-0 top-0 z-30 overflow-hidden border-b border-white/5 bg-[#0A0A09]/70"
+      style={{ height: RULER_HEIGHT, contain: "layout paint" }}
     >
       {minorTicks.map((t) => {
         const x = panX + t * effectivePps;
@@ -124,7 +149,10 @@ export function TimelineRuler({
 
       {majorTicks.map((t) => {
         const x = panX + t * effectivePps;
-        if (x < -40 || x > viewportWidth + 40) return null;
+        // Extra generous culling horizontally so labels near the right edge
+        // (which extend rightward from their tick) don't disappear just
+        // because the tick sits at viewportWidth - 1.
+        if (x < -60 || x > viewportWidth + 60) return null;
         return (
           <div
             key={`maj-${t}`}
@@ -147,7 +175,7 @@ export function TimelineRuler({
       {endX >= -4 && endX <= viewportWidth + 4 && (
         <div
           className="absolute top-0 bg-white/30"
-          style={{ left: endX, width: 1, height: RULER_HEIGHT }}
+          style={{ left: endX, width: 1, height: RULER_HEIGHT, opacity: 0.6 }}
           aria-hidden="true"
         />
       )}
@@ -162,3 +190,11 @@ export function TimelineRuler({
     </div>
   );
 }
+
+/**
+ * Memoized wrapper — the inner component still has to re-render on every
+ * `panX`/`zoom` change (the ticks move with it), but memoizing prevents
+ * needless re-renders from unrelated store updates (e.g. `currentTime`
+ * bumps during scrub/playback that don't mutate tick layout).
+ */
+export const TimelineRuler = memo(TimelineRulerInner);

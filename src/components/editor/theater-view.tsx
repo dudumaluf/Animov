@@ -43,8 +43,8 @@ export function TheaterView() {
         id: transition.id,
         videoUrl: transition.videoUrl ?? null,
         poster: null,
-        sprite: null,
-        duration: 1,
+        sprite: transition.sprite ?? null,
+        duration: transition.duration ?? transition.costCredits ?? 1,
       };
     }
     return null;

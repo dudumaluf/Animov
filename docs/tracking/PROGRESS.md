@@ -40,6 +40,10 @@
 - Pre-montagem do proximo segmento (transicao seamless)
 - Preview modular: `TheaterView` (full) + `HeadlinePreview` (flutuante)
 - Cena image-only renderiza no preview durante playback/scrub
+- Playhead auto-pan na borda (drag ate extremidade faz timeline correr)
+- Ruler estendido ate viewport + memoizado (sem flicker, labels cobrindo toda a tira)
+- AutoFollow recenter com retry + fallback linear (sem bug de playhead preso a esquerda)
+- Divisor arrastavel Preview/Strip no modo Foco (`theaterStripHeight` persistido, clamp 72-360px)
 
 **Trim Nao-Destrutivo (novo)**
 - Migration `00008_scene_trim.sql` (`trim_start` / `trim_end`)
@@ -47,6 +51,14 @@
 - `TrimControls` no inspector (campos numericos + botao limpar)
 - Timeline engine respeita trim em todos os paths (seek, scrub, drift, premount)
 - Export composicao respeita trim em video + audio PCM
+
+**Clip Duration vs Generation Target (novo)**
+- Migration `00009_scene_generation_target.sql` (`generation_target_seconds`)
+- `Scene.generationTargetSeconds` separa duracao do clip ja gerado da target da proxima geracao
+- Inspector "Alvo (gerar)" atualiza target; clip label ao lado mostra duracao real do video
+- `DurationPill` click-to-edit no canvas e timeline (popover inline)
+- Pill adapta entre imagem (ajusta `duration`) e video (ajusta `trimEnd`)
+- Target limpa automaticamente apos geracao bem sucedida
 
 **Asset Editing (novo)**
 - `AssetEditModal` + `AssetContextMenu` (double-click ou right-click)
@@ -92,16 +104,15 @@
 
 **Deploy**
 - Vercel auto-deploy
-- Migrations rodadas: 00001-00007 (recipes); 00008 (trim) pendente em producao
+- Migrations rodadas: 00001-00007 (recipes); 00008 (trim) + 00009 (generation_target) pendentes em producao
 
 ### Proximo foco
 
-1. **Aplicar migration `00008_scene_trim.sql`** em Supabase producao (bloqueia trim em prod)
-2. **Separar clip duration vs generation target** (hover do card = clip duration; grid 5s/10s do inspector = generation target exclusivo) — novo campo `Scene.generationTargetDuration`
-3. **Crossfade client-side** entre cenas (roadmap 4b.7, ainda `ready: false` no context menu)
-4. **Admin UI** para troca de FAL_KEY write-only (roadmap 5.5)
-5. **Debug view** completo no inspector (vision JSON + prompt gerado + custo por cena)
-6. **Nodes overlay** (texto/titulo + imagem/logo)
-7. **Beat sync** na musica
-8. Fase 6 — Polish V1 (compartilhamento, empty states, QA, SEO)
-9. Fase 7 — Stripe/pagamento
+1. **Aplicar migrations `00008_scene_trim.sql` + `00009_scene_generation_target.sql`** em Supabase producao (bloqueiam trim + target em prod)
+2. **Crossfade client-side** entre cenas (roadmap 4b.7, ainda `ready: false` no context menu)
+3. **Admin UI** para troca de FAL_KEY write-only (roadmap 5.5)
+4. **Debug view** completo no inspector (vision JSON + prompt gerado + custo por cena)
+5. **Nodes overlay** (texto/titulo + imagem/logo)
+6. **Beat sync** na musica
+7. Fase 6 — Polish V1 (compartilhamento, empty states, QA, SEO)
+8. Fase 7 — Stripe/pagamento

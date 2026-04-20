@@ -176,9 +176,14 @@
 
 ---
 
-## Fase 4d — Pending Polish [PLANEJADO]
+## Fase 4d — Pending Polish [EM PROGRESSO]
 
-- [ ] 4d.1 **Separar clip duration vs generation target** (hover do card = clip; grid 5/10s = target exclusivo do inspector)
+- [x] 4d.1 **Separar clip duration vs generation target** (hover do card = clip; grid 5/10s = target exclusivo do inspector) — migration 00009 + `generationTargetSeconds` + inspector "Alvo (gerar)"
+- [x] 4d.1.1 Pill de duracao editavel (click-to-edit) no canvas e timeline — `duration-pill.tsx` com popover inline
+- [x] 4d.1.2 Playhead auto-pan quando arrastado para a borda do viewport
+- [x] 4d.1.3 Ruler fixes (labels estendidos ate viewport, memoizado, sem flicker)
+- [x] 4d.1.4 AutoFollow recenter fix (retry + fallback linear quando DOM nao esta pronto)
+- [x] 4d.1.5 Divisor redimensionavel Preview/Strip no modo Foco (`theaterStripHeight` persistido)
 - [ ] 4d.2 Crossfade client-side entre cenas (herdado de 4b.7)
 - [ ] 4d.3 Node de texto/titulo overlay (herdado de 4b.10)
 - [ ] 4d.4 Node de imagem/logo overlay (herdado de 4b.11)

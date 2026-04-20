@@ -17,6 +17,7 @@ import { ViewModeToggle } from "@/components/editor/view-mode-toggle";
 import { BackgroundTasksIndicator } from "@/components/editor/background-tasks-indicator";
 import { LayoutBar } from "@/components/editor/layout-bar";
 import { TheaterView } from "@/components/editor/theater-view";
+import { TheaterDivider } from "@/components/editor/theater-divider";
 import { HeadlinePreview } from "@/components/editor/headline-preview";
 import { SettingsModal } from "@/components/editor/settings-modal";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
@@ -51,6 +52,9 @@ export default function EditorPage({
   const timelineTogglePlay = useTimelineStore((s) => s.togglePlay);
   const previewPlacement = useEditorSettingsStore((s) => s.layout.previewPlacement);
   const inspectorDensity = useEditorSettingsStore((s) => s.layout.inspectorDensity);
+  const theaterStripHeight = useEditorSettingsStore(
+    (s) => s.layout.theaterStripHeight,
+  );
   const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
   const [previewVideoUrl, setPreviewVideoUrl] = useState<string | null>(null);
   const [editingSceneId, setEditingSceneId] = useState<string | null>(null);
@@ -191,13 +195,20 @@ export default function EditorPage({
     return () => window.removeEventListener("resize", onResize);
   }, [canvasMode, fitToView, viewMode]);
 
-  // When switching to timeline mode: reset zoom/pan so strip is at native scale
+  // When switching to timeline mode: reset zoom/pan so the strip is at native
+  // scale. With auto-follow ON the engine is the authority over panX (it pans
+  // so currentTime lines up with stableCenterX) — resetting panX=0 here would
+  // both flash the ruler at x=0 AND linger if the engine's sync effect never
+  // re-triggers for the current deps (e.g. preset changes that don't flip
+  // currentTime). So we only hard-reset panX when auto-follow is off.
   useLayoutEffect(() => {
     if (viewMode === "timeline") {
       setZoom(1);
-      setPanX(0);
       setPanY(0);
       setCanvasMode("free");
+      if (!useTimelineStore.getState().autoFollow) {
+        setPanX(0);
+      }
     }
   }, [viewMode]);
 
@@ -231,10 +242,16 @@ export default function EditorPage({
 
   useLayoutEffect(() => {
     if (!timelineRibbon && viewMode === "timeline") {
-      // Leaving ribbon — restore neutral zoom/pan so the normal timeline looks
-      // like it always did before Foco was entered.
+      // Leaving ribbon — restore neutral zoom so the normal timeline looks
+      // like it always did before Foco was entered. Same rationale as the
+      // viewMode-reset above: only hard-reset panX if auto-follow is off,
+      // otherwise the engine will pan to match stableCenterX and any
+      // pre-emptive reset just causes a flash (or sticks if the sync
+      // effect doesn't re-fire for this dep combo).
       setZoom(1);
-      setPanX(0);
+      if (!useTimelineStore.getState().autoFollow) {
+        setPanX(0);
+      }
     }
   }, [timelineRibbon, viewMode]);
 
@@ -612,13 +629,15 @@ export default function EditorPage({
             </div>
           )}
 
-          {/* Canvas area — full height in normal modes, compressed ribbon in theater */}
+          {/* Drag handle between preview and strip — only in Foco mode */}
+          {isTheater && <TheaterDivider />}
+
+          {/* Canvas area — full height in normal modes, user-sized ribbon in theater */}
           <div
             className={`relative overflow-hidden ${
-              isTheater
-                ? "h-[112px] shrink-0 border-t border-white/5"
-                : "flex-1"
+              isTheater ? "shrink-0 border-t border-white/5" : "flex-1"
             }`}
+            style={isTheater ? { height: theaterStripHeight } : undefined}
           >
             <div
               ref={viewportRef}
@@ -669,6 +688,7 @@ export default function EditorPage({
                 mainFlexRef={mainFlexRef}
                 zoom={zoom}
                 panX={panX}
+                setPanX={setPanX}
               />
 
               <BackgroundTasksIndicator />

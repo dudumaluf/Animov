@@ -774,7 +774,9 @@ export function Inspector({
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
   const setScenePreset = useProjectStore((s) => s.setScenePreset);
-  const setSceneDuration = useProjectStore((s) => s.setSceneDuration);
+  const setSceneGenerationTarget = useProjectStore(
+    (s) => s.setSceneGenerationTarget,
+  );
   const setSceneTrim = useProjectStore((s) => s.setSceneTrim);
   const generateScene = useProjectStore((s) => s.generateScene);
   const isGenerating = useProjectStore((s) => s.isGenerating);
@@ -960,27 +962,42 @@ export function Inspector({
                   />
                 </div>
 
+                {/* "Alvo de geração": how long we ask the model for on the NEXT
+                    generation. After a successful generate this clears and
+                    scene.duration reflects the effective clip length (adjusted
+                    by trim). Picking a value here does NOT change the existing
+                    clip duration — only the next attempt. */}
                 <div className="mt-3">
-                  <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
-                    Duração
+                  <label className="mb-1.5 flex items-center justify-between font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                    <span>Alvo (gerar)</span>
+                    {scene.status === "ready" && scene.videoUrl && (
+                      <span className="font-mono text-[9px] normal-case text-text-secondary/60">
+                        Clip: {Math.round(scene.duration * 10) / 10}s
+                      </span>
+                    )}
                   </label>
                   <div
                     className={`grid gap-1 ${durations.length > 4 ? "grid-cols-6" : durations.length > 2 ? "grid-cols-4" : "grid-cols-2"}`}
                   >
-                    {durations.map((d) => (
-                      <button
-                        key={d}
-                        type="button"
-                        onClick={() => setSceneDuration(selectedSceneId, d)}
-                        className={`rounded-md border py-1 font-mono text-[10px] transition-all ${
-                          scene.duration === d
-                            ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
-                            : "border-white/5 text-text-secondary hover:border-white/10"
-                        }`}
-                      >
-                        {d}s
-                      </button>
-                    ))}
+                    {durations.map((d) => {
+                      const effective =
+                        scene.generationTargetSeconds ?? scene.duration;
+                      const isActive = effective === d;
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setSceneGenerationTarget(selectedSceneId, d)}
+                          className={`rounded-md border py-1 font-mono text-[10px] transition-all ${
+                            isActive
+                              ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
+                              : "border-white/5 text-text-secondary hover:border-white/10"
+                          }`}
+                        >
+                          {d}s
+                        </button>
+                      );
+                    })}
                   </div>
                 </div>
 

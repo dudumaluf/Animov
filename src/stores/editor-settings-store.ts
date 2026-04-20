@@ -17,7 +17,18 @@ export type LayoutSettings = {
   inspectorDensity: InspectorDensity;
   timelineRibbon: boolean;
   showLayoutBar: boolean;
+  /**
+   * Height in pixels of the film strip row when the layout is in "foco"
+   * (theater) mode. Users can drag the divider between the preview and the
+   * strip to retune how much vertical space each gets.
+   * Persisted so the choice survives reloads.
+   */
+  theaterStripHeight: number;
 };
+
+export const THEATER_STRIP_MIN = 72;
+export const THEATER_STRIP_MAX = 360;
+export const THEATER_STRIP_DEFAULT = 112;
 
 export type EditorSettings = {
   playheadLine: {
@@ -46,7 +57,7 @@ export type EditorSettings = {
  */
 export const LAYOUT_PRESETS: Record<
   Exclude<LayoutPreset, "livre">,
-  Omit<LayoutSettings, "preset" | "showLayoutBar">
+  Omit<LayoutSettings, "preset" | "showLayoutBar" | "theaterStripHeight">
 > = {
   edicao: {
     previewPlacement: "inspector",
@@ -85,6 +96,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
     preset: "edicao",
     ...LAYOUT_PRESETS.edicao,
     showLayoutBar: true,
+    theaterStripHeight: THEATER_STRIP_DEFAULT,
   },
 };
 
@@ -106,6 +118,7 @@ type EditorSettingsStore = EditorSettings & {
   setInspectorDensity: (d: InspectorDensity) => void;
   setTimelineRibbon: (v: boolean) => void;
   setShowLayoutBar: (v: boolean) => void;
+  setTheaterStripHeight: (px: number) => void;
 
   resetDefaults: () => void;
 };
@@ -191,20 +204,46 @@ export const useEditorSettingsStore = create<EditorSettingsStore>()(
         }),
       setShowLayoutBar: (v) =>
         set((s) => ({ layout: { ...s.layout, showLayoutBar: v } })),
+      setTheaterStripHeight: (px) =>
+        set((s) => ({
+          layout: {
+            ...s.layout,
+            theaterStripHeight: Math.max(
+              THEATER_STRIP_MIN,
+              Math.min(THEATER_STRIP_MAX, Math.round(px)),
+            ),
+          },
+        })),
 
       resetDefaults: () =>
         set(() => ({ ...DEFAULT_EDITOR_SETTINGS })),
     }),
     {
       name: "animov-editor-settings-v1",
-      version: 2,
+      version: 3,
       migrate: (persisted: unknown, version) => {
+        if (!persisted || typeof persisted !== "object") {
+          return DEFAULT_EDITOR_SETTINGS;
+        }
         // v1 had no `layout`; synthesize the default so existing users open
         // exactly where they were (`edicao`) with the layout bar visible.
-        if (version < 2 && persisted && typeof persisted === "object") {
+        if (version < 2) {
           return {
             ...(persisted as EditorSettings),
             layout: DEFAULT_EDITOR_SETTINGS.layout,
+          };
+        }
+        // v2 didn't include `theaterStripHeight`; default it so existing
+        // users get the same 112px strip they saw before without any reset.
+        if (version < 3) {
+          const prev = persisted as EditorSettings;
+          return {
+            ...prev,
+            layout: {
+              ...prev.layout,
+              theaterStripHeight:
+                prev.layout?.theaterStripHeight ?? THEATER_STRIP_DEFAULT,
+            },
           };
         }
         return persisted as EditorSettings;

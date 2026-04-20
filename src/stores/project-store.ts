@@ -47,6 +47,13 @@ export type Scene = {
    */
   trimStart?: number;
   trimEnd?: number;
+  /**
+   * Desired duration to request from the video model on the NEXT generation.
+   * Kept separate from `duration` (which reflects the effective clip length).
+   * Cleared on successful generation so the UI never confuses past intent
+   * with future intent. `undefined` falls back to `duration` at request time.
+   */
+  generationTargetSeconds?: number;
 };
 
 export type Transition = {
@@ -58,6 +65,20 @@ export type Transition = {
   status: "idle" | "generating" | "ready" | "failed";
   videoUrl?: string;
   costCredits: number;
+  /**
+   * Real duration (seconds) returned by the video model. Decoupled from
+   * `costCredits` because providers like Kling can return 4.2s when asked
+   * for 5s. Timeline segment math uses this when present; falls back to
+   * `costCredits` for transitions created before this field existed.
+   */
+  duration?: number;
+  /**
+   * Sprite sheet metadata for instant scrub preview (same staging pipeline
+   * as scenes). `undefined` = not staged yet; staging is best-effort and can
+   * fail silently (scrub falls back to raw `<video>` seek).
+   */
+  sprite?: SceneSprite;
+  stagingStatus?: SceneStagingStatus;
 };
 
 export type ProjectStore = {
@@ -96,6 +117,7 @@ export type ProjectStore = {
   reorderScenes: (fromIndex: number, toIndex: number) => void;
   setScenePreset: (sceneId: string, presetId: string) => void;
   setSceneDuration: (sceneId: string, duration: number) => void;
+  setSceneGenerationTarget: (sceneId: string, seconds: number | null) => void;
   setSceneTrim: (
     sceneId: string,
     trim: { trimStart?: number | null; trimEnd?: number | null },
@@ -271,6 +293,67 @@ async function kickoffStaging(
     useProjectStore.setState((st) => ({
       scenes: st.scenes.map((s) =>
         s.id === sceneId ? { ...s, stagingStatus: "failed" as const } : s,
+      ),
+    }));
+  }
+}
+
+/**
+ * Same staging pipeline as scenes, but targeted at an AI transition. Uses the
+ * transition id (`t-{from}-{to}`) as the sprite's "sceneId" inside the staging
+ * helper — `/api/persist-sprite` only cares that the id is unique per project.
+ * Non-blocking and best-effort: failure degrades to raw `<video>` scrub.
+ */
+async function kickoffStagingForTransition(
+  transitionId: string,
+  videoUrl: string,
+  duration: number,
+): Promise<void> {
+  if (!videoUrl || !videoUrl.startsWith("http")) return;
+
+  const state = useProjectStore.getState();
+  const trans = state.transitions.find((t) => t.id === transitionId);
+  if (!trans) return;
+  if (trans.sprite && trans.videoUrl === videoUrl && trans.stagingStatus === "ready") return;
+  if (trans.stagingStatus === "pending") return;
+
+  const projectId = state.supabaseProjectId ?? state.projectId;
+
+  useProjectStore.setState((st) => ({
+    transitions: st.transitions.map((t) =>
+      t.id === transitionId ? { ...t, stagingStatus: "pending" as const } : t,
+    ),
+  }));
+
+  try {
+    const sprite = await stageVideoForTimeline({
+      sceneId: transitionId,
+      videoUrl,
+      projectId,
+      duration,
+    });
+    if (sprite) {
+      useProjectStore.setState((st) => ({
+        transitions: st.transitions.map((t) =>
+          t.id === transitionId
+            ? { ...t, stagingStatus: "ready" as const, sprite }
+            : t,
+        ),
+        isDirty: true,
+      }));
+      void useProjectStore.getState().saveToSupabase();
+    } else {
+      useProjectStore.setState((st) => ({
+        transitions: st.transitions.map((t) =>
+          t.id === transitionId ? { ...t, stagingStatus: "failed" as const } : t,
+        ),
+      }));
+    }
+  } catch (err) {
+    console.error("[kickoff-staging-transition]", err);
+    useProjectStore.setState((st) => ({
+      transitions: st.transitions.map((t) =>
+        t.id === transitionId ? { ...t, stagingStatus: "failed" as const } : t,
       ),
     }));
   }
@@ -836,6 +919,30 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
+      setSceneGenerationTarget: (sceneId, seconds) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            const next = seconds === null ? undefined : Math.max(1, Math.min(60, seconds));
+            // For idle scenes (not yet generated), also preview the target on
+            // the card by mirroring it to `duration` so the hover pill shows
+            // what will be asked. Generated scenes keep `duration` == effective
+            // clip length; the target is a future-only intent.
+            const isUngenerated = !(s.status === "ready" && s.videoUrl);
+            return {
+              ...s,
+              generationTargetSeconds: next,
+              duration: isUngenerated && typeof next === "number" ? next : s.duration,
+              costCredits:
+                isUngenerated && typeof next === "number"
+                  ? next
+                  : s.costCredits,
+            };
+          }),
+          isDirty: true,
+        }));
+      },
+
       setSceneTrim: (sceneId, trim) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
@@ -970,9 +1077,12 @@ export const useProjectStore = create<ProjectStore>()(
 
           const data = await res.json();
           const realCost = typeof data.creditsCost === "number" ? data.creditsCost : duration;
+          const realDuration = typeof data.duration === "number" && data.duration > 0 ? data.duration : duration;
           set((state) => ({
             transitions: state.transitions.map((t) =>
-              t.id === transitionId ? { ...t, status: "ready" as const, videoUrl: data.videoUrl, costCredits: realCost } : t,
+              t.id === transitionId
+                ? { ...t, status: "ready" as const, videoUrl: data.videoUrl, costCredits: realCost, duration: realDuration }
+                : t,
             ),
             isDirty: true,
           }));
@@ -986,6 +1096,7 @@ export const useProjectStore = create<ProjectStore>()(
               ),
               isDirty: true,
             }));
+            void kickoffStagingForTransition(transitionId, permUrl, realDuration);
           });
         } catch (err) {
           console.error(`[generateTransition] ${transitionId}:`, err);
@@ -1124,7 +1235,7 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
@@ -1133,6 +1244,10 @@ export const useProjectStore = create<ProjectStore>()(
             const clampedVer = Math.min(activeVer, Math.max(0, dbVersions.length - 1));
             const trimStart = typeof s.trim_start === "number" ? s.trim_start : undefined;
             const trimEnd = typeof s.trim_end === "number" ? s.trim_end : undefined;
+            const generationTargetSeconds =
+              typeof s.generation_target_seconds === "number"
+                ? s.generation_target_seconds
+                : undefined;
             return {
               id: s.id,
               photoUrl: s.photo_url,
@@ -1148,19 +1263,46 @@ export const useProjectStore = create<ProjectStore>()(
               audioVolume: typeof s.audio_volume === "number" ? s.audio_volume : undefined,
               trimStart,
               trimEnd,
+              generationTargetSeconds,
             };
           });
 
-          const dbTransitions: Transition[] = (data.transitions ?? []).map((t: { from_scene_id: string; to_scene_id: string; video_url: string; status: string; cost_credits: number }) => ({
-            id: `t-${t.from_scene_id}-${t.to_scene_id}`,
-            fromSceneId: t.from_scene_id,
-            toSceneId: t.to_scene_id,
-            presetId: "soft_dissolve_drift",
-            enabled: true,
-            status: t.status === "pending" ? "idle" : t.status,
-            videoUrl: t.video_url ?? undefined,
-            costCredits: t.cost_credits,
-          }));
+          const dbTransitions: Transition[] = (data.transitions ?? []).map(
+            (t: {
+              from_scene_id: string;
+              to_scene_id: string;
+              video_url: string;
+              status: string;
+              cost_credits: number;
+              duration_seconds?: number | string | null;
+              sprite_json?: SceneSprite | null;
+              staging_status?: SceneStagingStatus | null;
+            }) => {
+              const duration =
+                typeof t.duration_seconds === "number"
+                  ? t.duration_seconds
+                  : typeof t.duration_seconds === "string"
+                    ? Number(t.duration_seconds) || undefined
+                    : undefined;
+              const sprite =
+                t.sprite_json && typeof t.sprite_json === "object" && "url" in t.sprite_json
+                  ? (t.sprite_json as SceneSprite)
+                  : undefined;
+              return {
+                id: `t-${t.from_scene_id}-${t.to_scene_id}`,
+                fromSceneId: t.from_scene_id,
+                toSceneId: t.to_scene_id,
+                presetId: "soft_dissolve_drift",
+                enabled: true,
+                status: t.status === "pending" ? "idle" : t.status,
+                videoUrl: t.video_url ?? undefined,
+                costCredits: t.cost_credits,
+                duration,
+                sprite,
+                stagingStatus: t.staging_status ?? undefined,
+              };
+            },
+          );
 
           const meta = data.project.metadata ?? {};
 
@@ -1211,7 +1353,14 @@ export const useProjectStore = create<ProjectStore>()(
                 s.videoUrl.startsWith("http") &&
                 !s.sprite,
             );
-            if (toStage.length > 0) {
+            const transitionsToStage = get().transitions.filter(
+              (t) =>
+                t.status === "ready" &&
+                t.videoUrl &&
+                t.videoUrl.startsWith("http") &&
+                !t.sprite,
+            );
+            if (toStage.length > 0 || transitionsToStage.length > 0) {
               setTimeout(() => {
                 void (async () => {
                   for (const s of toStage) {
@@ -1220,6 +1369,15 @@ export const useProjectStore = create<ProjectStore>()(
                       await kickoffStaging(s.id, s.videoUrl, s.duration);
                     } catch {
                       /* continue to next scene */
+                    }
+                  }
+                  for (const t of transitionsToStage) {
+                    if (!t.videoUrl) continue;
+                    const dur = t.duration ?? t.costCredits ?? 5;
+                    try {
+                      await kickoffStagingForTransition(t.id, t.videoUrl, dur);
+                    } catch {
+                      /* continue to next transition */
                     }
                   }
                 })();
@@ -1307,6 +1465,10 @@ export const useProjectStore = create<ProjectStore>()(
                 audio_volume: s.audioVolume ?? 1,
                 trim_start: typeof s.trimStart === "number" ? s.trimStart : null,
                 trim_end: typeof s.trimEnd === "number" ? s.trimEnd : null,
+                generation_target_seconds:
+                  typeof s.generationTargetSeconds === "number"
+                    ? s.generationTargetSeconds
+                    : null,
               };
             })
             .filter(Boolean);
@@ -1320,6 +1482,9 @@ export const useProjectStore = create<ProjectStore>()(
             video_url: t.videoUrl,
             status: t.status,
             cost_credits: t.costCredits,
+            duration_seconds: typeof t.duration === "number" ? t.duration : null,
+            sprite_json: t.sprite ?? null,
+            staging_status: t.stagingStatus ?? null,
           }));
 
           const sceneStaging: Record<string, SceneSprite> = {};
@@ -1387,6 +1552,8 @@ export const useProjectStore = create<ProjectStore>()(
 
           get().updateSceneStatus(scene.id, "generating");
 
+          const targetDuration = scene.generationTargetSeconds ?? scene.duration;
+
           try {
             const res = await fetch("/api/generate-scene", {
               method: "POST",
@@ -1394,7 +1561,7 @@ export const useProjectStore = create<ProjectStore>()(
               body: JSON.stringify({
                 photoUrl: httpsUrl,
                 presetId: scene.presetId,
-                duration: scene.duration,
+                duration: targetDuration,
                 modelId: state.modelId,
               }),
             });
@@ -1405,9 +1572,17 @@ export const useProjectStore = create<ProjectStore>()(
             }
 
             const data = await res.json();
-            const realCost = typeof data.creditsCost === "number" ? data.creditsCost : scene.duration;
-            const realDuration = typeof data.duration === "number" ? data.duration : scene.duration;
+            const realCost = typeof data.creditsCost === "number" ? data.creditsCost : targetDuration;
+            const realDuration = typeof data.duration === "number" ? data.duration : targetDuration;
             get().updateSceneStatus(scene.id, "ready", data.videoUrl, realCost, realDuration);
+
+            // Clear the generation target now that we have the real duration
+            // bound to `scene.duration`. Keeps future inspector tweaks honest.
+            set((st) => ({
+              scenes: st.scenes.map((s) =>
+                s.id === scene.id ? { ...s, generationTargetSeconds: undefined } : s,
+              ),
+            }));
 
             const falVideoUrl = data.videoUrl;
             persistVideoToStorage(falVideoUrl, pid, scene.id).then((permUrl) => {
@@ -1458,6 +1633,8 @@ export const useProjectStore = create<ProjectStore>()(
 
         get().updateSceneStatus(sceneId, "generating");
 
+        const targetDuration = scene.generationTargetSeconds ?? scene.duration;
+
         try {
           const res = await fetch("/api/generate-scene", {
             method: "POST",
@@ -1465,7 +1642,7 @@ export const useProjectStore = create<ProjectStore>()(
             body: JSON.stringify({
               photoUrl: httpsUrl,
               presetId: scene.presetId,
-              duration: scene.duration,
+              duration: targetDuration,
               modelId: state.modelId,
             }),
           });
@@ -1477,9 +1654,17 @@ export const useProjectStore = create<ProjectStore>()(
           }
 
           const data = await res.json();
-          const realCost = typeof data.creditsCost === "number" ? data.creditsCost : scene.duration;
-          const realDuration = typeof data.duration === "number" ? data.duration : scene.duration;
+          const realCost = typeof data.creditsCost === "number" ? data.creditsCost : targetDuration;
+          const realDuration = typeof data.duration === "number" ? data.duration : targetDuration;
           get().updateSceneStatus(sceneId, "ready", data.videoUrl, realCost, realDuration);
+
+          // Clear the generation target now that we have the real duration
+          // bound to `scene.duration`. Keeps future inspector tweaks honest.
+          set((st) => ({
+            scenes: st.scenes.map((s) =>
+              s.id === sceneId ? { ...s, generationTargetSeconds: undefined } : s,
+            ),
+          }));
 
           const falVideoUrl = data.videoUrl;
           persistVideoToStorage(falVideoUrl, pid, sceneId).then((permUrl) => {

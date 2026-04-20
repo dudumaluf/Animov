@@ -9,6 +9,7 @@ import {
 } from "@/lib/timeline/segments";
 import { videoRegistry } from "@/lib/timeline/video-registry";
 import { computePlayheadX } from "@/components/editor/playhead";
+import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 
 export interface TimelineEngineParams {
   segments: Segment[];
@@ -78,6 +79,17 @@ export function useTimelineEngine({
   const currentTime = useTimelineStore((s) => s.currentTime);
   const viewMode = useTimelineStore((s) => s.viewMode);
   const autoFollow = useTimelineStore((s) => s.autoFollow);
+
+  // Stable key that changes whenever the layout preset does — previewPlacement,
+  // inspectorDensity, or timelineRibbon. The autoFollow-sync effect depends on
+  // this so switching preset (e.g. exiting Foco back to Edição) re-runs the
+  // pan computation with the new `stableCenterX`. Without this, panX would
+  // linger at whatever the page.tsx reset wrote (or stay stuck at 0 if
+  // reset fired and the engine's other deps didn't change).
+  const layoutKey = useEditorSettingsStore(
+    (s) =>
+      `${s.layout.previewPlacement}:${s.layout.inspectorDensity}:${s.layout.timelineRibbon ? 1 : 0}`,
+  );
 
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const activeSegmentIdRef = useRef<string | null>(null);
@@ -254,14 +266,30 @@ export function useTimelineEngine({
     if (viewMode !== "timeline") return;
     if (isPlaying || isScrubbing) return;
     if (!useTimelineStore.getState().autoFollow) return;
-    const raf = requestAnimationFrame(() => {
+
+    let attempts = 0;
+    let rafId: number | null = null;
+
+    const attempt = () => {
+      attempts += 1;
       const { segment, localOffset } = timeToSegment(segmentsRef.current, currentTime);
       if (!segment) return;
-      syncPanToCurrentTime(segment, localOffset);
-    });
-    return () => cancelAnimationFrame(raf);
+      const ok = syncPanToCurrentTime(segment, localOffset);
+      if (!ok && attempts < 3) {
+        rafId = requestAnimationFrame(attempt);
+      } else if (!ok) {
+        // Final fallback: position by pps alone. May be off by a few pixels if
+        // very short clips hit the `MIN_TIMELINE_CARD_WIDTH` clamp, but it's
+        // infinitely better than leaving the playhead stuck at x=0.
+        syncPanToCurrentTimeLinear(currentTime);
+      }
+    };
+    rafId = requestAnimationFrame(attempt);
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [viewMode, currentTime, isPlaying, isScrubbing, autoFollow]);
+  }, [viewMode, currentTime, isPlaying, isScrubbing, autoFollow, layoutKey]);
 
   useEffect(() => {
     if (!isPlaying || viewMode !== "timeline") {
@@ -419,15 +447,20 @@ export function useTimelineEngine({
     }
   }
 
-  function syncPanToCurrentTime(segment: Segment | null, localOffset: number) {
+  /**
+   * Pans the canvas so the given (segment, localOffset) pair sits under the
+   * stable playhead position. Returns `true` on success, `false` if the DOM
+   * wasn't ready (caller should retry or fall back).
+   */
+  function syncPanToCurrentTime(segment: Segment | null, localOffset: number): boolean {
     const viewport = viewportRef.current;
     const content = contentRef.current;
-    if (!viewport || !content || !segment) return;
+    if (!viewport || !content || !segment) return false;
 
     const cardEl = content.querySelector(
       `[data-timeline-id="${segment.id}"]`,
     ) as HTMLElement | null;
-    if (!cardEl) return;
+    if (!cardEl) return false;
 
     const localContentX =
       cardEl.offsetLeft +
@@ -436,6 +469,26 @@ export function useTimelineEngine({
     const z = zoomRef.current || 1;
     const newPanX = targetOffset - localContentX * z;
 
+    if (Math.abs(newPanX - panXRef.current) < PAN_SNAP_EPSILON) return true;
+    panXRef.current = newPanX;
+    setPanXRef.current(newPanX);
+    return true;
+  }
+
+  /**
+   * DOM-less fallback used when the timeline card for a given segment isn't
+   * ready yet (common right after autoFollow flips back on and React hasn't
+   * committed the re-render). Uses the store's pixels-per-second directly,
+   * which matches card widths except for ultra-short clips that hit the
+   * `MIN_TIMELINE_CARD_WIDTH` clamp.
+   */
+  function syncPanToCurrentTimeLinear(t: number) {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const pps = useTimelineStore.getState().pixelsPerSecond;
+    const z = zoomRef.current || 1;
+    const targetOffset = computePlayheadX(viewport, mainFlexRef.current);
+    const newPanX = targetOffset - t * pps * z;
     if (Math.abs(newPanX - panXRef.current) < PAN_SNAP_EPSILON) return;
     panXRef.current = newPanX;
     setPanXRef.current(newPanX);

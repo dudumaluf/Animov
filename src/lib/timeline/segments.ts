@@ -86,7 +86,10 @@ export function buildSegments(scenes: Scene[], transitions: Transition[]): Segme
       const transId = `t-${scene.id}-${next.id}`;
       const trans = transitions.find((tr) => tr.id === transId);
       if (trans && trans.status === "ready" && trans.videoUrl) {
-        const tDur = Math.max(MIN_SEGMENT_DURATION, trans.costCredits || 5);
+        const tDur = Math.max(
+          MIN_SEGMENT_DURATION,
+          trans.duration ?? trans.costCredits ?? 5,
+        );
         segments.push({
           kind: "transition",
           id: transId,

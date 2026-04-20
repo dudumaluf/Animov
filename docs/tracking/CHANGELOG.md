@@ -308,7 +308,69 @@
 
 ### Tarefas explicitas pro proximo PR
 
-- Separar **clip duration** (hover do card, timeline) de **generation target** (grid 5s/10s do inspector) em campos distintos
+- Crossfade client-side entre cenas (ainda aberto)
+- Admin UI para troca de FAL_KEY (ainda aberto)
+- Debug view completo no inspector (vision JSON + prompt gerado + custo por cena)
+
+---
+
+## Sessao 8 — 13 abril 2026 (tarde)
+
+**Foco: Duration pill editavel, timeline polish (playhead auto-pan, ruler, recenter), divisor redimensionavel no modo Foco**
+
+### Separacao clip duration vs generation target (novo)
+
+- Migration `00009_scene_generation_target.sql` (`generation_target_seconds nullable numeric(6,3)`)
+- `Scene.generationTargetSeconds` opcional no store + acao `setSceneGenerationTarget`
+- `generateScene`/`generateAll` usam `generationTargetSeconds ?? duration` no payload
+- Apos geracao bem sucedida: limpa `generationTargetSeconds` (scene.duration recebe o real)
+- Inspector: grid de duracao vira **"Alvo (gerar)"** com hint do clip atual quando `ready`
+- Saves e loads tratam a nova coluna preservando `null` por default
+
+### DurationPill (novo)
+
+- Componente `duration-pill.tsx` com popover portal (click-outside + Esc)
+- Imagem: slider + input numerico clamped em [1, 30]s atualizando `scene.duration`
+- Video: slider + input atualizando `trimEnd` (mantendo `trimStart` fixo), respeitando native max e trim minimo de 0.5s
+- Botao "Resetar trim" no video-mode quando existe trim custom
+- Integrado no `film-strip` (canvas e timeline) substituindo span read-only
+- Coexiste com `TrimHandle` (drag edge) — ambos escrevem no mesmo estado
+
+### Playhead auto-pan (novo)
+
+- rAF loop durante drag: zona morta de 72px em cada borda do viewport
+- Velocidade de pan proporcional a proximidade da borda (max 14px/frame)
+- `seek` recalculado a cada frame compensando o pan aplicado (pointer sob cursor representa o tempo correto)
+- Usuario pode percorrer timeline inteira sem soltar o scrubhead
+
+### Ruler fixes (novo)
+
+- Ticks agora estendem ate o viewport (nao apenas `total`), cobrindo pan para alem do conteudo
+- `useMemo` em ticks (`[total, effectivePps, majorInterval, panX, viewportWidth]`)
+- Culling de labels aumentado para `-60/+60` (labels da borda direita nao desaparecem prematuramente)
+- `React.memo` no componente principal (evita repaints do scrub em momentos irrelevantes)
+- `contain: layout paint` para isolar o repaint ao area da regua
+
+### AutoFollow recenter fix
+
+- `syncPanToCurrentTime` retorna `boolean` (true=ok, false=DOM nao pronto)
+- Effect de recentramento tenta ate 3 frames antes de usar fallback
+- Fallback linear (`syncPanToCurrentTimeLinear`) calcula pan via `pps * currentTime` quando o card nao esta no DOM
+- Playhead: `useEffect` em `autoFollow` aciona micro-seek que forca um re-render alinhado
+- Playhead scrub reescrito com rAF loop proprio (sem race contra engine autoFollow)
+
+### Divisor redimensionavel Preview/Strip no modo Foco (novo)
+
+- `theaterStripHeight` persistido no `editor-settings-store` (default 112, clamp [72, 360])
+- Migration v2 -> v3 com fallback seguro
+- Componente `theater-divider.tsx` (2px visivel, 12px hit area, cursor row-resize)
+- Drag debounced via rAF (store update por frame, nao por pointermove)
+- Handle visual highlight no hover e durante drag
+- Integrado no `page.tsx` entre TheaterView e strip
+- Strip height passa de `h-[112px]` hardcoded para `style={{ height: theaterStripHeight }}`
+
+### Tarefas explicitas pro proximo PR
+
 - Crossfade client-side entre cenas (ainda aberto)
 - Admin UI para troca de FAL_KEY (ainda aberto)
 - Debug view completo no inspector (vision JSON + prompt gerado + custo por cena)

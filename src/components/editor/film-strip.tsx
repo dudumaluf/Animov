@@ -27,6 +27,7 @@ import { downloadVideoBlob } from "@/lib/utils/download";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
 import { spritePreloader } from "@/lib/timeline/sprite-preloader";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
+import { DurationPill } from "@/components/editor/duration-pill";
 
 const MIN_TIMELINE_CARD_WIDTH = 96;
 const TIMELINE_CARD_HEIGHT = 120;
@@ -399,7 +400,7 @@ function SortableSceneCard({
                 </button>
               </div>
             )}
-            <span className="font-mono text-[10px] text-white/60">{Math.round(scene.duration * 10) / 10}s</span>
+            <DurationPill scene={scene} size="sm" />
             <div {...attributes} {...listeners} className="cursor-grab active:cursor-grabbing">
               <GripVertical size={10} className="text-white/40 hover:text-white/70" />
             </div>
@@ -768,7 +769,7 @@ function TransitionNode({
   const isGenerating = transition.status === "generating";
   const isFailed = transition.status === "failed";
   const isReady = transition.status === "ready" && transition.videoUrl;
-  const transDuration = transition.costCredits || 5;
+  const transDuration = transition.duration ?? transition.costCredits ?? 5;
 
   const transCardHeight = timelineRibbon ? TIMELINE_RIBBON_HEIGHT : TIMELINE_CARD_HEIGHT;
   const transMinWidth = timelineRibbon ? MIN_RIBBON_CARD_WIDTH : MIN_TIMELINE_CARD_WIDTH;

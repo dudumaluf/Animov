@@ -65,38 +65,41 @@ function TimelineRulerInner({
   const [viewportWidth, setViewportWidth] = useState(0);
   const rulerRef = useRef<HTMLDivElement>(null);
 
-  // PROD BUILD NOTE: in production builds the initial useLayoutEffect pass can
-  // fire before CSS has been applied (external stylesheet vs dev's inline
-  // <style>), so `clientWidth` briefly reads 0. If we bail there, every tick
-  // gets culled (their x > 4) and the ruler renders empty forever. React
-  // StrictMode in dev hid this by running the effect twice — the second run
-  // captured the settled width. Single-mount production needs an explicit
-  // rAF retry loop until the element actually has width.
+  // PROD BUILD NOTE: earlier attempts to fix "ruler shows only 0s in prod"
+  // relied on `clientWidth` with an rAF retry loop, which still failed in
+  // the wild (clientWidth returned 0 for reasons we couldn't pin down — likely
+  // a flex/shrink-0 layout quirk where the measurement happens between DOM
+  // commit and style recalc). This version is defensive: measure via
+  // `getBoundingClientRect` (more consistent than clientWidth across browsers),
+  // fall back to the outer `mainFlex` container if viewport reads 0, and
+  // ultimately to `window.innerWidth` so we NEVER end up with a 0-width
+  // measurement that culls every tick. ResizeObserver + window resize keep
+  // the value fresh afterwards.
   useLayoutEffect(() => {
-    const el = viewportRef.current;
-    if (!el) return;
-    let retries = 0;
-    let rafId: number | null = null;
-
-    const tryUpdate = () => {
-      rafId = null;
-      const w = el.clientWidth;
+    const measure = () => {
+      const vp = viewportRef.current;
+      const mf = mainFlexRef.current;
+      const vpW = vp?.getBoundingClientRect().width ?? 0;
+      const mfW = mf?.getBoundingClientRect().width ?? 0;
+      const winW = typeof window !== "undefined" ? window.innerWidth : 0;
+      const w = vpW > 0 ? vpW : mfW > 0 ? mfW : winW;
       setViewportWidth(w);
-      if (w === 0 && retries < 8) {
-        retries += 1;
-        rafId = requestAnimationFrame(tryUpdate);
-      }
     };
-    tryUpdate();
+    measure();
+    // Second measure on next frame as a safety net against prod builds where
+    // the first useLayoutEffect call races with CSS application.
+    const rafId = requestAnimationFrame(measure);
 
-    const update = () => setViewportWidth(el.clientWidth);
-    const ro = new ResizeObserver(update);
-    ro.observe(el);
+    const ro = new ResizeObserver(measure);
+    if (viewportRef.current) ro.observe(viewportRef.current);
+    if (mainFlexRef.current) ro.observe(mainFlexRef.current);
+    window.addEventListener("resize", measure);
     return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
+      cancelAnimationFrame(rafId);
       ro.disconnect();
+      window.removeEventListener("resize", measure);
     };
-  }, [viewportRef]);
+  }, [viewportRef, mainFlexRef]);
 
   const total = useMemo(() => totalDuration(segments), [segments]);
   const effectivePps = Math.max(0.01, pixelsPerSecond * zoom);

@@ -15,19 +15,18 @@ import { computePlayheadX } from "@/components/editor/playhead";
  * toggles the inspector.
  *
  * Re-measures on:
- *  - Initial mount (useLayoutEffect) with rAF retry until dims are non-zero
+ *  - Initial mount (useLayoutEffect) + one rAF safety-net measurement
  *  - Window resize
  *  - Viewport / mainFlex resize (ResizeObserver)
  *
- * PROD BUILD NOTE: the initial `useLayoutEffect` fires before the browser has
- * necessarily finished applying external CSS in production (CSS ships as a
- * separate file rather than inline <style>). That can make the first read
- * return `width: 0`. In dev StrictMode masked this because the effect ran
- * twice — the second run captured the settled layout. Production is single-
- * mount, so we retry via rAF for a few frames until the refs have real width.
+ * PROD BUILD NOTE: the initial `useLayoutEffect` can fire before the browser
+ * finishes applying external CSS in production (CSS ships as a separate file
+ * rather than inline <style>). That can make the first read return `width: 0`.
+ * In dev StrictMode masked this because the effect ran twice — the second run
+ * captured the settled layout. Production is single-mount, so we schedule one
+ * extra measurement on the next animation frame as a safety net. ResizeObserver
+ * handles any further layout shifts.
  */
-const MAX_RETRY_FRAMES = 8;
-
 export function useStableCenterX(
   viewportRef: React.RefObject<HTMLElement | null>,
   mainFlexRef: React.RefObject<HTMLElement | null>,
@@ -35,38 +34,16 @@ export function useStableCenterX(
   const [centerX, setCenterX] = useState(0);
 
   useLayoutEffect(() => {
-    let retryFrames = 0;
-    let rafId: number | null = null;
-
-    const tryCompute = () => {
-      rafId = null;
-      const vp = viewportRef.current;
-      const mf = mainFlexRef.current;
-      const vpW = vp?.getBoundingClientRect().width ?? 0;
-      const mfW = mf?.getBoundingClientRect().width ?? 0;
-
-      setCenterX(computePlayheadX(vp, mf));
-
-      // If either ref measured 0 the CSS almost certainly hasn't applied yet.
-      // Try again on the next frame — up to MAX_RETRY_FRAMES so we never spin
-      // forever if the element is legitimately hidden/collapsed.
-      if ((vpW === 0 || mfW === 0) && retryFrames < MAX_RETRY_FRAMES) {
-        retryFrames += 1;
-        rafId = requestAnimationFrame(tryCompute);
-      }
-    };
-
-    tryCompute();
-
     const compute = () => setCenterX(computePlayheadX(viewportRef.current, mainFlexRef.current));
-    const vp = viewportRef.current;
-    const mf = mainFlexRef.current;
+    compute();
+    const rafId = requestAnimationFrame(compute);
+
     const ro = new ResizeObserver(compute);
-    if (vp) ro.observe(vp);
-    if (mf) ro.observe(mf);
+    if (viewportRef.current) ro.observe(viewportRef.current);
+    if (mainFlexRef.current) ro.observe(mainFlexRef.current);
     window.addEventListener("resize", compute);
     return () => {
-      if (rafId !== null) cancelAnimationFrame(rafId);
+      cancelAnimationFrame(rafId);
       ro.disconnect();
       window.removeEventListener("resize", compute);
     };

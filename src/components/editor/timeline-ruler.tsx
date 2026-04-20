@@ -65,14 +65,37 @@ function TimelineRulerInner({
   const [viewportWidth, setViewportWidth] = useState(0);
   const rulerRef = useRef<HTMLDivElement>(null);
 
+  // PROD BUILD NOTE: in production builds the initial useLayoutEffect pass can
+  // fire before CSS has been applied (external stylesheet vs dev's inline
+  // <style>), so `clientWidth` briefly reads 0. If we bail there, every tick
+  // gets culled (their x > 4) and the ruler renders empty forever. React
+  // StrictMode in dev hid this by running the effect twice — the second run
+  // captured the settled width. Single-mount production needs an explicit
+  // rAF retry loop until the element actually has width.
   useLayoutEffect(() => {
     const el = viewportRef.current;
     if (!el) return;
+    let retries = 0;
+    let rafId: number | null = null;
+
+    const tryUpdate = () => {
+      rafId = null;
+      const w = el.clientWidth;
+      setViewportWidth(w);
+      if (w === 0 && retries < 8) {
+        retries += 1;
+        rafId = requestAnimationFrame(tryUpdate);
+      }
+    };
+    tryUpdate();
+
     const update = () => setViewportWidth(el.clientWidth);
-    update();
     const ro = new ResizeObserver(update);
     ro.observe(el);
-    return () => ro.disconnect();
+    return () => {
+      if (rafId !== null) cancelAnimationFrame(rafId);
+      ro.disconnect();
+    };
   }, [viewportRef]);
 
   const total = useMemo(() => totalDuration(segments), [segments]);

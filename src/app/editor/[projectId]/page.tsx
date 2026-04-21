@@ -369,6 +369,10 @@ export default function EditorPage({
   // Must use native listener to be able to preventDefault on non-passive wheel
   // Re-attach when viewport becomes available (it only renders after loading)
   const viewportReady = mounted && !isLoading;
+  // Debounces the "scrub exit" after the last wheel event. Wheels don't emit a
+  // natural "up" event, so we auto-clear the scrubbing flag once the user stops
+  // spinning. Same timeout is reused across events — each new tick resets it.
+  const wheelScrubTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
   useEffect(() => {
     const vp = viewportRef.current;
     if (!vp) return;
@@ -390,7 +394,21 @@ export default function EditorPage({
         if (delta === 0) return;
         const deltaT = delta / Math.max(1, pps * z);
         const newTime = Math.max(0, Math.min(total, tlState.currentTime + deltaT));
+
+        // Flip on the scrub flag so the engine seeks the active video, syncs
+        // pan, and the sprite overlay draws a frame — previously wheel would
+        // only move `currentTime`, leaving the preview stuck on the last
+        // frame rendered (playback or scrub end).
+        if (!tlState.isScrubbing) {
+          tlState.setScrubbing(true);
+        }
         tlState.seek(newTime);
+
+        if (wheelScrubTimeout.current) clearTimeout(wheelScrubTimeout.current);
+        wheelScrubTimeout.current = setTimeout(() => {
+          useTimelineStore.getState().setScrubbing(false);
+          wheelScrubTimeout.current = null;
+        }, 160);
         return;
       }
 
@@ -431,7 +449,14 @@ export default function EditorPage({
     };
 
     vp.addEventListener("wheel", onWheel, { passive: false });
-    return () => vp.removeEventListener("wheel", onWheel);
+    return () => {
+      vp.removeEventListener("wheel", onWheel);
+      if (wheelScrubTimeout.current) {
+        clearTimeout(wheelScrubTimeout.current);
+        wheelScrubTimeout.current = null;
+        useTimelineStore.getState().setScrubbing(false);
+      }
+    };
   }, [viewportReady]);
 
   // Remember the last non-foco preset so `Esc` or `F` from foco reverts cleanly.

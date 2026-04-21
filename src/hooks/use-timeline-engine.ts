@@ -435,6 +435,10 @@ export function useTimelineEngine({
       if (d && isFinite(d) && d > 0) {
         try { audioRef.current.currentTime = startT % d; } catch { /* ignore */ }
       }
+      // Prime the mixer with the current fade envelope BEFORE audio.play() so
+      // the very first buffer of output already respects the fade-in (e.g. at
+      // t=0 with fadeIn=0.5s, gain should start near 0, not at base volume).
+      mixerRef.current?.tick(startT, total);
       audioRef.current.play().catch(() => { /* autoplay may be blocked */ });
     }
 

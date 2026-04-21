@@ -143,19 +143,34 @@ export class PlaybackAudioMixer {
     }
   }
 
-  // Latest time info observed by the mixer. Phase 3.3 only records the
-  // values; the fade / ducking phases consume them to shape gains.
-  private lastProjectTime = 0;
-  private lastTotalDuration = 0;
+  /**
+   * Linear fade envelope that matches the offline mix (`compose.ts`) — value
+   * in [0, 1] depending on how far `t` is from the start (fade-in) and the
+   * end (fade-out). `fadeIn` / `fadeOut` are seconds (not samples like the
+   * offline path). Pure function so tests and Phase 3.7 can reuse it.
+   */
+  static musicFadeEnvelope(
+    t: number,
+    total: number,
+    fadeIn: number,
+    fadeOut: number,
+  ): number {
+    let fade = 1;
+    if (fadeIn > 0 && t < fadeIn) {
+      fade = Math.max(0, t / fadeIn);
+    }
+    if (fadeOut > 0 && total > 0 && t > total - fadeOut) {
+      fade = Math.min(fade, Math.max(0, (total - t) / fadeOut));
+    }
+    return Math.max(0, Math.min(1, fade));
+  }
 
   /**
    * Called every playback/scrub frame from the engine with the current
-   * project-wide time. Phase 3.3 just keeps the music gain at the base
-   * volume; later phases add fade envelopes and ducking here.
+   * project-wide time. Phase 3.4 applies the music fade envelope; Phase 3.7
+   * will layer ducking on top of the same gain node.
    */
   tick(projectTime: number, totalDuration: number): void {
-    this.lastProjectTime = projectTime;
-    this.lastTotalDuration = totalDuration;
     if (!this.ctx) return;
     if (this.ctx.state === "suspended") {
       // Browsers keep the context suspended until a user gesture. The engine
@@ -163,6 +178,20 @@ export class PlaybackAudioMixer {
       // so resume() is safe here. Swallow the rejection — if it fails, the
       // next tick will try again.
       this.ctx.resume().catch(() => { /* gesture not yet delivered */ });
+    }
+
+    if (this.musicGain && totalDuration > 0) {
+      const fade = PlaybackAudioMixer.musicFadeEnvelope(
+        projectTime,
+        totalDuration,
+        this.mix.musicFadeIn,
+        this.mix.musicFadeOut,
+      );
+      const target = this.musicBaseVolume * fade;
+      // setTargetAtTime with a tiny time-constant gives us a smooth 1-frame
+      // glide, avoiding zipper noise from per-frame gain jumps while still
+      // tracking the envelope closely.
+      this.musicGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.01);
     }
   }
 

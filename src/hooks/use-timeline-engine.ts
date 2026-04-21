@@ -256,11 +256,20 @@ export function useTimelineEngine({
   // events collapse to at most one seek per frame. Avoids stacking up
   // currentTime= assignments that each take ~50ms to resolve and keeps the
   // UI responsive on trackpads that emit 120+ events/s.
+  //
+  // Audio side: while scrubbing the music track is driven by the mixer's
+  // `MusicGrainScrubber` (short decoded-buffer grains at the cursor offset)
+  // instead of the main <audio> element — seeking an <audio> at 120Hz is
+  // laggy and drops samples. `beginMusicScrub()` mutes the main bus and
+  // opens the scrub bus; `endMusicScrub()` reverses it. Clip audio stays
+  // muted during scrub (the classic DAW behavior — not Premiere's full
+  // audio scrub) since that was the explicit product decision.
   useEffect(() => {
     if (!isScrubbing) return;
     videoRegistry.pauseAll();
     videoRegistry.mutedAll(true);
     try { audioRef.current?.pause(); } catch { /* ignore */ }
+    mixerRef.current?.beginMusicScrub();
 
     let rafHandle: number | null = null;
     let lastAppliedTime = Number.NaN;
@@ -274,6 +283,11 @@ export function useTimelineEngine({
       const t = state.currentTime;
       if (t !== lastAppliedTime) {
         lastAppliedTime = t;
+        // Schedule a music grain at the new cursor position. The scrubber
+        // throttles internally (~30Hz) so this is safe even at trackpad
+        // storm rates.
+        mixerRef.current?.scrubAt(t);
+
         const { segment, localOffset } = timeToSegment(segmentsRef.current, t);
         if (segment) {
           if (segment.id !== activeSegmentIdRef.current) {
@@ -301,6 +315,19 @@ export function useTimelineEngine({
 
     return () => {
       if (rafHandle !== null) cancelAnimationFrame(rafHandle);
+      // Realign the main <audio> to the scrub endpoint BEFORE ending scrub.
+      // If timeline-store's `wasPlayingBeforeScrub` fires `play()` right
+      // after us, the isPlaying effect will call .play() on an element
+      // already at the correct currentTime, so resumption is gap-free.
+      const audio = audioRef.current;
+      if (audio) {
+        const d = audio.duration;
+        const t = useTimelineStore.getState().currentTime;
+        if (d && isFinite(d) && d > 0) {
+          try { audio.currentTime = t % d; } catch { /* ignore */ }
+        }
+      }
+      mixerRef.current?.endMusicScrub();
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isScrubbing]);

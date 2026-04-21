@@ -1,4 +1,5 @@
 import { DEFAULT_AUDIO_MIX, type AudioMixSettings } from "@/lib/composition/compose";
+import { MusicGrainScrubber } from "@/lib/timeline/music-grain-scrubber";
 
 export type ClipAttachInfo = {
   /** Effective segment duration (post-trim) in seconds. */
@@ -58,6 +59,14 @@ export class PlaybackAudioMixer {
   private clipAnalyser: AnalyserNode | null = null;
   private analyserBuffer: Float32Array<ArrayBuffer> | null = null;
   private clipInfo: ClipAttachInfo | null = null;
+
+  // Grain scrub bus: a parallel path to destination, used only while the
+  // user is actively scrubbing. Bypasses the music fade envelope because
+  // scrub audio shouldn't fade-in every time the user drags from t=0.
+  private scrubGain: GainNode | null = null;
+  private scrubber: MusicGrainScrubber | null = null;
+  private musicUrl: string | null = null;
+  private musicScrubActive = false;
 
   // Cache sources keyed by element — MediaElementSource can only be created
   // once per HTMLMediaElement instance in the lifetime of a page. Re-using
@@ -136,10 +145,33 @@ export class PlaybackAudioMixer {
     this.musicEl = el;
     this.musicSrc = src;
     this.musicGain = gain;
+    this.musicUrl = el.src || el.currentSrc || null;
+
+    // Kick off background decode so the scrubber is warm by the time the
+    // user reaches for the timeline. Silent failure — scrub falls back to
+    // a visual-only behavior when decode isn't ready.
+    if (this.musicUrl) {
+      this.ensureScrubber(ctx)?.primeUrl(this.musicUrl).catch(() => { /* ignore */ });
+    }
 
     // The <audio>.volume property is now downstream of our gain stage; set it
     // to 1 so nothing else attenuates the signal. The mixer owns volume.
     try { el.volume = 1; } catch { /* ignore */ }
+  }
+
+  private ensureScrubber(ctx: AudioContext): MusicGrainScrubber | null {
+    if (this.scrubber) return this.scrubber;
+    try {
+      const scrubGain = ctx.createGain();
+      scrubGain.gain.value = 0;
+      scrubGain.connect(ctx.destination);
+      this.scrubGain = scrubGain;
+      this.scrubber = new MusicGrainScrubber(ctx, scrubGain);
+      return this.scrubber;
+    } catch (err) {
+      console.warn("[mixer] scrubber init failed", err);
+      return null;
+    }
   }
 
   detachMusic(): void {
@@ -156,6 +188,13 @@ export class PlaybackAudioMixer {
     this.musicSrc = null;
     this.musicGain = null;
     this.musicEl = null;
+    // Scrub session, if any, is tied to the old URL's buffer — stop it
+    // and let the next attach re-prime. The scrubber itself and its gain
+    // node stay alive for the lifetime of the mixer so we don't thrash
+    // the graph on music swaps.
+    this.scrubber?.stopScrub();
+    this.musicScrubActive = false;
+    this.musicUrl = null;
   }
 
   /**
@@ -268,6 +307,65 @@ export class PlaybackAudioMixer {
       const now = this.ctx.currentTime;
       this.musicGain.gain.setTargetAtTime(this.musicBaseVolume, now, 0.01);
     }
+    // Keep scrubGain in sync when scrub is active so the user hears the
+    // current slider value during a drag.
+    if (this.scrubGain && this.ctx && this.musicScrubActive) {
+      const now = this.ctx.currentTime;
+      this.scrubGain.gain.setTargetAtTime(this.musicBaseVolume, now, 0.01);
+    }
+  }
+
+  /**
+   * Enter scrub mode: silence the main music bus so the <audio> element
+   * doesn't fight the grain scheduler, and open the scrub bus to the
+   * current music volume. Called from the engine when `isScrubbing` goes
+   * true. Idempotent — repeated calls keep the same state.
+   */
+  beginMusicScrub(): void {
+    if (this.musicScrubActive) return;
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    this.musicScrubActive = true;
+
+    if (this.musicGain) {
+      this.musicGain.gain.setTargetAtTime(0, ctx.currentTime, 0.02);
+    }
+    if (this.scrubGain) {
+      this.scrubGain.gain.setTargetAtTime(
+        this.musicBaseVolume,
+        ctx.currentTime,
+        0.02,
+      );
+    }
+    if (this.musicUrl) this.scrubber?.startScrub(this.musicUrl);
+  }
+
+  /**
+   * Schedule a single grain at `projectTime`. Throttled internally in the
+   * scrubber so the engine can call this from rAF without spamming the
+   * audio graph.
+   */
+  scrubAt(projectTime: number): void {
+    if (!this.musicScrubActive) return;
+    this.scrubber?.scrub(projectTime);
+  }
+
+  /**
+   * Exit scrub mode: close the scrub bus, let the next `tick()` bring the
+   * music bus back to the envelope target. Engine is responsible for
+   * calling `audio.currentTime = projectTime % duration` before it plays
+   * so the main music element resumes in sync.
+   */
+  endMusicScrub(): void {
+    if (!this.musicScrubActive) return;
+    this.musicScrubActive = false;
+    this.scrubber?.stopScrub();
+    if (this.scrubGain && this.ctx) {
+      this.scrubGain.gain.setTargetAtTime(0, this.ctx.currentTime, 0.02);
+    }
+    // musicGain will return to the envelope on the next tick() — no need
+    // to reset here (avoids a double-ramp fight).
   }
 
   /**
@@ -357,7 +455,11 @@ export class PlaybackAudioMixer {
       this.clipGain.gain.setTargetAtTime(target, now, 0.01);
     }
 
-    if (this.musicGain && totalDuration > 0) {
+    // While scrubbing, the scrub bus owns audio output for the music track.
+    // The main music bus stays muted (`beginMusicScrub` ramped it to 0) and
+    // must NOT follow the fade envelope, otherwise the envelope would fight
+    // the mute and leak sound through the main <audio>.
+    if (this.musicGain && totalDuration > 0 && !this.musicScrubActive) {
       const musicFade = PlaybackAudioMixer.musicFadeEnvelope(
         projectTime,
         totalDuration,
@@ -390,6 +492,12 @@ export class PlaybackAudioMixer {
   dispose(): void {
     this.detachClip();
     this.detachMusic();
+    this.scrubber?.dispose();
+    this.scrubber = null;
+    if (this.scrubGain) {
+      try { this.scrubGain.disconnect(); } catch { /* ignore */ }
+      this.scrubGain = null;
+    }
     if (this.ctx) {
       // Don't close on SPA nav — `close()` is expensive. `suspend()` lets
       // the context wake instantly on the next attach/play.

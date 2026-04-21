@@ -28,11 +28,18 @@ import { SpriteFrame } from "@/components/editor/sprite-frame";
 import { spritePreloader } from "@/lib/timeline/sprite-preloader";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { DurationPill } from "@/components/editor/duration-pill";
+import { spriteProgressForScene } from "@/lib/timeline/segments";
 
-const MIN_TIMELINE_CARD_WIDTH = 96;
+// Kept small on purpose: a larger min-width would clamp short/trimmed clips to
+// a visual width wider than their actual timeline slot (duration * pps), which
+// makes `syncPanToCurrentTime` (DOM-based) pan faster over those cards than
+// over normal cards — the user perceives it as "speed changing" when a trimmed
+// clip scrolls past the playhead. 8/4px is just enough so 0-second cards
+// don't fully disappear.
+const MIN_TIMELINE_CARD_WIDTH = 8;
 const TIMELINE_CARD_HEIGHT = 120;
 const TIMELINE_RIBBON_HEIGHT = 80;
-const MIN_RIBBON_CARD_WIDTH = 56;
+const MIN_RIBBON_CARD_WIDTH = 4;
 
 function canHoverPlay(): boolean {
   const ts = useTimelineStore.getState();
@@ -317,7 +324,12 @@ function SortableSceneCard({
               activeSegmentId === sceneId && (
                 <SpriteFrame
                   sprite={scene.sprite}
-                  progress={segmentLocalOffset / Math.max(0.001, scene.duration)}
+                  progress={spriteProgressForScene(
+                    segmentLocalOffset,
+                    scene.trimStart,
+                    scene.videoVersions?.[scene.activeVersion]?.duration,
+                    scene.duration,
+                  )}
                   className="absolute inset-0 h-full w-full object-cover"
                 />
               )}

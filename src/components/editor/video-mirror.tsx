@@ -5,6 +5,7 @@ import { videoRegistry } from "@/lib/timeline/video-registry";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
 import type { SceneSprite } from "@/stores/project-store";
+import { spriteProgressForScene } from "@/lib/timeline/segments";
 
 interface RvfcMetadata {
   presentationTime: DOMHighResTimeStamp;
@@ -162,12 +163,16 @@ export function InspectorPreviewVideo({
   poster,
   sprite,
   duration,
+  trimStart,
+  nativeDuration,
 }: {
   sceneId: string;
   videoUrl: string;
   poster?: string | null;
   sprite?: SceneSprite;
   duration?: number;
+  trimStart?: number;
+  nativeDuration?: number;
 }) {
   const viewMode = useTimelineStore((s) => s.viewMode);
   const isScrubbing = useTimelineStore((s) => s.isScrubbing);
@@ -187,7 +192,12 @@ export function InspectorPreviewVideo({
         {showSprite && sprite && (
           <SpriteFrame
             sprite={sprite}
-            progress={segmentLocalOffset / Math.max(0.001, duration ?? 1)}
+            progress={spriteProgressForScene(
+              segmentLocalOffset,
+              trimStart,
+              nativeDuration,
+              duration ?? 1,
+            )}
             className="absolute inset-0 h-full w-full"
             style={{ backgroundColor: "#000" }}
           />

@@ -821,6 +821,8 @@ export function Inspector({
                   poster={scene.photoDataUrl ?? scene.photoUrl}
                   sprite={scene.sprite}
                   duration={scene.duration}
+                  trimStart={scene.trimStart}
+                  nativeDuration={scene.videoVersions?.[scene.activeVersion]?.duration}
                 />
               ) : (
                 <Image

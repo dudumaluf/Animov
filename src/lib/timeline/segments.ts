@@ -157,3 +157,27 @@ export function findNextSceneTime(segments: Segment[], time: number): number {
   }
   return totalDuration(segments);
 }
+
+/**
+ * Normalized [0, 1] position within the SOURCE video for sprite lookup.
+ * The sprite sheet is extracted from the full native video, so progress
+ * has to map back to source-time — not segment-local time — or the frames
+ * will fly by faster than reality whenever the user has trimmed the clip
+ * (e.g. a 10s video trimmed to 5s would otherwise show all frames 0→end
+ * during a 5s scrub, appearing ~2x real playback speed).
+ *
+ * Falls back to `localOffset / fallbackDuration` (segment-local mapping)
+ * when native duration is unknown — good enough for image-only scenes,
+ * transitions, and legacy scenes that never stored a version duration.
+ */
+export function spriteProgressForScene(
+  localOffset: number,
+  trimStart: number | undefined,
+  nativeDuration: number | undefined,
+  fallbackDuration: number,
+): number {
+  const nd = nativeDuration && nativeDuration > 0 ? nativeDuration : fallbackDuration;
+  if (nd <= 0) return 0;
+  const sourceTime = (trimStart ?? 0) + localOffset;
+  return Math.max(0, Math.min(0.9999, sourceTime / nd));
+}

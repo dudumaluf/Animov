@@ -7,6 +7,7 @@ import { useTimelineStore } from "@/stores/timeline-store";
 import { VideoMirror } from "@/components/editor/video-mirror";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
 import { useStableCenterX } from "@/hooks/use-stable-center";
+import { spriteProgressForScene } from "@/lib/timeline/segments";
 
 const HEADLINE_DEFAULT_WIDTH = 320;
 const HEADLINE_DEFAULT_HEIGHT = 180;
@@ -54,6 +55,8 @@ export function HeadlinePreview({
         poster: scene.photoDataUrl ?? scene.photoUrl ?? null,
         sprite: scene.sprite ?? null,
         duration: scene.duration,
+        trimStart: scene.trimStart,
+        nativeDuration: scene.videoVersions?.[scene.activeVersion]?.duration,
       };
     }
     const transition = transitions.find((t) => t.id === candidateId);
@@ -64,6 +67,8 @@ export function HeadlinePreview({
         poster: null,
         sprite: transition.sprite ?? null,
         duration: transition.duration ?? transition.costCredits ?? 1,
+        trimStart: undefined,
+        nativeDuration: transition.duration ?? transition.costCredits,
       };
     }
     return null;
@@ -103,7 +108,12 @@ export function HeadlinePreview({
           {showSprite && resolved.sprite && (
             <SpriteFrame
               sprite={resolved.sprite}
-              progress={segmentLocalOffset / Math.max(0.001, resolved.duration)}
+              progress={spriteProgressForScene(
+                segmentLocalOffset,
+                resolved.trimStart,
+                resolved.nativeDuration,
+                resolved.duration,
+              )}
               className="absolute inset-0 h-full w-full"
               objectFit="contain"
             />

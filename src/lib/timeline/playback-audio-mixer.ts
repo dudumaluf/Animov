@@ -7,6 +7,12 @@ export type ClipAttachInfo = {
   clipVolume: number;
 };
 
+// Mirrored from compose.ts — not exported from there today; duplicating the
+// constants here keeps the preview lined up with the export math.
+const DUCK_MIN_GAIN = 0.15;
+const SPEECH_THRESHOLD = 0.02;
+const ANALYSER_FFT_SIZE = 1024;
+
 /**
  * Real-time playback audio mixer — approximates the offline mix produced by
  * `compose.ts` so the editor preview sounds close to the exported MP4.
@@ -49,6 +55,8 @@ export class PlaybackAudioMixer {
   private clipEl: HTMLVideoElement | null = null;
   private clipSrc: MediaElementAudioSourceNode | null = null;
   private clipGain: GainNode | null = null;
+  private clipAnalyser: AnalyserNode | null = null;
+  private analyserBuffer: Float32Array<ArrayBuffer> | null = null;
   private clipInfo: ClipAttachInfo | null = null;
 
   // Cache sources keyed by element — MediaElementSource can only be created
@@ -174,9 +182,22 @@ export class PlaybackAudioMixer {
     // instead of punching through at full clip volume for one frame.
     gain.gain.value = 0;
 
+    // Analyser fan-off of clipGain so ducking can observe the clip's RMS
+    // without inserting itself in the signal path (no double-attenuation).
+    let analyser: AnalyserNode | null = null;
+    try {
+      analyser = ctx.createAnalyser();
+      analyser.fftSize = ANALYSER_FFT_SIZE;
+      analyser.smoothingTimeConstant = 0; // raw data — we smooth on our side
+    } catch (err) {
+      console.warn("[mixer] analyser init failed", err);
+      analyser = null;
+    }
+
     try {
       src.connect(gain);
       gain.connect(ctx.destination);
+      if (analyser) gain.connect(analyser);
     } catch (err) {
       console.warn("[mixer] clip chain connect failed", err);
       return;
@@ -185,6 +206,13 @@ export class PlaybackAudioMixer {
     this.clipEl = el;
     this.clipSrc = src;
     this.clipGain = gain;
+    this.clipAnalyser = analyser;
+    // Back the buffer by an explicit ArrayBuffer (not the default which may
+    // resolve to ArrayBufferLike in TS lib.dom) so getFloatTimeDomainData's
+    // stricter overload accepts it.
+    this.analyserBuffer = analyser
+      ? new Float32Array(new ArrayBuffer(analyser.fftSize * 4))
+      : null;
     this.clipInfo = { ...info };
 
     // Mixer owns attenuation; keep the element fully open upstream.
@@ -201,10 +229,33 @@ export class PlaybackAudioMixer {
     if (this.clipSrc) {
       try { this.clipSrc.disconnect(); } catch { /* ignore */ }
     }
+    if (this.clipAnalyser) {
+      try { this.clipAnalyser.disconnect(); } catch { /* ignore */ }
+    }
     this.clipSrc = null;
     this.clipGain = null;
+    this.clipAnalyser = null;
+    this.analyserBuffer = null;
     this.clipEl = null;
     this.clipInfo = null;
+  }
+
+  /**
+   * Sample the clip's analyser and return the RMS amplitude of the most
+   * recent ~23ms window. Returns 0 when no clip is attached. Pure-ish
+   * (mutates the shared buffer) — cheap to call every frame.
+   */
+  private sampleClipRms(): number {
+    const analyser = this.clipAnalyser;
+    const buf = this.analyserBuffer;
+    if (!analyser || !buf) return 0;
+    analyser.getFloatTimeDomainData(buf);
+    let sum = 0;
+    for (let i = 0; i < buf.length; i++) {
+      const v = buf[i] ?? 0;
+      sum += v * v;
+    }
+    return Math.sqrt(sum / buf.length);
   }
 
   setMix(mix: AudioMixSettings): void {
@@ -266,7 +317,14 @@ export class PlaybackAudioMixer {
   /**
    * Called every playback/scrub frame from the engine with the current
    * project-wide time and (optionally) the offset into the active uploaded
-   * clip. Applies music + clip fades. Ducking lives here too (Phase 3.7).
+   * clip. Applies music + clip fades and ducking.
+   *
+   * Ducking math mirrors compose.ts:
+   *   - When clip RMS > SPEECH_THRESHOLD: music target is attenuated by
+   *     `(1 - duckingIntensity * (1 - DUCK_MIN_GAIN))` — at full intensity
+   *     that floors music to DUCK_MIN_GAIN.
+   *   - setTargetAtTime's time-constant is duckingAttack while ducking in,
+   *     duckingRelease while recovering — Web Audio smooths for us.
    */
   tick(
     projectTime: number,
@@ -283,20 +341,10 @@ export class PlaybackAudioMixer {
     }
 
     const now = this.ctx.currentTime;
-
-    if (this.musicGain && totalDuration > 0) {
-      const fade = PlaybackAudioMixer.musicFadeEnvelope(
-        projectTime,
-        totalDuration,
-        this.mix.musicFadeIn,
-        this.mix.musicFadeOut,
-      );
-      const target = this.musicBaseVolume * fade;
-      // setTargetAtTime with a tiny time-constant gives us a smooth 1-frame
-      // glide, avoiding zipper noise from per-frame gain jumps while still
-      // tracking the envelope closely.
-      this.musicGain.gain.setTargetAtTime(target, now, 0.01);
-    }
+    const hasActiveClip =
+      this.clipGain !== null &&
+      this.clipInfo !== null &&
+      typeof clipLocalOffset === "number";
 
     if (this.clipGain && this.clipInfo && typeof clipLocalOffset === "number") {
       const fade = PlaybackAudioMixer.clipFadeEnvelope(
@@ -307,6 +355,35 @@ export class PlaybackAudioMixer {
       );
       const target = this.clipInfo.clipVolume * fade;
       this.clipGain.gain.setTargetAtTime(target, now, 0.01);
+    }
+
+    if (this.musicGain && totalDuration > 0) {
+      const musicFade = PlaybackAudioMixer.musicFadeEnvelope(
+        projectTime,
+        totalDuration,
+        this.mix.musicFadeIn,
+        this.mix.musicFadeOut,
+      );
+      let target = this.musicBaseVolume * musicFade;
+
+      // Ducking: only apply when a clip is actively playing — image scenes
+      // / AI videos don't duck (they have no audio in the preview), which
+      // matches the offline behavior where those frames have ~0 RMS.
+      let duckTimeConstant = 0.01; // default smoothing when idle
+      if (hasActiveClip && this.mix.duckingIntensity > 0) {
+        const rms = this.sampleClipRms();
+        const isSpeaking = rms > SPEECH_THRESHOLD;
+        if (isSpeaking) {
+          const duckAmount =
+            1 - this.mix.duckingIntensity * (1 - DUCK_MIN_GAIN);
+          target *= duckAmount;
+          duckTimeConstant = Math.max(0.005, this.mix.duckingAttack);
+        } else {
+          duckTimeConstant = Math.max(0.005, this.mix.duckingRelease);
+        }
+      }
+
+      this.musicGain.gain.setTargetAtTime(target, now, duckTimeConstant);
     }
   }
 

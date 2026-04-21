@@ -31,6 +31,14 @@ const SEEK_EPSILON = 0.03;
 const MAX_FRAME_DELTA = 0.1;
 const PAN_SNAP_EPSILON = 0.5;
 const PREMOUNT_LEAD_SECONDS = 1.0;
+// Music vs project-time drift correction: rAF throttles down to ~1Hz when
+// the tab is backgrounded, but the <audio> element keeps decoding at real
+// speed. On return, the project clock can lag the music by several seconds.
+// These bounds nudge the music back once per ~1.5s when drift crosses
+// 120ms — large enough to hide codec jitter, small enough that playback
+// stays in sync with what the user sees.
+const MUSIC_DRIFT_THRESHOLD = 0.12;
+const MUSIC_ALIGN_COOLDOWN_MS = 1500;
 
 /**
  * Translates a segment-local offset into a source-video `currentTime`.
@@ -173,6 +181,12 @@ export function useTimelineEngine({
     if (viewMode !== "timeline") {
       videoRegistry.pauseAll();
       try { audioRef.current?.pause(); } catch { /* ignore */ }
+      // Leaving the timeline (e.g. entering Foco/preview mode) should
+      // release the clip audio bus — the underlying <video> element will
+      // be re-bound when the user comes back, and keeping the stale
+      // MediaElementSource around risks "already connected" errors if
+      // React repaints a new element with the same segment id.
+      mixerRef.current?.detachClip();
       activeSegmentIdRef.current = null;
       premountedRef.current.clear();
       useTimelineStore.getState().setActiveSegment(null, 0);
@@ -476,6 +490,7 @@ export function useTimelineEngine({
     }
 
     let lastFrame = performance.now();
+    let lastMusicAlign = 0;
 
     const loop = (now: number) => {
       const dt = Math.min(MAX_FRAME_DELTA, (now - lastFrame) / 1000);
@@ -495,6 +510,11 @@ export function useTimelineEngine({
         useTimelineStore.setState({ currentTime: tot, isPlaying: false });
         videoRegistry.pauseAll();
         try { audioRef.current?.pause(); } catch { /* ignore */ }
+        // Detach the clip bus at end-of-playback so the next session starts
+        // from a clean slate — if the user replaces the source clip while
+        // stopped, the stale MediaElementSource would otherwise linger in
+        // the graph (inaudible, but wastes a node).
+        mixerRef.current?.detachClip();
         activeSegmentIdRef.current = null;
         useTimelineStore.getState().setActiveSegment(null, 0);
         rafRef.current = null;
@@ -554,6 +574,27 @@ export function useTimelineEngine({
 
       if (state.autoFollow) {
         syncPanToCurrentTime(segment, localOffset);
+      }
+
+      // Music drift correction. Only nudge once per MUSIC_ALIGN_COOLDOWN_MS
+      // and only while the element is actively playing — after a tab
+      // backgrounding or decoder stall the gap can exceed a second, which
+      // would otherwise desync the ducking and fade envelope from what the
+      // user hears.
+      const audio = audioRef.current;
+      if (audio && !audio.paused) {
+        const d = audio.duration;
+        if (d && isFinite(d) && d > 0) {
+          const expected = ((nt % d) + d) % d;
+          const drift = Math.abs(expected - audio.currentTime);
+          if (
+            drift > MUSIC_DRIFT_THRESHOLD &&
+            now - lastMusicAlign > MUSIC_ALIGN_COOLDOWN_MS
+          ) {
+            try { audio.currentTime = expected; } catch { /* ignore */ }
+            lastMusicAlign = now;
+          }
+        }
       }
 
       // Feed the WebAudio mixer. Clip offset is only meaningful for uploaded

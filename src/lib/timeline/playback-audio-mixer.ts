@@ -1,17 +1,27 @@
 import { DEFAULT_AUDIO_MIX, type AudioMixSettings } from "@/lib/composition/compose";
 
+export type ClipAttachInfo = {
+  /** Effective segment duration (post-trim) in seconds. */
+  duration: number;
+  /** Per-scene gain (0..2) from `scene.audioVolume`. Default 1. */
+  clipVolume: number;
+};
+
 /**
  * Real-time playback audio mixer — approximates the offline mix produced by
  * `compose.ts` so the editor preview sounds close to the exported MP4.
  *
- * Scope (by design, matches Phase 3 plan):
- *   - Music bus: gain + project-level fades (no ducking yet).
- *   - No clip bus yet (added in Phase 3.5).
- *   - No ducking yet (added in Phase 3.7).
+ * Scope (by Phase 3 plan):
+ *   - Music bus: gain + project-level fades. (Phase 3.3/3.4)
+ *   - Clip bus (uploaded video audio): gain + segment-level fades. (Phase 3.5/3.6)
+ *   - Ducking of music vs clip RMS. (Phase 3.7)
  *
- * Signal graph (Phase 3.3):
+ * Signal graph:
  *
- *     <audio> ─ MediaElementSource ─▶ musicGain ─▶ destination
+ *     <audio> ── MediaElementSource ──▶ musicGain ──▶ destination
+ *
+ *     <video> ── MediaElementSource ──▶ clipGain ──┬──▶ destination
+ *                                                  └──▶ analyser (RMS, Phase 3.7)
  *
  * Notes:
  *   - `AudioContext` is created lazily on first `attachMusic` and resumed
@@ -21,6 +31,10 @@ import { DEFAULT_AUDIO_MIX, type AudioMixSettings } from "@/lib/composition/comp
  *   - `MediaElementSource` is single-shot per element. We cache the source
  *     on a WeakMap keyed by the element so swapping the attached element
  *     doesn't throw "already connected".
+ *   - Once an element is wrapped by MediaElementSource, its audio is routed
+ *     exclusively through the graph (bypasses the element's default
+ *     destination). `.volume` / `.muted` on the element no longer affect
+ *     output — our gain nodes are the single source of attenuation.
  *   - If WebAudio isn't available in the environment (very old browsers,
  *     SSR), `supported` returns false and the mixer degrades to no-op so
  *     the engine can fall back to `<audio>.volume` control.
@@ -31,6 +45,11 @@ export class PlaybackAudioMixer {
   private musicEl: HTMLAudioElement | null = null;
   private musicSrc: MediaElementAudioSourceNode | null = null;
   private musicGain: GainNode | null = null;
+
+  private clipEl: HTMLVideoElement | null = null;
+  private clipSrc: MediaElementAudioSourceNode | null = null;
+  private clipGain: GainNode | null = null;
+  private clipInfo: ClipAttachInfo | null = null;
 
   // Cache sources keyed by element — MediaElementSource can only be created
   // once per HTMLMediaElement instance in the lifetime of a page. Re-using
@@ -131,6 +150,63 @@ export class PlaybackAudioMixer {
     this.musicEl = null;
   }
 
+  /**
+   * Attach an uploaded video's audio track to the clip bus. Safe to call on
+   * segment transitions — if a different element is already attached, we
+   * detach it first. If the same element is re-attached (e.g. a no-op
+   * transition), metadata is refreshed without rebuilding the graph.
+   */
+  attachClip(el: HTMLVideoElement, info: ClipAttachInfo): void {
+    if (this.clipEl === el) {
+      this.clipInfo = { ...info };
+      return;
+    }
+    this.detachClip();
+
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+
+    const src = this.getOrCreateSource(el, ctx);
+    if (!src) return;
+
+    const gain = ctx.createGain();
+    // Start at 0 so the fade-in envelope can ramp the first frame cleanly
+    // instead of punching through at full clip volume for one frame.
+    gain.gain.value = 0;
+
+    try {
+      src.connect(gain);
+      gain.connect(ctx.destination);
+    } catch (err) {
+      console.warn("[mixer] clip chain connect failed", err);
+      return;
+    }
+
+    this.clipEl = el;
+    this.clipSrc = src;
+    this.clipGain = gain;
+    this.clipInfo = { ...info };
+
+    // Mixer owns attenuation; keep the element fully open upstream.
+    try {
+      el.volume = 1;
+      el.muted = false;
+    } catch { /* ignore */ }
+  }
+
+  detachClip(): void {
+    if (this.clipGain) {
+      try { this.clipGain.disconnect(); } catch { /* ignore */ }
+    }
+    if (this.clipSrc) {
+      try { this.clipSrc.disconnect(); } catch { /* ignore */ }
+    }
+    this.clipSrc = null;
+    this.clipGain = null;
+    this.clipEl = null;
+    this.clipInfo = null;
+  }
+
   setMix(mix: AudioMixSettings): void {
     this.mix = { ...mix };
   }
@@ -166,11 +242,37 @@ export class PlaybackAudioMixer {
   }
 
   /**
-   * Called every playback/scrub frame from the engine with the current
-   * project-wide time. Phase 3.4 applies the music fade envelope; Phase 3.7
-   * will layer ducking on top of the same gain node.
+   * Per-clip linear fade envelope. `localOffset` is the position inside the
+   * segment (seconds from segment start); `duration` is the post-trim
+   * segment length. Mirrors the per-clip fade applied offline in compose.ts.
    */
-  tick(projectTime: number, totalDuration: number): void {
+  static clipFadeEnvelope(
+    localOffset: number,
+    duration: number,
+    fadeIn: number,
+    fadeOut: number,
+  ): number {
+    if (duration <= 0) return 0;
+    let fade = 1;
+    if (fadeIn > 0 && localOffset < fadeIn) {
+      fade = Math.max(0, localOffset / fadeIn);
+    }
+    if (fadeOut > 0 && localOffset > duration - fadeOut) {
+      fade = Math.min(fade, Math.max(0, (duration - localOffset) / fadeOut));
+    }
+    return Math.max(0, Math.min(1, fade));
+  }
+
+  /**
+   * Called every playback/scrub frame from the engine with the current
+   * project-wide time and (optionally) the offset into the active uploaded
+   * clip. Applies music + clip fades. Ducking lives here too (Phase 3.7).
+   */
+  tick(
+    projectTime: number,
+    totalDuration: number,
+    clipLocalOffset?: number,
+  ): void {
     if (!this.ctx) return;
     if (this.ctx.state === "suspended") {
       // Browsers keep the context suspended until a user gesture. The engine
@@ -179,6 +281,8 @@ export class PlaybackAudioMixer {
       // next tick will try again.
       this.ctx.resume().catch(() => { /* gesture not yet delivered */ });
     }
+
+    const now = this.ctx.currentTime;
 
     if (this.musicGain && totalDuration > 0) {
       const fade = PlaybackAudioMixer.musicFadeEnvelope(
@@ -191,11 +295,23 @@ export class PlaybackAudioMixer {
       // setTargetAtTime with a tiny time-constant gives us a smooth 1-frame
       // glide, avoiding zipper noise from per-frame gain jumps while still
       // tracking the envelope closely.
-      this.musicGain.gain.setTargetAtTime(target, this.ctx.currentTime, 0.01);
+      this.musicGain.gain.setTargetAtTime(target, now, 0.01);
+    }
+
+    if (this.clipGain && this.clipInfo && typeof clipLocalOffset === "number") {
+      const fade = PlaybackAudioMixer.clipFadeEnvelope(
+        clipLocalOffset,
+        this.clipInfo.duration,
+        this.mix.clipFadeIn,
+        this.mix.clipFadeOut,
+      );
+      const target = this.clipInfo.clipVolume * fade;
+      this.clipGain.gain.setTargetAtTime(target, now, 0.01);
     }
   }
 
   dispose(): void {
+    this.detachClip();
     this.detachMusic();
     if (this.ctx) {
       // Don't close on SPA nav — `close()` is expensive. `suspend()` lets

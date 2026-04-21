@@ -438,7 +438,13 @@ export function useTimelineEngine({
       // Prime the mixer with the current fade envelope BEFORE audio.play() so
       // the very first buffer of output already respects the fade-in (e.g. at
       // t=0 with fadeIn=0.5s, gain should start near 0, not at base volume).
-      mixerRef.current?.tick(startT, total);
+      const primeClipOffset =
+        initInfo.segment &&
+        initInfo.segment.kind === "scene" &&
+        initInfo.segment.isUploadedVideo
+          ? initInfo.localOffset
+          : undefined;
+      mixerRef.current?.tick(startT, total, primeClipOffset);
       audioRef.current.play().catch(() => { /* autoplay may be blocked */ });
     }
 
@@ -523,9 +529,15 @@ export function useTimelineEngine({
         syncPanToCurrentTime(segment, localOffset);
       }
 
-      // Feed the WebAudio mixer so it can resume the context on first gesture
-      // (Phase 3.3) and later apply fade/ducking envelopes (Phases 3.4/3.7).
-      mixerRef.current?.tick(nt, tot);
+      // Feed the WebAudio mixer. Clip offset is only meaningful for uploaded
+      // videos (the ones whose audio we route through the clip bus); for
+      // image scenes / AI videos / transitions we pass undefined so the
+      // mixer skips the clip fade envelope.
+      const clipOff =
+        segment && segment.kind === "scene" && segment.isUploadedVideo
+          ? localOffset
+          : undefined;
+      mixerRef.current?.tick(nt, tot, clipOff);
 
       useTimelineStore.setState({ currentTime: nt });
 
@@ -547,6 +559,7 @@ export function useTimelineEngine({
   function activateSegment(segment: Segment | null, localOffset: number) {
     if (!segment) {
       activeSegmentIdRef.current = null;
+      mixerRef.current?.detachClip();
       return;
     }
     activeSegmentIdRef.current = segment.id;
@@ -555,7 +568,22 @@ export function useTimelineEngine({
 
     videoRegistry.mutedAll(true);
     const shouldAudible = segment.kind === "scene" && segment.isUploadedVideo;
-    el.muted = !shouldAudible;
+    const mixer = mixerRef.current;
+    if (mixer && shouldAudible) {
+      // Mixer owns gain / muting for uploaded clips. attachClip() itself
+      // flips the element's muted=false/volume=1 so the MediaElementSource
+      // can see a non-zero signal.
+      mixer.attachClip(el, {
+        duration: segment.duration,
+        clipVolume:
+          segment.kind === "scene" && typeof segment.audioVolume === "number"
+            ? segment.audioVolume
+            : 1,
+      });
+    } else {
+      mixer?.detachClip();
+      el.muted = !shouldAudible;
+    }
 
     const srcOffset = sourceOffsetFor(segment, localOffset);
     try { el.currentTime = srcOffset; } catch { /* ignore */ }

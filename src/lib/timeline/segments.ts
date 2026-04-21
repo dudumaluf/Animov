@@ -23,6 +23,8 @@ export type SceneSegment = {
    * undefined = play to native end.
    */
   trimEnd?: number;
+  /** Per-scene clip gain (0..2). Only meaningful for uploaded videos. */
+  audioVolume?: number;
 };
 
 export type TransitionSegment = {
@@ -78,6 +80,7 @@ export function buildSegments(scenes: Scene[], transitions: Transition[]): Segme
       isUploadedVideo: scene.sourceType === "video-upload",
       trimStart: scene.trimStart,
       trimEnd: scene.trimEnd,
+      audioVolume: scene.audioVolume,
     });
     t += duration;
 

@@ -132,6 +132,7 @@ export type ProjectStore = {
   selectEditNode: () => void;
   setMusicPrompt: (prompt: string) => void;
   generateMusic: () => Promise<void>;
+  uploadMusicFile: (file: File) => Promise<void>;
   clearMusic: () => void;
   setExportAspectRatio: (ratio: "16:9" | "9:16") => void;
   setAudioMixSetting: <K extends keyof AudioMixSettings>(key: K, val: AudioMixSettings[K]) => void;
@@ -227,6 +228,62 @@ async function persistVideoToStorage(
     return data.url as string;
   } catch (err) {
     console.error("[persist-video]", err);
+    return null;
+  }
+}
+
+/**
+ * Mirror a remote (http/https) music URL into our Supabase `music` bucket.
+ * Used after AI generation (Fal.ai) so the URL we persist is stable long-term
+ * and not subject to the provider's CDN expiry. Returns `null` on failure so
+ * the caller can fall back to the original URL without breaking UX.
+ */
+async function persistMusicUrlToStorage(
+  remoteUrl: string,
+  projectId: string | null,
+): Promise<string | null> {
+  try {
+    const res = await fetch("/api/persist-music", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        musicUrl: remoteUrl,
+        projectId: projectId ?? undefined,
+      }),
+    });
+    if (!res.ok) {
+      console.warn("[persist-music] HTTP", res.status);
+      return null;
+    }
+    const data = await res.json();
+    return (data.url as string) ?? null;
+  } catch (err) {
+    console.warn("[persist-music]", err);
+    return null;
+  }
+}
+
+/**
+ * Upload a client-side audio File (user MP3 picker) directly to our `music`
+ * bucket via multipart. Returns the public URL or `null` on failure.
+ */
+async function persistMusicFileToStorage(
+  file: File,
+  projectId: string | null,
+): Promise<string | null> {
+  try {
+    const fd = new FormData();
+    fd.append("file", file);
+    if (projectId) fd.append("projectId", projectId);
+    const res = await fetch("/api/persist-music", { method: "POST", body: fd });
+    if (!res.ok) {
+      console.warn("[persist-music] HTTP", res.status);
+      return null;
+    }
+    const data = await res.json();
+    return (data.url as string) ?? null;
+  } catch (err) {
+    console.warn("[persist-music]", err);
     return null;
   }
 }
@@ -1136,10 +1193,40 @@ export const useProjectStore = create<ProjectStore>()(
           });
           if (!res.ok) throw new Error("Music generation failed");
           const data = await res.json();
-          set({ musicUrl: data.audioUrl, isMusicGenerating: false, isDirty: true });
+          const falUrl = data.audioUrl as string;
+          // Optimistic: show Fal URL immediately so user hears music ASAP.
+          set({ musicUrl: falUrl, isMusicGenerating: false, isDirty: true });
+
+          // Mirror to Supabase in the background. If this fails we keep the
+          // Fal URL — user still hears the track, just without long-term
+          // persistence guarantee (the provider URL may expire later).
+          const mirrored = await persistMusicUrlToStorage(
+            falUrl,
+            get().supabaseProjectId,
+          );
+          if (mirrored) {
+            set({ musicUrl: mirrored, isDirty: true });
+          }
         } catch (err) {
           console.error("[generateMusic]", err);
           set({ isMusicGenerating: false });
+        }
+      },
+
+      uploadMusicFile: async (file: File) => {
+        // Instant local preview via ObjectURL so playback/UX doesn't wait on
+        // the roundtrip. Swap to the stable Supabase URL once the upload
+        // finishes; if it fails, the blob URL keeps the session working.
+        const localUrl = URL.createObjectURL(file);
+        set({ musicUrl: localUrl, isDirty: true });
+
+        const stableUrl = await persistMusicFileToStorage(
+          file,
+          get().supabaseProjectId,
+        );
+        if (stableUrl) {
+          set({ musicUrl: stableUrl, isDirty: true });
+          try { URL.revokeObjectURL(localUrl); } catch { /* ignore */ }
         }
       },
 

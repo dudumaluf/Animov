@@ -591,7 +591,7 @@ function EditPreview({
 }
 
 function MusicSection({
-  musicUrl, musicPrompt, isMusicGenerating, setMusicPrompt, generateMusic, clearMusic, setMusicUrl, musicVolume, setMusicVolume,
+  musicUrl, musicPrompt, isMusicGenerating, setMusicPrompt, generateMusic, clearMusic, uploadMusicFile, musicVolume, setMusicVolume,
 }: {
   musicUrl: string | null;
   musicPrompt: string;
@@ -599,7 +599,7 @@ function MusicSection({
   setMusicPrompt: (p: string) => void;
   generateMusic: () => void;
   clearMusic: () => void;
-  setMusicUrl: (url: string) => void;
+  uploadMusicFile: (file: File) => void;
   musicVolume: number;
   setMusicVolume: (vol: number) => void;
 }) {
@@ -684,7 +684,7 @@ function MusicSection({
             className="hidden"
             onChange={(e) => {
               const file = e.target.files?.[0];
-              if (file) setMusicUrl(URL.createObjectURL(file));
+              if (file) uploadMusicFile(file);
               e.target.value = "";
             }}
           />
@@ -791,6 +791,7 @@ export function Inspector({
   const isMusicGenerating = useProjectStore((s) => s.isMusicGenerating);
   const setMusicPrompt = useProjectStore((s) => s.setMusicPrompt);
   const generateMusicAction = useProjectStore((s) => s.generateMusic);
+  const uploadMusicFileAction = useProjectStore((s) => s.uploadMusicFile);
   const clearMusic = useProjectStore((s) => s.clearMusic);
   const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
   const setExportAspectRatio = useProjectStore((s) => s.setExportAspectRatio);
@@ -1067,7 +1068,7 @@ export function Inspector({
               setMusicPrompt={setMusicPrompt}
               generateMusic={generateMusicAction}
               clearMusic={clearMusic}
-              setMusicUrl={(url: string) => useProjectStore.setState({ musicUrl: url, isDirty: true })}
+              uploadMusicFile={uploadMusicFileAction}
               musicVolume={audioMix.musicVolume}
               setMusicVolume={(vol: number) => setAudioMixSetting("musicVolume", vol)}
             />

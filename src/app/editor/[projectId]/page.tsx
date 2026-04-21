@@ -95,6 +95,7 @@ export default function EditorPage({
     mainFlexRef,
     musicUrl: musicUrl ?? null,
     musicVolume: audioMix.musicVolume,
+    audioMix,
     panX,
     setPanX,
     zoom,

@@ -10,6 +10,8 @@ import {
 import { videoRegistry } from "@/lib/timeline/video-registry";
 import { computePlayheadX } from "@/components/editor/playhead";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
+import { PlaybackAudioMixer } from "@/lib/timeline/playback-audio-mixer";
+import { DEFAULT_AUDIO_MIX, type AudioMixSettings } from "@/lib/composition/compose";
 
 export interface TimelineEngineParams {
   segments: Segment[];
@@ -18,6 +20,7 @@ export interface TimelineEngineParams {
   mainFlexRef: React.RefObject<HTMLDivElement | null>;
   musicUrl: string | null;
   musicVolume: number;
+  audioMix?: AudioMixSettings;
   panX: number;
   setPanX: (x: number) => void;
   zoom: number;
@@ -48,6 +51,7 @@ export function useTimelineEngine({
   mainFlexRef,
   musicUrl,
   musicVolume,
+  audioMix,
   panX,
   setPanX,
   zoom,
@@ -55,6 +59,7 @@ export function useTimelineEngine({
   const segmentsRef = useRef(segments);
   const panXRef = useRef(panX);
   const musicVolRef = useRef(musicVolume);
+  const audioMixRef = useRef<AudioMixSettings>(audioMix ?? DEFAULT_AUDIO_MIX);
   const setPanXRef = useRef(setPanX);
   const zoomRef = useRef(zoom);
 
@@ -67,6 +72,9 @@ export function useTimelineEngine({
   useEffect(() => {
     musicVolRef.current = musicVolume;
   }, [musicVolume]);
+  useEffect(() => {
+    audioMixRef.current = audioMix ?? DEFAULT_AUDIO_MIX;
+  }, [audioMix]);
   useEffect(() => {
     setPanXRef.current = setPanX;
   }, [setPanX]);
@@ -98,10 +106,25 @@ export function useTimelineEngine({
   // Prevents re-firing the pre-decode on every animation frame once it has been
   // kicked off for a given segment.
   const premountedRef = useRef<Set<string>>(new Set());
+  // WebAudio mixer that aligns preview with the offline export mix
+  // (compose.ts). Lives outside React state — the engine owns it for its
+  // full lifetime, disposing on unmount.
+  const mixerRef = useRef<PlaybackAudioMixer | null>(null);
+
+  useEffect(() => {
+    if (!mixerRef.current && PlaybackAudioMixer.supported()) {
+      mixerRef.current = new PlaybackAudioMixer();
+    }
+    return () => {
+      mixerRef.current?.dispose();
+      mixerRef.current = null;
+    };
+  }, []);
 
   useEffect(() => {
     if (audioRef.current) {
       try { audioRef.current.pause(); } catch { /* ignore */ }
+      mixerRef.current?.detachMusic();
       audioRef.current = null;
     }
     if (!musicUrl) return;
@@ -110,21 +133,41 @@ export function useTimelineEngine({
       el.loop = true;
       el.preload = "auto";
       el.crossOrigin = "anonymous";
-      el.volume = Math.max(0, Math.min(1, musicVolRef.current));
+      // Mixer owns volume when attached; leave element volume at 1 so the
+      // WebAudio chain is the single source of attenuation. Fallback branch
+      // (mixer unsupported) still uses element volume below.
+      el.volume = 1;
       audioRef.current = el;
+      const mixer = mixerRef.current;
+      if (mixer) {
+        mixer.attachMusic(el);
+        mixer.setMusicBaseVolume(Math.max(0, Math.min(1, musicVolRef.current)));
+      } else {
+        el.volume = Math.max(0, Math.min(1, musicVolRef.current));
+      }
     } catch (err) {
       console.warn("[timeline-engine] Audio init failed", err);
     }
     return () => {
       try { audioRef.current?.pause(); } catch { /* ignore */ }
+      mixerRef.current?.detachMusic();
       audioRef.current = null;
     };
   }, [musicUrl]);
 
   useEffect(() => {
-    const a = audioRef.current;
-    if (a) a.volume = Math.max(0, Math.min(1, musicVolume));
+    const vol = Math.max(0, Math.min(1, musicVolume));
+    const mixer = mixerRef.current;
+    if (mixer) {
+      mixer.setMusicBaseVolume(vol);
+    } else if (audioRef.current) {
+      audioRef.current.volume = vol;
+    }
   }, [musicVolume]);
+
+  useEffect(() => {
+    if (audioMix) mixerRef.current?.setMix(audioMix);
+  }, [audioMix]);
 
   useEffect(() => {
     if (viewMode !== "timeline") {
@@ -475,6 +518,10 @@ export function useTimelineEngine({
       if (state.autoFollow) {
         syncPanToCurrentTime(segment, localOffset);
       }
+
+      // Feed the WebAudio mixer so it can resume the context on first gesture
+      // (Phase 3.3) and later apply fade/ducking envelopes (Phases 3.4/3.7).
+      mixerRef.current?.tick(nt, tot);
 
       useTimelineStore.setState({ currentTime: nt });
 

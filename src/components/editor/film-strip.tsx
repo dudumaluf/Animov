@@ -304,6 +304,25 @@ function SortableSceneCard({
               loop
               playsInline
               preload="auto"
+              onLoadedMetadata={(e) => {
+                // Heal stale `videoVersions[i].duration` values. Previous
+                // code paths saved the *trimmed* scene.duration as the new
+                // version's duration on regeneration, which caps the trim
+                // handle to the trimmed length and prevents the user from
+                // restoring the full native range. We only grow the stored
+                // duration — never shrink — so this is safe for freshly
+                // generated clips that really do match.
+                const el = e.currentTarget;
+                const dur = el.duration;
+                if (!Number.isFinite(dur) || dur <= 0) return;
+                useProjectStore
+                  .getState()
+                  .reconcileVideoVersionDuration(
+                    scene.id,
+                    scene.activeVersion,
+                    dur,
+                  );
+              }}
               onMouseEnter={(e) => {
                 if (!canHoverPlay()) return;
                 (e.target as HTMLVideoElement).play();

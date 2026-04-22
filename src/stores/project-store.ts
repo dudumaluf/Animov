@@ -138,6 +138,16 @@ export type ProjectStore = {
   setAudioMixSetting: <K extends keyof AudioMixSettings>(key: K, val: AudioMixSettings[K]) => void;
   setSceneAudioVolume: (sceneId: string, vol: number) => void;
 
+  /**
+   * Reconciles a stored `videoVersions[i].duration` with what the `<video>`
+   * element actually reports after it loads its metadata. Only ever grows
+   * the stored value (never shrinks) so the trim handles can expand back to
+   * the file's native length when the duration was persisted smaller than
+   * reality (e.g. legacy rows where a regeneration passed the trimmed
+   * scene.duration as the new version's `duration`).
+   */
+  reconcileVideoVersionDuration: (sceneId: string, versionIndex: number, realDuration: number) => void;
+
   updateSceneStatus: (sceneId: string, status: Scene["status"], videoUrl?: string, costCredits?: number, videoDuration?: number) => void;
   generateAll: () => Promise<void>;
   generateScene: (sceneId: string) => Promise<void>;
@@ -1245,6 +1255,34 @@ export const useProjectStore = create<ProjectStore>()(
         ),
         isDirty: true,
       })),
+
+      reconcileVideoVersionDuration: (sceneId, versionIndex, realDuration) => {
+        // Guard: browsers hand back 0 / NaN / Infinity before metadata settles
+        // for streamed content. Only apply positive, finite, strictly larger
+        // values so a mid-load callback can't shrink a valid stored duration.
+        if (!Number.isFinite(realDuration) || realDuration <= 0) return;
+        set((state) => {
+          let changed = false;
+          const scenes = state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            const versions = s.videoVersions ?? [];
+            const ver = versions[versionIndex];
+            if (!ver) return s;
+            // 50ms tolerance — browsers round sub-frame durations differently
+            // and we don't want to thrash the store on harmless noise.
+            if (realDuration <= (ver.duration ?? 0) + 0.05) return s;
+            const nextVersions = versions.map((v, i) =>
+              i === versionIndex ? { ...v, duration: realDuration } : v,
+            );
+            changed = true;
+            return { ...s, videoVersions: nextVersions };
+          });
+          // Don't flip isDirty for reconciliation-only updates — the user
+          // didn't *do* anything; we're just healing stale metadata. Saving
+          // will happen next time they make a real edit.
+          return changed ? { scenes } : state;
+        });
+      },
 
       updateSceneStatus: (sceneId, status, videoUrl, costCredits, videoDuration) => {
         set((state) => ({

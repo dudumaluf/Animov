@@ -161,11 +161,33 @@ function SortableSceneCard({
       const startDuration = current.duration;
       const startTrimStart = current.trimStart ?? 0;
       const activeVer = current.videoVersions?.[current.activeVersion];
-      const native =
-        activeVer?.duration && activeVer.duration > 0
-          ? activeVer.duration
-          : current.duration;
+      // Native duration is the MAX available from three sources, so a stale
+      // persisted value (legacy rows where the trimmed duration was written
+      // as the version's native length) can never cap the trim range:
+      //   1) stored videoVersions[active].duration
+      //   2) the live <video> element's .duration (always truth if loaded)
+      //   3) the scene's current .duration (weakest — can be trimmed)
+      const liveEl = videoRegistry.get(sceneId);
+      const liveDuration =
+        liveEl && Number.isFinite(liveEl.duration) && liveEl.duration > 0
+          ? liveEl.duration
+          : 0;
+      const native = Math.max(
+        activeVer?.duration ?? 0,
+        liveDuration,
+        current.duration,
+      );
       const startTrimEnd = current.trimEnd ?? native;
+
+      // If the live element reports a larger duration than what's stored,
+      // heal the persisted value right now so the next save ships the fix.
+      // This is the same reconcile path the <video>'s onLoadedMetadata uses,
+      // just triggered on-demand when the user grabs the handle.
+      if (liveDuration > (activeVer?.duration ?? 0) + 0.05) {
+        useProjectStore
+          .getState()
+          .reconcileVideoVersionDuration(sceneId, current.activeVersion, liveDuration);
+      }
 
       const pps = Math.max(1, useTimelineStore.getState().pixelsPerSecond);
 

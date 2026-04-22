@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { videoRegistry } from "@/lib/timeline/video-registry";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
-import type { SceneSprite } from "@/stores/project-store";
+import { useProjectStore, type SceneSprite } from "@/stores/project-store";
 import { spriteProgressForScene } from "@/lib/timeline/segments";
 
 interface RvfcMetadata {
@@ -217,6 +217,23 @@ export function InspectorPreviewVideo({
       autoPlay
       playsInline
       preload="auto"
+      onLoadedMetadata={(e) => {
+        // Heal stale videoVersions[active].duration if a legacy save wrote
+        // the trimmed length as the native duration. See the filmstrip's
+        // equivalent handler for the full rationale — keeping the two in
+        // sync so the inspector preview can also unlock trim expansion
+        // without waiting for the user to hover the timeline card.
+        const el = e.currentTarget;
+        const dur = el.duration;
+        if (!Number.isFinite(dur) || dur <= 0) return;
+        const scene = useProjectStore
+          .getState()
+          .scenes.find((s) => s.id === sceneId);
+        if (!scene) return;
+        useProjectStore
+          .getState()
+          .reconcileVideoVersionDuration(sceneId, scene.activeVersion, dur);
+      }}
     />
   );
 }

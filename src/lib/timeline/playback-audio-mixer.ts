@@ -301,6 +301,23 @@ export class PlaybackAudioMixer {
     this.mix = { ...mix };
   }
 
+  /**
+   * Wake the AudioContext if it's still suspended. Browsers keep it in
+   * that state until a user gesture — the engine attaches a page-wide
+   * `pointerdown`/`keydown` primer that calls this, so the first scrub
+   * after a reload (before the user ever hit Play) has a live graph.
+   *
+   * Safe to call any time; cheap when already running; no-op before the
+   * context has been constructed by `attachMusic`.
+   */
+  resume(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => { /* next tick will try again */ });
+    }
+  }
+
   setMusicBaseVolume(vol: number): void {
     this.musicBaseVolume = Math.max(0, Math.min(2, vol));
     if (this.musicGain && this.ctx) {
@@ -325,6 +342,14 @@ export class PlaybackAudioMixer {
     if (this.musicScrubActive) return;
     const ctx = this.ensureContext();
     if (!ctx) return;
+
+    // Defense in depth: if the global primer didn't fire (reload → user
+    // goes straight for the playhead without clicking anywhere first),
+    // try to wake the context here. Worst case it stays suspended until
+    // the tick() loop retries.
+    if (ctx.state === "suspended") {
+      ctx.resume().catch(() => { /* ignore */ });
+    }
 
     this.musicScrubActive = true;
 

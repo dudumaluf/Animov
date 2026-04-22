@@ -129,6 +129,32 @@ export function useTimelineEngine({
     };
   }, []);
 
+  // AudioContext auto-start primer.
+  // Browsers keep any AudioContext in `suspended` until a real user gesture.
+  // When the editor mounts post-reload, `<audio>` is attached by a mount
+  // effect (no gesture), so the context lives but can't emit sound — which
+  // manifests as "scrub is silent until I click Play once". Attach a global
+  // one-shot listener for the first pointerdown/keydown; that gesture wakes
+  // the context synchronously inside the handler where the browser accepts
+  // it, and every subsequent scrub/play works without further ceremony.
+  useEffect(() => {
+    if (!PlaybackAudioMixer.supported()) return;
+    const prime = () => {
+      mixerRef.current?.resume();
+      window.removeEventListener("pointerdown", prime, true);
+      window.removeEventListener("keydown", prime, true);
+      window.removeEventListener("touchstart", prime, true);
+    };
+    window.addEventListener("pointerdown", prime, true);
+    window.addEventListener("keydown", prime, true);
+    window.addEventListener("touchstart", prime, true);
+    return () => {
+      window.removeEventListener("pointerdown", prime, true);
+      window.removeEventListener("keydown", prime, true);
+      window.removeEventListener("touchstart", prime, true);
+    };
+  }, []);
+
   useEffect(() => {
     if (audioRef.current) {
       try { audioRef.current.pause(); } catch { /* ignore */ }

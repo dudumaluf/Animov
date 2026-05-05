@@ -237,6 +237,9 @@ export function useTimelineEngine({
       if (!el) return;
       try {
         el.muted = true;
+        // See comment in activateSegment — the engine owns clip progression
+        // in timeline mode, so disable the JSX `loop` attribute up front.
+        el.loop = false;
         if (el.readyState < 2) {
           try { el.load(); } catch { /* ignore */ }
           await new Promise<void>((resolve) => {
@@ -267,6 +270,16 @@ export function useTimelineEngine({
     warmup();
     return () => { cancelled = true; };
   }, [viewMode, segments]);
+
+  // When leaving timeline mode, restore the JSX `loop` default so canvas-mode
+  // hover previews still auto-loop. The engine sets `loop=false` while in
+  // timeline mode (so it can be the sole authority over clip progression);
+  // without this restore, hovering a card after a timeline session would
+  // play once and stop instead of looping.
+  useEffect(() => {
+    if (viewMode === "timeline") return;
+    videoRegistry.loopAll(true);
+  }, [viewMode]);
 
   // When viewport or main flex resizes (window resize, inspector toggle, etc.),
   // keep the playhead aligned with currentTime. Since the playhead position is
@@ -560,8 +573,24 @@ export function useTimelineEngine({
       } else if (segment) {
         const el = videoRegistry.get(segment.id);
         const srcOffset = sourceOffsetFor(segment, localOffset);
-        if (el && Math.abs(el.currentTime - srcOffset) > DRIFT_CORRECTION_THRESHOLD) {
-          try { el.currentTime = srcOffset; } catch { /* ignore */ }
+        if (el) {
+          // Defense in depth against stored-vs-real duration mismatch
+          // (see project-store reconcileVideoVersionDuration). When the
+          // engine's expected source position runs past the file's actual
+          // end, the browser silently clamps `currentTime` to last-frame.
+          // Re-issuing that seek every rAF tick is wasted work and keeps
+          // firing `seeking`/`seeked` events that the canvas mirror reacts
+          // to — looks like flicker on a frozen frame. Suppress the seek
+          // until the heal re-shapes the segment (next loadedmetadata).
+          const elDur = el.duration;
+          const beyondNative =
+            Number.isFinite(elDur) && elDur > 0 && srcOffset > elDur - SEEK_EPSILON;
+          if (
+            !beyondNative &&
+            Math.abs(el.currentTime - srcOffset) > DRIFT_CORRECTION_THRESHOLD
+          ) {
+            try { el.currentTime = srcOffset; } catch { /* ignore */ }
+          }
         }
       }
 
@@ -659,6 +688,16 @@ export function useTimelineEngine({
     activeSegmentIdRef.current = segment.id;
     const el = videoRegistry.get(segment.id);
     if (!el) return;
+
+    // The filmstrip `<video>` ships with `loop` in JSX (nice for hover
+    // previews in canvas mode). During timeline playback the engine is the
+    // sole authority over clip progression: project time advances via rAF
+    // and only nudges the element on >200ms drift. If the element auto-
+    // loops at native end (e.g. when stored `trimEnd` overshoots the file's
+    // real duration) the user sees a freeze + frames from the start of the
+    // clip until the next drift correction catches up. Forcing loop=false
+    // on the active element makes the engine clock authoritative.
+    el.loop = false;
 
     videoRegistry.mutedAll(true);
     const shouldAudible = segment.kind === "scene" && segment.isUploadedVideo;

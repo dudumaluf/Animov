@@ -5,6 +5,7 @@ import { createPortal } from "react-dom";
 import { ChevronRight, Clapperboard, Loader2, Scissors, Sparkles, X } from "lucide-react";
 
 import { useProjectStore } from "@/stores/project-store";
+import { useHasActiveJobs } from "@/stores/jobs-store";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { Inspector } from "./inspector";
 
@@ -33,7 +34,7 @@ export function InspectorRail({
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
-  const isGenerating = useProjectStore((s) => s.isGenerating);
+  const isGenerating = useHasActiveJobs();
   const setInspectorDensity = useEditorSettingsStore((s) => s.setInspectorDensity);
 
   const [overlayOpen, setOverlayOpen] = useState(false);

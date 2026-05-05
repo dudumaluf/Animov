@@ -1,10 +1,10 @@
 "use client";
 
-import Image from "next/image";
+import { CroppedImage } from "@/components/editor/cropped-image";
 import { useState, useRef, useEffect, useCallback } from "react";
 import { useProjectStore } from "@/stores/project-store";
+import { useHasActiveMusicJob } from "@/stores/batches-store";
 import {
-  X,
   Maximize2,
   ChevronDown,
   ChevronRight,
@@ -495,12 +495,10 @@ function MusicTrackPlayer({ src }: { src: string }) {
 
 function EditPreview({
   musicUrl,
-  onClose,
   onExport,
   aspectRatio = "16:9",
 }: {
   musicUrl: string | null;
-  onClose: () => void;
   onExport?: () => void | Promise<void>;
   aspectRatio?: "16:9" | "9:16";
 }) {
@@ -546,7 +544,12 @@ function EditPreview({
           onClick={() => (videoRef.current?.paused ? syncPlay() : syncPause())}
         />
       ) : preview ? (
-        <Image src={preview.photoDataUrl ?? preview.photoUrl} alt="edit" fill className="object-cover" unoptimized />
+        <CroppedImage
+          src={preview.photoDataUrl ?? preview.photoUrl}
+          crop={preview.crop}
+          alt="edit"
+          className="absolute inset-0 h-full w-full"
+        />
       ) : (
         <div className="flex h-full w-full items-center justify-center">
           <Clapperboard size={24} className="text-text-secondary" />
@@ -577,14 +580,6 @@ function EditPreview({
             )}
           </button>
         )}
-        <button
-          type="button"
-          onClick={onClose}
-          className="flex h-7 w-7 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-          aria-label="Fechar painel"
-        >
-          <X size={13} />
-        </button>
       </div>
     </div>
   );
@@ -764,11 +759,18 @@ export function Inspector({
   onExport,
   onDownloadLast,
   onEditImage,
+  embedded = false,
 }: {
   onPreviewVideo?: (url: string) => void;
   onExport?: () => void;
   onDownloadLast?: () => void;
   onEditImage?: (sceneId: string) => void;
+  /**
+   * When true, the Inspector renders without its standalone `<aside>` shell
+   * so it can slot cleanly into the DockRail's `PropertiesDrawer` chassis.
+   * The outer wrapper handles sizing, border, and background in that mode.
+   */
+  embedded?: boolean;
 }) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
@@ -779,8 +781,6 @@ export function Inspector({
   );
   const setSceneTrim = useProjectStore((s) => s.setSceneTrim);
   const generateScene = useProjectStore((s) => s.generateScene);
-  const isGenerating = useProjectStore((s) => s.isGenerating);
-  const selectScene = useProjectStore((s) => s.selectScene);
   const modelId = useProjectStore((s) => s.modelId);
   const setModelId = useProjectStore((s) => s.setModelId);
   const durations = getDurations(modelId);
@@ -788,7 +788,7 @@ export function Inspector({
 
   const musicPrompt = useProjectStore((s) => s.musicPrompt);
   const musicUrl = useProjectStore((s) => s.musicUrl);
-  const isMusicGenerating = useProjectStore((s) => s.isMusicGenerating);
+  const isMusicGenerating = useHasActiveMusicJob();
   const setMusicPrompt = useProjectStore((s) => s.setMusicPrompt);
   const generateMusicAction = useProjectStore((s) => s.generateMusic);
   const uploadMusicFileAction = useProjectStore((s) => s.uploadMusicFile);
@@ -805,14 +805,19 @@ export function Inspector({
   const previewPlacement = useEditorSettingsStore((s) => s.layout.previewPlacement);
   const showInspectorPreview = previewPlacement === "inspector";
 
-  return (
-    <aside
-      className={`shrink-0 border-l border-white/5 bg-[#0A0A09] transition-all duration-300 ease-out overflow-hidden overflow-y-auto ${
+  const rootClass = embedded
+    ? "h-full w-full overflow-hidden overflow-y-auto bg-[#0A0A09]"
+    : `shrink-0 border-l border-white/5 bg-[#0A0A09] transition-all duration-300 ease-out overflow-hidden overflow-y-auto ${
         isOpen ? "w-64" : "w-0 border-l-0"
-      }`}
-    >
+      }`;
+  const innerClass = embedded
+    ? "flex h-full min-h-0 w-full flex-col"
+    : "flex h-full min-h-0 w-64 flex-col";
+
+  return (
+    <aside className={rootClass}>
       {scene && selectedSceneId && showScene && (
-        <div className="flex h-full min-h-0 w-64 flex-col">
+        <div className={innerClass}>
           {showInspectorPreview ? (
             <div className="relative aspect-video w-full shrink-0 bg-white/5">
               {scene.status === "ready" && scene.videoUrl ? (
@@ -826,12 +831,11 @@ export function Inspector({
                   nativeDuration={scene.videoVersions?.[scene.activeVersion]?.duration}
                 />
               ) : (
-                <Image
+                <CroppedImage
                   src={scene.photoDataUrl ?? scene.photoUrl}
+                  crop={scene.crop}
                   alt="Pré-visualização da cena"
-                  fill
-                  className="object-cover"
-                  unoptimized
+                  className="absolute inset-0 h-full w-full"
                 />
               )}
               <div className="absolute right-2 top-2 flex items-center gap-1">
@@ -846,14 +850,6 @@ export function Inspector({
                     <ArrowDownToLine size={12} />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => selectScene(null)}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
-                  aria-label="Fechar painel"
-                >
-                  <X size={12} />
-                </button>
               </div>
               {scene.status === "ready" && scene.videoUrl && onPreviewVideo && (
                 <button
@@ -895,14 +891,6 @@ export function Inspector({
                     <Maximize2 size={12} />
                   </button>
                 )}
-                <button
-                  type="button"
-                  onClick={() => selectScene(null)}
-                  className="flex h-6 w-6 items-center justify-center rounded-full bg-white/5 text-white/60 transition-colors hover:bg-white/10 hover:text-white"
-                  aria-label="Fechar painel"
-                >
-                  <X size={12} />
-                </button>
               </div>
             </div>
           )}
@@ -1016,7 +1004,7 @@ export function Inspector({
                 <div className="mt-auto shrink-0 space-y-2 pt-2">
                   <button
                     type="button"
-                    disabled={isGenerating}
+                    disabled={scene.status === "generating"}
                     onClick={() => generateScene(selectedSceneId)}
                     className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
                   >
@@ -1052,10 +1040,9 @@ export function Inspector({
       )}
 
       {showEdit && (
-        <div className="flex h-full min-h-0 w-64 flex-col">
+        <div className={innerClass}>
           <EditPreview
             musicUrl={musicUrl}
-            onClose={() => useProjectStore.setState({ editNodeSelected: false })}
             onExport={onExport}
             aspectRatio={exportAspectRatio}
           />

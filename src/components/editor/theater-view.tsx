@@ -1,9 +1,9 @@
 "use client";
 
-import Image from "next/image";
 import { useMemo } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
+import { CroppedImage } from "@/components/editor/cropped-image";
 import { VideoMirror } from "@/components/editor/video-mirror";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
 import { spriteProgressForScene } from "@/lib/timeline/segments";
@@ -34,6 +34,7 @@ export function TheaterView() {
         id: scene.id,
         videoUrl: scene.videoUrl ?? null,
         poster: scene.photoDataUrl ?? scene.photoUrl ?? null,
+        crop: scene.crop ?? null,
         sprite: scene.sprite ?? null,
         duration: scene.duration,
         trimStart: scene.trimStart,
@@ -46,6 +47,7 @@ export function TheaterView() {
         id: transition.id,
         videoUrl: transition.videoUrl ?? null,
         poster: null,
+        crop: null,
         sprite: transition.sprite ?? null,
         duration: transition.duration ?? transition.costCredits ?? 1,
         trimStart: undefined,
@@ -88,16 +90,14 @@ export function TheaterView() {
           )}
         </div>
       ) : resolved && resolved.poster ? (
-        <div className="relative h-full w-full">
-          <Image
-            src={resolved.poster}
-            alt=""
-            fill
-            unoptimized
-            className="object-contain"
-            draggable={false}
-          />
-        </div>
+        <CroppedImage
+          src={resolved.poster}
+          crop={resolved.crop}
+          alt=""
+          className="h-full w-full"
+          objectFit="contain"
+          draggable={false}
+        />
       ) : (
         <div className="flex flex-col items-center gap-2 text-white/30">
           <span className="font-mono text-[10px] uppercase tracking-widest">

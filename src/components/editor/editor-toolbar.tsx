@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/stores/project-store";
+import { useHasActiveJobs } from "@/stores/jobs-store";
 import { createClient } from "@/lib/supabase/client";
 import {
   ArrowLeft,
@@ -298,7 +299,6 @@ export function EditorToolbar({
     setProjectName,
     totalCost,
     scenes,
-    isGenerating,
     generateAll,
     generateScene,
     isSaving,
@@ -311,6 +311,14 @@ export function EditorToolbar({
     setHasEditNode,
     modelId,
   } = useProjectStore();
+
+  // `hasActiveJobs` replaces the legacy global isGenerating flag. With
+  // parallel batches now supported the menu items stay enabled — disabling
+  // them would prevent the user from kicking off a second batch while a
+  // first one is running (which is the whole point of Phase 1).
+  // We still track it for the credits refresh below, so stale balances get
+  // refreshed as soon as everything finishes.
+  const hasActiveJobs = useHasActiveJobs();
 
   const [editing, setEditing] = useState(false);
   const [creditBalance, setCreditBalance] = useState<number | null>(null);
@@ -373,7 +381,7 @@ export function EditorToolbar({
           });
       }
     });
-  }, [isGenerating]);
+  }, [hasActiveJobs]);
 
   const closeMenu = () => setOpenMenu(null);
   const toggleMenu = (name: string) =>
@@ -523,14 +531,14 @@ export function EditorToolbar({
       type: "action",
       label: "Gerar todas as cenas",
       icon: <Clapperboard size={14} />,
-      disabled: scenes.length === 0 || isGenerating,
+      disabled: scenes.length === 0,
       onClick: () => generateAll(),
     },
     {
       type: "action",
       label: "Gerar cena selecionada",
       icon: <Play size={14} />,
-      disabled: !selectedSceneId || isGenerating,
+      disabled: !selectedSceneId,
       onClick: () => {
         if (selectedSceneId) generateScene(selectedSceneId);
       },

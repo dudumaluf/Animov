@@ -51,6 +51,7 @@ export function sceneToPortable(s: Scene): PortableScene | null {
     sourceType: s.sourceType,
     trimStart: s.trimStart,
     trimEnd: s.trimEnd,
+    crop: s.crop,
   };
 }
 
@@ -76,6 +77,7 @@ export function portableToScene(p: PortableScene): Scene {
     sourceType: p.sourceType,
     trimStart: p.trimStart,
     trimEnd: p.trimEnd,
+    crop: p.crop,
   };
 }
 

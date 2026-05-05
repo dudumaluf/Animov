@@ -14,11 +14,11 @@ const PRESET_CHIPS: readonly Chip[] = [
 ] as const;
 
 /**
- * Floating chip bar for switching between layout presets. The wrapper in
- * page.tsx decides where to anchor it (canvas area top-right vs theater
- * top-right) — here we only render it absolutely into the parent, so it never
- * overlaps the inspector (which sits outside the parent we're anchored to).
- * The `Livre` chip only appears when the user has drifted from a named preset.
+ * Floating chip bar for switching between layout presets. Positioning is
+ * fully controlled by the caller via `className` — the editor anchors it
+ * top-center between the two panel pills, theater pins it top-right inside
+ * the theater wrapper. The `Livre` chip only appears when the user has
+ * drifted from a named preset.
  */
 export function LayoutBar({ className = "" }: { className?: string }) {
   const preset = useEditorSettingsStore((s) => s.layout.preset);
@@ -29,7 +29,7 @@ export function LayoutBar({ className = "" }: { className?: string }) {
 
   return (
     <div
-      className={`pointer-events-auto absolute right-3 top-3 z-40 flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm animate-in fade-in slide-in-from-top-2 duration-200 ${className}`}
+      className={`pointer-events-auto z-40 flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm animate-in fade-in slide-in-from-top-2 duration-200 ${className}`}
       aria-label="Layout presets"
     >
       {PRESET_CHIPS.map((chip) => {

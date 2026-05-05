@@ -18,6 +18,11 @@ export const videoRegistry = {
       try { v.muted = muted; } catch { /* ignore */ }
     });
   },
+  loopAll(loop: boolean) {
+    registry.forEach((v) => {
+      try { v.loop = loop; } catch { /* ignore */ }
+    });
+  },
   has(id: string): boolean {
     return registry.has(id);
   },

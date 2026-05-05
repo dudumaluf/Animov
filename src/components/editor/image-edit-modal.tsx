@@ -2,7 +2,14 @@
 
 import Image from "next/image";
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
-import { X, Loader2, ImagePlus, Sparkles, BookOpen } from "lucide-react";
+import { X, Loader2, ImagePlus, Sparkles, BookOpen, Crop, Check } from "lucide-react";
+import ReactCrop, {
+  centerCrop,
+  makeAspectCrop,
+  type Crop as ReactCropArea,
+  type PercentCrop,
+} from "react-image-crop";
+import "react-image-crop/dist/ReactCrop.css";
 import {
   DndContext,
   DragOverlay,
@@ -30,12 +37,52 @@ import {
   type AssetEditResult,
 } from "@/components/editor/asset-edit-modal";
 import { AssetContextMenu } from "@/components/editor/asset-context-menu";
+import { CroppedImage } from "@/components/editor/cropped-image";
+import type { ImageCrop, ImageCropAspect } from "@/stores/project-store";
 
 const ASPECT_RATIOS = ["auto", "1:1", "16:9", "9:16", "3:2", "4:3", "4:5"];
 const RESOLUTIONS = ["1K", "2K", "4K"];
 const CREDIT_COST: Record<string, number> = { "1K": 1, "2K": 1, "4K": 2 };
 const MAX_REFS = 8;
 const ANALYZE_DEBOUNCE_MS = 500;
+
+const CROP_ASPECT_OPTIONS: { value: ImageCropAspect; label: string; ratio: number | undefined }[] = [
+  { value: "free", label: "Livre", ratio: undefined },
+  { value: "16:9", label: "16:9", ratio: 16 / 9 },
+  { value: "9:16", label: "9:16", ratio: 9 / 16 },
+  { value: "1:1", label: "1:1", ratio: 1 },
+  { value: "4:5", label: "4:5", ratio: 4 / 5 },
+];
+
+function ratioForAspect(aspect: ImageCropAspect): number | undefined {
+  return CROP_ASPECT_OPTIONS.find((o) => o.value === aspect)?.ratio;
+}
+
+/**
+ * Build a sensible default crop centered on the image. Used when entering
+ * cropMode for the first time (no saved crop yet) or when switching aspect
+ * presets. Sized at 80% so the user immediately has handles to grab.
+ */
+function buildCenteredCrop(
+  aspect: ImageCropAspect,
+  imgWidth: number,
+  imgHeight: number,
+): PercentCrop {
+  const ratio = ratioForAspect(aspect);
+  if (ratio === undefined) {
+    const size = 80;
+    return centerCrop(
+      { unit: "%", x: 0, y: 0, width: size, height: size } as PercentCrop,
+      imgWidth,
+      imgHeight,
+    );
+  }
+  return centerCrop(
+    makeAspectCrop({ unit: "%", width: 80 }, ratio, imgWidth, imgHeight),
+    imgWidth,
+    imgHeight,
+  );
+}
 
 type DropPoint = { x: number; y: number };
 
@@ -273,10 +320,23 @@ export function ImageEditModal({
   imageUrl,
   onClose,
   onResult,
+  currentCrop = null,
+  onCropChange,
 }: {
   imageUrl: string;
   onClose: () => void;
   onResult: (editedUrl: string, mode: "replace" | "new_node") => void;
+  /**
+   * Existing non-destructive crop on the source photo. Used to pre-populate
+   * the crop overlay when the user re-enters cropMode and to render the
+   * preview in CompareSlider. `null` = no crop saved yet.
+   */
+  currentCrop?: ImageCrop | null;
+  /**
+   * Persist the crop on the underlying scene. Called only by Aceitar / Remover
+   * — Cancelar discards `tempCrop` without firing.
+   */
+  onCropChange?: (crop: ImageCrop | null) => void;
 }) {
   const [prompt, setPrompt] = useState("");
   const [references, setReferences] = useState<ReferenceImage[]>([]);
@@ -317,9 +377,154 @@ export function ImageEditModal({
   const analyzeAbortRef = useRef<AbortController | null>(null);
   const lastAnalyzeKeyRef = useRef<string>("");
 
+  // --- Crop sub-feature state (in-modal, non-destructive) ---
+  const [cropMode, setCropMode] = useState(false);
+  const [cropAspect, setCropAspect] = useState<ImageCropAspect>(
+    currentCrop?.aspect ?? "free",
+  );
+  // The live overlay region in % coords. `null` until the image loads inside
+  // <ReactCrop> (we need natural dimensions to position a centered default).
+  const [tempCrop, setTempCrop] = useState<ReactCropArea | null>(null);
+  const cropImgRef = useRef<HTMLImageElement | null>(null);
+  // Source image natural dimensions, captured on first load. Used to size the
+  // cropped-preview wrapper with the correct aspect ratio (the crop rect is
+  // normalized over the source, so the visible aspect = (cropW * srcW) /
+  // (cropH * srcH)).
+  const [sourceImgDims, setSourceImgDims] = useState<{ w: number; h: number } | null>(null);
+
+  const handleCropImageLoad = useCallback(
+    (e: React.SyntheticEvent<HTMLImageElement>) => {
+      const img = e.currentTarget;
+      // Capture natural dimensions so the post-Aceitar preview wrapper can
+      // size itself to the cropped region's true aspect ratio. This may
+      // happen here (cropMode entered first) or in the fallback <Image>'s
+      // onLoadingComplete (modal opened with no crop yet).
+      if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+        setSourceImgDims({ w: img.naturalWidth, h: img.naturalHeight });
+      }
+      // Restore the previously saved crop if present, otherwise center a
+      // default sized at 80% with the current aspect preset.
+      if (currentCrop) {
+        setTempCrop({
+          unit: "%",
+          x: currentCrop.x * 100,
+          y: currentCrop.y * 100,
+          width: currentCrop.width * 100,
+          height: currentCrop.height * 100,
+        });
+      } else {
+        setTempCrop(buildCenteredCrop(cropAspect, img.width, img.height));
+      }
+    },
+    [currentCrop, cropAspect],
+  );
+
+  const enterCropMode = useCallback(() => {
+    setCropAspect(currentCrop?.aspect ?? "free");
+    // tempCrop will be initialised by handleCropImageLoad once <ReactCrop>
+    // renders the image — no need to seed it here.
+    setTempCrop(null);
+    setCropMode(true);
+  }, [currentCrop]);
+
+  const exitCropMode = useCallback(() => {
+    setCropMode(false);
+    setTempCrop(null);
+  }, []);
+
+  const acceptCrop = useCallback(() => {
+    if (!tempCrop || !onCropChange) {
+      exitCropMode();
+      return;
+    }
+    // Skip crops that effectively cover the full image — they add no value
+    // and would still trigger the canvas roundtrip on generate.
+    const isFullFrame =
+      tempCrop.x <= 0.1 &&
+      tempCrop.y <= 0.1 &&
+      tempCrop.width >= 99.9 &&
+      tempCrop.height >= 99.9;
+    if (isFullFrame) {
+      onCropChange(null);
+      exitCropMode();
+      return;
+    }
+    const normalized: ImageCrop = {
+      aspect: cropAspect,
+      x: Math.max(0, Math.min(1, tempCrop.x / 100)),
+      y: Math.max(0, Math.min(1, tempCrop.y / 100)),
+      width: Math.max(0, Math.min(1, tempCrop.width / 100)),
+      height: Math.max(0, Math.min(1, tempCrop.height / 100)),
+    };
+    onCropChange(normalized);
+    exitCropMode();
+  }, [tempCrop, cropAspect, onCropChange, exitCropMode]);
+
+  const removeCrop = useCallback(() => {
+    onCropChange?.(null);
+    exitCropMode();
+  }, [onCropChange, exitCropMode]);
+
+  const changeCropAspect = useCallback(
+    (next: ImageCropAspect) => {
+      setCropAspect(next);
+      const img = cropImgRef.current;
+      if (img && img.width > 0 && img.height > 0) {
+        // Re-seed the overlay so the user immediately sees the new ratio
+        // applied (otherwise <ReactCrop> would clamp the existing region
+        // silently and the visible change would be subtle).
+        setTempCrop(buildCenteredCrop(next, img.width, img.height));
+      }
+    },
+    [],
+  );
+
   useEffect(() => {
     void refreshRecipes();
   }, [refreshRecipes]);
+
+  useEffect(() => {
+    // Pre-fetch source dimensions so the cropped-preview branch can render
+    // immediately when the modal opens with a saved crop (no need to wait
+    // for the user to enter cropMode first). `document.createElement` is
+    // used here because the `Image` identifier in this file resolves to
+    // next/image, not the browser's HTMLImageElement constructor.
+    if (!imageUrl) return;
+    const probe = document.createElement("img");
+    probe.onload = () => {
+      if (probe.naturalWidth > 0 && probe.naturalHeight > 0) {
+        setSourceImgDims({ w: probe.naturalWidth, h: probe.naturalHeight });
+      }
+    };
+    probe.src = imageUrl;
+    return () => {
+      probe.onload = null;
+    };
+  }, [imageUrl]);
+
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      // `C` toggles cropMode when no input is focused. Skip if the user is
+      // typing into a field (prompt textarea, ref editing modal, etc.) so it
+      // doesn't intercept legitimate keystrokes.
+      if (e.key !== "c" && e.key !== "C") return;
+      const target = e.target as HTMLElement | null;
+      if (target) {
+        const tag = target.tagName;
+        if (tag === "INPUT" || tag === "TEXTAREA" || target.isContentEditable) {
+          return;
+        }
+      }
+      e.preventDefault();
+      if (cropMode) {
+        exitCropMode();
+      } else {
+        enterCropMode();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [cropMode, enterCropMode, exitCropMode]);
 
   const attachedRecipeCategory = useMemo(
     () =>
@@ -865,8 +1070,102 @@ export function ImageEditModal({
           onChange={handleRefFile}
         />
 
-        <div className="flex flex-1 items-center justify-center overflow-hidden p-8">
-          {resultUrl ? (
+        <div className="relative flex flex-1 items-center justify-center overflow-hidden p-8">
+          {sourceImgDims && (
+            // Minimal dimension indicator: original on top, live crop dims
+            // below when the user is actively cropping. Top-left so it
+            // never collides with the Crop / aspect-ratio toolbar in the
+            // top-right.
+            <div
+              className="pointer-events-none absolute left-4 top-4 z-30 flex flex-col gap-0.5 rounded-md bg-black/40 px-2 py-1 font-mono text-[9px] uppercase tracking-widest text-white/60 backdrop-blur-sm"
+              aria-hidden
+            >
+              <span>
+                {sourceImgDims.w} × {sourceImgDims.h}
+              </span>
+              {cropMode && tempCrop && (
+                <span className="text-accent-gold/90">
+                  ↳ {Math.round((tempCrop.width / 100) * sourceImgDims.w)} ×{" "}
+                  {Math.round((tempCrop.height / 100) * sourceImgDims.h)}
+                </span>
+              )}
+              {!cropMode && currentCrop && (
+                <span className="text-accent-gold/90">
+                  ↳ {Math.round(currentCrop.width * sourceImgDims.w)} ×{" "}
+                  {Math.round(currentCrop.height * sourceImgDims.h)}
+                </span>
+              )}
+            </div>
+          )}
+          {cropMode ? (
+            <div className="relative">
+              <ReactCrop
+                crop={tempCrop ?? undefined}
+                onChange={(_pixel, percent) => setTempCrop(percent)}
+                aspect={ratioForAspect(cropAspect)}
+                keepSelection
+                ruleOfThirds
+                className="max-h-[75vh]"
+              >
+                {/* Plain <img> here on purpose: react-image-crop measures
+                    the rendered <img> with getBoundingClientRect to position
+                    handles. Wrapping with next/image breaks the layout
+                    because of the implicit fill container. */}
+                {/* eslint-disable-next-line @next/next/no-img-element */}
+                <img
+                  ref={cropImgRef}
+                  src={imageUrl}
+                  alt="Cortar"
+                  onLoad={handleCropImageLoad}
+                  className="max-h-[75vh] w-auto rounded-xl object-contain"
+                  draggable={false}
+                  crossOrigin="anonymous"
+                />
+              </ReactCrop>
+
+              <div className="absolute right-2 top-2 z-30 flex items-center gap-1 rounded-xl bg-[#0A0A09]/90 px-2 py-1.5 backdrop-blur-sm">
+                <select
+                  value={cropAspect}
+                  onChange={(e) => changeCropAspect(e.target.value as ImageCropAspect)}
+                  className="rounded-md bg-white/5 px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-text-secondary outline-none transition-colors hover:text-white focus:text-white"
+                  title="Proporção do recorte"
+                >
+                  {CROP_ASPECT_OPTIONS.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+                {currentCrop && (
+                  <button
+                    type="button"
+                    onClick={removeCrop}
+                    className="rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-text-secondary transition-colors hover:text-red-400"
+                    title="Remover crop salvo"
+                  >
+                    Remover
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={exitCropMode}
+                  className="rounded-md px-2 py-1 font-mono text-[10px] uppercase tracking-widest text-text-secondary transition-colors hover:text-white"
+                  title="Cancelar (Esc)"
+                >
+                  Cancelar
+                </button>
+                <button
+                  type="button"
+                  onClick={acceptCrop}
+                  className="flex items-center gap-1 rounded-md bg-accent-gold px-2.5 py-1 font-mono text-[10px] uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80"
+                  title="Aceitar (Enter)"
+                >
+                  <Check size={12} />
+                  Aceitar
+                </button>
+              </div>
+            </div>
+          ) : resultUrl ? (
             <CompareSlider originalUrl={imageUrl} editedUrl={resultUrl} />
           ) : (
             <DroppableTarget
@@ -874,15 +1173,58 @@ export function ImageEditModal({
               markers={markers}
               onClearMarker={clearDropPoint}
             >
-              <Image
-                src={displayUrl}
-                alt="Edit preview"
-                width={1280}
-                height={960}
-                className="max-h-[75vh] w-auto rounded-xl object-contain"
-                unoptimized
-                draggable={false}
-              />
+              {currentCrop && sourceImgDims ? (
+                // Cropped preview: wrapper sized so its aspect ratio matches
+                // the *visible* crop region. The CroppedImage applies the
+                // same CSS positioning trick used in film-strip / Foco /
+                // headline, so what the user sees here is exactly what
+                // those surfaces will show after closing the modal.
+                <div
+                  className="rounded-xl"
+                  style={{
+                    maxHeight: "75vh",
+                    aspectRatio: `${currentCrop.width * sourceImgDims.w} / ${
+                      currentCrop.height * sourceImgDims.h
+                    }`,
+                    height: "75vh",
+                  }}
+                >
+                  <CroppedImage
+                    src={displayUrl}
+                    crop={currentCrop}
+                    alt="Edit preview"
+                    className="h-full w-full rounded-xl"
+                    objectFit="contain"
+                    draggable={false}
+                  />
+                </div>
+              ) : (
+                <Image
+                  src={displayUrl}
+                  alt="Edit preview"
+                  width={1280}
+                  height={960}
+                  className="max-h-[75vh] w-auto rounded-xl object-contain"
+                  unoptimized
+                  draggable={false}
+                  onLoadingComplete={(img) =>
+                    setSourceImgDims({ w: img.naturalWidth, h: img.naturalHeight })
+                  }
+                />
+              )}
+              <button
+                type="button"
+                onClick={enterCropMode}
+                disabled={generating}
+                className={`absolute right-2 top-2 z-20 flex h-8 w-8 items-center justify-center rounded-lg backdrop-blur-sm transition-colors ${
+                  currentCrop
+                    ? "bg-accent-gold/90 text-[#0D0D0B] hover:bg-accent-gold"
+                    : "bg-[#0A0A09]/80 text-text-secondary hover:text-white"
+                } disabled:cursor-not-allowed disabled:opacity-40`}
+                title={currentCrop ? "Editar corte (C)" : "Cortar imagem (C)"}
+              >
+                <Crop size={14} />
+              </button>
               {generating && (
                 <div className="absolute inset-0 flex items-center justify-center rounded-xl bg-black/50">
                   <Loader2 size={24} className="animate-spin text-accent-gold" />
@@ -892,7 +1234,7 @@ export function ImageEditModal({
           )}
         </div>
 
-        {resultUrl && (
+        {resultUrl && !cropMode && (
           <div className="flex items-center justify-center gap-3 pb-3">
             <button
               onClick={() => onResult(resultUrl, "replace")}
@@ -915,7 +1257,12 @@ export function ImageEditModal({
           </div>
         )}
 
-        <div className="flex justify-center px-4 pb-6">
+        <div
+          className={`flex justify-center px-4 pb-6 transition-opacity ${
+            cropMode ? "pointer-events-none opacity-40" : ""
+          }`}
+          aria-hidden={cropMode}
+        >
           <div className="w-full max-w-2xl">
             <DroppablePromptPanel>
               {(references.length > 0 || attachedRecipe) && (

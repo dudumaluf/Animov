@@ -1,7 +1,7 @@
 "use client";
 
-import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { CroppedImage } from "@/components/editor/cropped-image";
 import { createPortal } from "react-dom";
 import { useProjectStore } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
@@ -378,13 +378,12 @@ function SortableSceneCard({
         ) : isProcessing ? (
           <div className="flex h-full w-full items-center justify-center bg-white/[0.03]" />
         ) : (
-          <Image
+          <CroppedImage
             src={scene.photoDataUrl ?? scene.photoUrl}
+            crop={scene.crop}
             alt={`Cena ${sceneIndex + 1}`}
-            fill
-            className="pointer-events-none object-cover"
+            className="pointer-events-none absolute inset-0 h-full w-full"
             draggable={false}
-            unoptimized
           />
         )}
         {isGenerating && <NodeProcessingOverlay label="Gerando..." />}
@@ -873,13 +872,12 @@ function TransitionNode({
             }}
           />
         ) : fromScene ? (
-          <Image
+          <CroppedImage
             src={fromScene.photoDataUrl ?? fromScene.photoUrl}
+            crop={fromScene.crop}
             alt="transition"
-            fill
-            className="pointer-events-none object-cover opacity-40"
+            className="pointer-events-none absolute inset-0 h-full w-full opacity-40"
             draggable={false}
-            unoptimized
           />
         ) : null}
         {isGenerating && <NodeProcessingOverlay label="Gerando transição" />}
@@ -969,13 +967,12 @@ function EditNode({ onExport }: { onExport: () => void }) {
             }}
           />
         ) : previewScene ? (
-          <Image
+          <CroppedImage
             src={previewScene.photoDataUrl ?? previewScene.photoUrl}
+            crop={previewScene.crop}
             alt="edit"
-            fill
-            className="pointer-events-none object-cover"
+            className="pointer-events-none absolute inset-0 h-full w-full"
             draggable={false}
-            unoptimized
           />
         ) : (
           <div className="flex h-full w-full items-center justify-center">

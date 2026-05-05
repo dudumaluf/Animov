@@ -5,8 +5,6 @@ import { useProjectStore } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { FilmStrip } from "@/components/editor/film-strip";
-import { Inspector } from "@/components/editor/inspector";
-import { InspectorRail } from "@/components/editor/inspector-rail";
 import { DropZone } from "@/components/editor/drop-zone";
 import { VideoPreviewModal } from "@/components/editor/video-preview-modal";
 import { ImageEditModal } from "@/components/editor/image-edit-modal";
@@ -14,13 +12,26 @@ import { Playhead } from "@/components/editor/playhead";
 import { TransportBar } from "@/components/editor/transport-bar";
 import { TimelineRuler } from "@/components/editor/timeline-ruler";
 import { ViewModeToggle } from "@/components/editor/view-mode-toggle";
-import { BackgroundTasksIndicator } from "@/components/editor/background-tasks-indicator";
 import { LayoutBar } from "@/components/editor/layout-bar";
 import { TheaterView } from "@/components/editor/theater-view";
 import { TheaterDivider } from "@/components/editor/theater-divider";
 import { HeadlinePreview } from "@/components/editor/headline-preview";
 import { SettingsModal } from "@/components/editor/settings-modal";
+import {
+  DockRail,
+  PanelTogglePill,
+  useDockHydration,
+  useDockShortcuts,
+} from "@/components/editor/dock-rail";
+import {
+  useDockBehavior,
+  useEditorUnmountSafety,
+} from "@/hooks/use-dock-behavior";
+import { useOpenEdgeInset } from "@/stores/dock-store";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
+// Register all job executors at the editor boundary so batches-store can
+// dispatch video/music/image-edit jobs without each caller wiring them up.
+import "@/lib/jobs/executors";
 import { composeVideos, downloadBlob, type ComposeProgress } from "@/lib/composition/compose";
 import { buildSegments, findNextSceneTime, findPreviousSceneTime, timeToSegment, totalDuration } from "@/lib/timeline/segments";
 import { useTimelineEngine } from "@/hooks/use-timeline-engine";
@@ -29,6 +40,11 @@ import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
 const ZOOM_MIN = 0.3;
 const ZOOM_MAX = 2.0;
 const ZOOM_STEP = 0.1;
+// Squared pixel distance above which a mousedown→mousemove→mouseup gesture
+// counts as a pan-drag instead of a click. Browsers still fire `click` after
+// a drag on the same element; checking distance squared avoids a `Math.sqrt`
+// per move event and the trailing click is suppressed by the viewport handler.
+const CLICK_DRAG_THRESHOLD_SQ = 16;
 
 type CanvasMode = "fit" | "free";
 
@@ -51,7 +67,6 @@ export default function EditorPage({
   const timelineSeek = useTimelineStore((s) => s.seek);
   const timelineTogglePlay = useTimelineStore((s) => s.togglePlay);
   const previewPlacement = useEditorSettingsStore((s) => s.layout.previewPlacement);
-  const inspectorDensity = useEditorSettingsStore((s) => s.layout.inspectorDensity);
   const theaterStripHeight = useEditorSettingsStore(
     (s) => s.layout.theaterStripHeight,
   );
@@ -69,7 +84,18 @@ export default function EditorPage({
   const [panY, setPanY] = useState(0);
   const [isPanning, setIsPanning] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0, startTime: 0 });
+  // Snapshot the gesture entry state. `zoom` is captured at mousedown so a
+  // mid-drag zoom change (user hits +/- while panning) doesn't retroactively
+  // reinterpret the accumulated dx — the pixel→time sensitivity stays
+  // anchored to whatever the strip looked like when the gesture began.
+  const panStart = useRef({ x: 0, y: 0, panX: 0, panY: 0, startTime: 0, zoom: 1 });
+  // Tracks whether a pan gesture moved past the click/drag dead-zone. The
+  // browser still fires `click` on the viewport after `mousedown → mousemove
+  // → mouseup` on the same target, even when those movements clearly
+  // implied a drag. Without this flag the synthetic post-pan click would
+  // call `selectScene(null)` and the selection-coupled Properties drawer
+  // would auto-close every time the user reframes the canvas.
+  const panMovedRef = useRef(false);
 
   const viewportRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
@@ -77,6 +103,21 @@ export default function EditorPage({
   const saveTimer = useRef<ReturnType<typeof setTimeout>>();
 
   const inspectorOpen = !!(selectedSceneId || editNodeSelected);
+
+  // Dock plumbing: seed state from admin flags, wire keyboard shortcuts,
+  // auto-open Activity / Properties per behavior hook, and abort running
+  // jobs on unmount so fetches don't leak.
+  useDockHydration();
+  useDockShortcuts();
+  useDockBehavior();
+  useEditorUnmountSafety();
+
+  // Floating drawers are portaled over the canvas — we pad the canvas by
+  // the inset (drawer width + floating gap on each side) so zoom controls,
+  // transport bar, layout bar, and panel pills all sit outside the drawer
+  // card and track the visible canvas edge as the drawer toggles.
+  const leftEdgeInset = useOpenEdgeInset("left");
+  const rightEdgeInset = useOpenEdgeInset("right");
 
   const segments = useMemo(
     () => buildSegments(scenes, transitions),
@@ -104,30 +145,50 @@ export default function EditorPage({
   useEffect(() => {
     if (viewMode !== "timeline") return;
 
+    // Sticky setter used by the auto-follow path. The public `selectScene`
+    // action is a *toggle* (clicking the same scene twice deselects), which
+    // is the right behaviour for the filmstrip but disastrous here: every
+    // `segments` rebuild used to make this effect re-fire `selectScene(id)`,
+    // and if the playhead-over scene happened to already be selected the
+    // toggle would clear `selectedSceneId` mid-property-drag (closing the
+    // selection-coupled Properties drawer) or, worse, swap to whatever the
+    // playhead was over and "jump" the inspector. Sticky setState fixes
+    // both: re-applying the same id is a no-op, never toggles.
+    const setSelectedSceneSticky = (id: string | null) => {
+      const cur = useProjectStore.getState();
+      if (cur.selectedSceneId === id && !cur.editNodeSelected) return;
+      useProjectStore.setState({ selectedSceneId: id, editNodeSelected: false });
+    };
+
     // On timeline mode enter, ensure the inspector is showing the scene at
     // the current playhead. This keeps the preview panel useful by default.
     const initialState = useTimelineStore.getState();
-    const initial = timeToSegment(segments, initialState.currentTime).segment;
+    const initial = timeToSegment(
+      segmentsRef.current,
+      initialState.currentTime,
+    ).segment;
     let lastSceneId: string | null = null;
     if (initial && initial.kind === "scene") {
       lastSceneId = initial.sceneId;
-      useProjectStore.getState().selectScene(initial.sceneId);
+      setSelectedSceneSticky(initial.sceneId);
     }
 
     // Keep the preview in sync as the playhead crosses segment boundaries
     // during both playback and scrubbing (only the transition when the
-    // scene actually changes — not every frame).
+    // scene actually changes — not every frame). Reading segments through
+    // the ref means a `segments` rebuild from a property mutation does not
+    // re-create this subscription mid-drag.
     const unsub = useTimelineStore.subscribe((state) => {
       if (!state.isPlaying && !state.isScrubbing) return;
-      const { segment } = timeToSegment(segments, state.currentTime);
+      const { segment } = timeToSegment(segmentsRef.current, state.currentTime);
       if (!segment || segment.kind !== "scene") return;
       if (segment.sceneId !== lastSceneId) {
         lastSceneId = segment.sceneId;
-        useProjectStore.getState().selectScene(segment.sceneId);
+        setSelectedSceneSticky(segment.sceneId);
       }
     });
     return () => unsub();
-  }, [viewMode, segments]);
+  }, [viewMode]);
 
   useEffect(() => {
     setMounted(true);
@@ -154,12 +215,39 @@ export default function EditorPage({
     return () => window.removeEventListener("beforeunload", flush);
   }, [saveToSupabase]);
 
-  // Auto-fit calculation
+  // Auto-fit calculation. Polymorphic by viewMode so the same handler can
+  // power both the canvas Maximize button and the Foco/timeline strip.
+  // Reads everything from refs/store so the callback identity stays stable
+  // and other effects that depend on it don't re-run on every segment
+  // change.
   const fitToView = useCallback(() => {
-    if (!viewportRef.current || !contentRef.current) return;
+    const vp = viewportRef.current;
+    if (!vp) return;
+    const vMode = useTimelineStore.getState().viewMode;
 
-    const vw = viewportRef.current.clientWidth;
-    const vh = viewportRef.current.clientHeight;
+    if (vMode === "timeline") {
+      // Mirror the ribbon auto-fit math: target = viewportWidth / contentWidth.
+      // Using the same formula keeps Maximize visually identical to the
+      // initial Foco fit and avoids "Maximize moves the track" surprises.
+      const pps = useTimelineStore.getState().pixelsPerSecond;
+      const total = totalDuration(segmentsRef.current);
+      if (total <= 0 || pps <= 0) return;
+      const vw = vp.clientWidth;
+      const contentW = total * pps;
+      if (contentW <= 0) return;
+      const fit = Math.max(0.1, Math.min(1, vw / contentW));
+      setZoom(fit);
+      setPanY(0);
+      if (!useTimelineStore.getState().autoFollow) {
+        setPanX(0);
+      }
+      setCanvasMode("fit");
+      return;
+    }
+
+    if (!contentRef.current) return;
+    const vw = vp.clientWidth;
+    const vh = vp.clientHeight;
     const cw = contentRef.current.scrollWidth;
     const ch = contentRef.current.scrollHeight;
 
@@ -202,11 +290,15 @@ export default function EditorPage({
   // both flash the ruler at x=0 AND linger if the engine's sync effect never
   // re-triggers for the current deps (e.g. preset changes that don't flip
   // currentTime). So we only hard-reset panX when auto-follow is off.
+  //
+  // canvasMode starts in "fit" so the ribbon auto-fit (gated below on
+  // canvasMode === "fit") can run on first paint of Foco/timeline. It only
+  // flips to "free" when the user actually grabs +/- to zoom the strip.
   useLayoutEffect(() => {
     if (viewMode === "timeline") {
       setZoom(1);
       setPanY(0);
-      setCanvasMode("free");
+      setCanvasMode("fit");
       if (!useTimelineStore.getState().autoFollow) {
         setPanX(0);
       }
@@ -225,6 +317,10 @@ export default function EditorPage({
   // fit-zoom recompute so the user sees the full track from the start.
   useLayoutEffect(() => {
     if (!timelineRibbon || viewMode !== "timeline") return;
+    // Once the user takes manual control via +/- (canvasMode flips to "free"),
+    // stop pisar in their zoom. Maximize / "0" / preset re-entry switch back
+    // to "fit" and the auto-fit resumes.
+    if (canvasMode !== "fit") return;
     const compute = () => {
       const vp = viewportRef.current;
       if (!vp) return;
@@ -248,7 +344,7 @@ export default function EditorPage({
       ro.disconnect();
       window.removeEventListener("resize", compute);
     };
-  }, [timelineRibbon, viewMode, segments]);
+  }, [timelineRibbon, viewMode, segments, canvasMode]);
 
   useLayoutEffect(() => {
     if (!timelineRibbon && viewMode === "timeline") {
@@ -319,12 +415,14 @@ export default function EditorPage({
     if (target !== viewportRef.current && !target.hasAttribute("data-canvas-bg")) return;
     e.preventDefault();
     setIsPanning(true);
+    panMovedRef.current = false;
     panStart.current = {
       x: e.clientX,
       y: e.clientY,
       panX,
       panY,
       startTime: useTimelineStore.getState().currentTime,
+      zoom,
     };
     // In timeline mode, treat canvas drag as scrub — so mark scrubbing active
     if (viewMode === "timeline" && useTimelineStore.getState().autoFollow) {
@@ -336,6 +434,13 @@ export default function EditorPage({
     if (!isPanning) return;
     const dx = e.clientX - panStart.current.x;
     const dy = e.clientY - panStart.current.y;
+    // Promote to a "real drag" once we cross ~4px of movement. The
+    // viewport's onClick uses this to decide whether the trailing click
+    // should keep its deselect side-effect (true click) or be ignored
+    // (synthetic click after a pan gesture).
+    if (!panMovedRef.current && dx * dx + dy * dy > CLICK_DRAG_THRESHOLD_SQ) {
+      panMovedRef.current = true;
+    }
 
     if (viewMode === "timeline") {
       const state = useTimelineStore.getState();
@@ -343,9 +448,12 @@ export default function EditorPage({
         // Pan-as-scrub: dragging the canvas is equivalent to scrubbing.
         // Dragging right (dx>0) should reveal earlier content under the stationary
         // playhead, which means currentTime decreases.
+        // Use the zoom captured at mousedown so a mid-gesture +/- doesn't
+        // suddenly remap the same dx to a different deltaT.
         const pps = state.pixelsPerSecond;
         const total = totalDuration(segments);
-        const deltaT = -dx / Math.max(1, pps * Math.max(0.001, zoom));
+        const startZoom = panStart.current.zoom;
+        const deltaT = -dx / Math.max(1, pps * Math.max(0.001, startZoom));
         const newTime = Math.max(0, Math.min(total, panStart.current.startTime + deltaT));
         timelineSeek(newTime);
       } else {
@@ -357,7 +465,7 @@ export default function EditorPage({
       setPanY(panStart.current.panY + dy);
       setCanvasMode("free");
     }
-  }, [isPanning, viewMode, segments, zoom, timelineSeek]);
+  }, [isPanning, viewMode, segments, timelineSeek]);
 
   const handleMouseUp = useCallback(() => {
     if (isPanning && viewMode === "timeline" && useTimelineStore.getState().isScrubbing) {
@@ -641,7 +749,14 @@ export default function EditorPage({
 
   const isEmpty = scenes.length === 0;
   const isTheater = previewPlacement === "theater";
-  const inspectorHidden = inspectorDensity === "hidden" || isTheater;
+
+  // Inspector props shared between DockRail (properties drawer) calls.
+  const inspectorProps = {
+    onPreviewVideo: setPreviewVideoUrl,
+    onExport: handleExport,
+    onDownloadLast: lastExportBlobUrl ? handleDownloadLast : undefined,
+    onEditImage: setEditingSceneId,
+  };
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0A0A09]">
@@ -656,23 +771,43 @@ export default function EditorPage({
           ref={mainFlexRef}
           className={`flex flex-1 overflow-hidden ${isTheater ? "flex-col" : "flex-row"}`}
         >
+          {/* Panels are portal-only — DockRail drops no DOM in-flow, only
+              renders floating drawers into document.body. Kept mounted both
+              in theater and normal layout so toggle state persists, but
+              `railVisible=false` during Foco hides them at the store level. */}
+          {!isTheater && <DockRail edge="left" inspectorProps={inspectorProps} />}
+          {!isTheater && <DockRail edge="right" inspectorProps={inspectorProps} />}
+
           {/* Theater big preview (Foco preset) */}
           {isTheater && (
             <div className="relative flex-1 overflow-hidden">
               <TheaterView />
-              <LayoutBar />
+              {/* Mirror canvas/timeline: LayoutBar always anchors top-center
+                  so switching to Foco doesn't make it jump to the right edge. */}
+              <LayoutBar className="absolute left-1/2 top-3 -translate-x-1/2" />
             </div>
           )}
 
           {/* Drag handle between preview and strip — only in Foco mode */}
           {isTheater && <TheaterDivider />}
 
-          {/* Canvas area — full height in normal modes, user-sized ribbon in theater */}
+          {/* Canvas area — full height in normal modes, user-sized ribbon in theater.
+              Left/right padding matches the open-drawer inset (drawer width +
+              2 * floating gap) so the pills, LayoutBar, zoom controls and
+              transport bar all track the visible canvas edge and never slip
+              under a floating drawer card. */}
           <div
-            className={`relative overflow-hidden ${
+            className={`relative overflow-hidden transition-[padding] duration-200 ease-out ${
               isTheater ? "shrink-0 border-t border-white/5" : "flex-1"
             }`}
-            style={isTheater ? { height: theaterStripHeight } : undefined}
+            style={
+              isTheater
+                ? { height: theaterStripHeight }
+                : {
+                    paddingLeft: `${leftEdgeInset}px`,
+                    paddingRight: `${rightEdgeInset}px`,
+                  }
+            }
           >
             <div
               ref={viewportRef}
@@ -692,6 +827,11 @@ export default function EditorPage({
                 // showing the current scene under the playhead), so don't
                 // deselect on background clicks.
                 if (viewMode === "timeline") return;
+                // Browsers fire `click` at the end of a mousedown→drag→mouseup
+                // even when the user clearly panned. Skip the deselect so the
+                // Properties drawer doesn't close every time the canvas is
+                // reframed.
+                if (panMovedRef.current) return;
                 if (e.target === e.currentTarget || (e.target as HTMLElement).hasAttribute("data-canvas-bg")) {
                   useProjectStore.getState().selectScene(null);
                 }
@@ -725,8 +865,6 @@ export default function EditorPage({
                 panX={panX}
                 setPanX={setPanX}
               />
-
-              <BackgroundTasksIndicator />
             </div>
 
             {previewPlacement === "headline" && !isTheater && (
@@ -736,52 +874,67 @@ export default function EditorPage({
               />
             )}
 
-            {/* Layout presets anchored in the canvas area (not fixed) so it
-                never overlaps the inspector. In theater we render a separate
-                instance inside the theater wrapper. */}
-            {!isTheater && <LayoutBar />}
-
-            {/* Zoom controls + view mode toggle — hidden in theater (ribbon has no room) */}
+            {/* Top chrome: pill toggles anchor to the left/right canvas
+                edge (tracking the drawers via the parent's padding), the
+                layout presets sit centered between them. In theater we
+                render a separate LayoutBar inside the theater wrapper. */}
             {!isTheater && (
-              <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2">
-                <div className="flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm">
-                  <button
-                    onClick={() => { setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP)); setCanvasMode("free"); }}
-                    className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                    title="Zoom out (-)"
-                  >
-                    <ZoomOut size={14} />
-                  </button>
-                  <button
-                    onClick={fitToView}
-                    className="flex h-7 items-center justify-center rounded px-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                    title="Fit to view (0)"
-                  >
-                    {Math.round(zoom * 100)}%
-                  </button>
-                  <button
-                    onClick={() => { setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP)); setCanvasMode("free"); }}
-                    className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
-                    title="Zoom in (+)"
-                  >
-                    <ZoomIn size={14} />
-                  </button>
-                  <div className="mx-0.5 h-4 w-px bg-white/5" />
-                  <button
-                    onClick={fitToView}
-                    className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
-                      canvasMode === "fit" && viewMode === "canvas"
-                        ? "text-accent-gold"
-                        : "text-text-secondary hover:bg-white/5 hover:text-[var(--text)]"
-                    }`}
-                    title="Fit all (0)"
-                  >
-                    <Maximize size={14} />
-                  </button>
-                </div>
-                <ViewModeToggle />
-              </div>
+              <>
+                <PanelTogglePill
+                  edge="left"
+                  className="absolute left-3 top-3"
+                />
+                <LayoutBar className="absolute left-1/2 top-3 -translate-x-1/2" />
+                <PanelTogglePill
+                  edge="right"
+                  className="absolute right-3 top-3"
+                />
+              </>
             )}
+
+            {/* Zoom controls + view mode toggle. The cluster sits at the
+                bottom-left of viewportRef, which in Foco resolves to the
+                strip — so the same layout naturally serves canvas, timeline
+                and Foco without per-mode coordinates. ViewModeToggle hides
+                in Foco because the preset force-pins viewMode to timeline. */}
+            <div className="absolute bottom-4 left-4 z-20 flex items-center gap-2">
+              <div className="flex items-center gap-1 rounded-lg border border-white/5 bg-[#0A0A09]/90 p-1 backdrop-blur-sm">
+                <button
+                  onClick={() => { setZoom((z) => Math.max(ZOOM_MIN, z - ZOOM_STEP)); setCanvasMode("free"); }}
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+                  title="Zoom out (-)"
+                >
+                  <ZoomOut size={14} />
+                </button>
+                <button
+                  onClick={fitToView}
+                  className="flex h-7 items-center justify-center rounded px-1.5 font-mono text-[10px] text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+                  title="Fit to view (0)"
+                >
+                  {Math.round(zoom * 100)}%
+                </button>
+                <button
+                  onClick={() => { setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP)); setCanvasMode("free"); }}
+                  className="flex h-7 w-7 items-center justify-center rounded text-text-secondary transition-colors hover:bg-white/5 hover:text-[var(--text)]"
+                  title="Zoom in (+)"
+                >
+                  <ZoomIn size={14} />
+                </button>
+                <div className="mx-0.5 h-4 w-px bg-white/5" />
+                <button
+                  onClick={fitToView}
+                  className={`flex h-7 w-7 items-center justify-center rounded transition-colors ${
+                    canvasMode === "fit"
+                      ? "text-accent-gold"
+                      : "text-text-secondary hover:bg-white/5 hover:text-[var(--text)]"
+                  }`}
+                  title="Fit all (0)"
+                >
+                  <Maximize size={14} />
+                </button>
+              </div>
+              {!isTheater && <ViewModeToggle />}
+            </div>
 
             {/* Mode indicator / Transport bar */}
             {viewMode === "timeline" ? (
@@ -799,25 +952,6 @@ export default function EditorPage({
               )
             )}
           </div>
-
-          {/* Inspector — rendered unless fully hidden (theater or density=hidden).
-              "railed" mode swaps the full sidebar for a 44px rail with overlay on demand. */}
-          {!inspectorHidden && inspectorDensity === "railed" ? (
-            <InspectorRail
-              onPreviewVideo={setPreviewVideoUrl}
-              onExport={handleExport}
-              onDownloadLast={lastExportBlobUrl ? handleDownloadLast : undefined}
-              onEditImage={setEditingSceneId}
-            />
-          ) : null}
-          {!inspectorHidden && inspectorDensity === "full" ? (
-            <Inspector
-              onPreviewVideo={setPreviewVideoUrl}
-              onExport={handleExport}
-              onDownloadLast={lastExportBlobUrl ? handleDownloadLast : undefined}
-              onEditImage={setEditingSceneId}
-            />
-          ) : null}
         </div>
       )}
 
@@ -842,6 +976,10 @@ export default function EditorPage({
         return (
           <ImageEditModal
             imageUrl={imgUrl}
+            currentCrop={editScene.crop ?? null}
+            onCropChange={(crop) =>
+              useProjectStore.getState().setSceneCrop(editingSceneId, crop)
+            }
             onClose={() => setEditingSceneId(null)}
             onResult={(editedUrl, mode) => {
               if (mode === "replace") {

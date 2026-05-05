@@ -10,6 +10,8 @@ import { DEFAULT_MODEL_ID } from "@/lib/adapters";
 import { extractVideoThumbnail } from "@/lib/utils/video-thumbnail";
 import { type AudioMixSettings, DEFAULT_AUDIO_MIX } from "@/lib/composition/compose";
 import { stageVideoForTimeline } from "@/lib/staging/video-staging";
+import { useBatchesStore } from "@/stores/batches-store";
+import { useJobsStore } from "@/stores/jobs-store";
 
 export type VideoVersion = { url: string; duration: number };
 
@@ -22,6 +24,24 @@ export type SceneSprite = {
   rows: number;
   thumbWidth: number;
   thumbHeight: number;
+};
+
+export type ImageCropAspect = "free" | "16:9" | "9:16" | "1:1" | "4:5";
+
+/**
+ * Non-destructive crop applied to the scene's source photo. Coordinates are
+ * normalized (0-1) so the rectangle stays valid if the underlying image is
+ * later re-uploaded at a different resolution. The original `photoUrl` is
+ * never mutated; the crop is rasterized just-in-time by the generation
+ * pipeline (canvas + uploadPhoto) and reflected in the UI via CSS positioning
+ * (CroppedImage component) — see render-cropped-on-generate logic.
+ */
+export type ImageCrop = {
+  aspect: ImageCropAspect;
+  x: number;       // 0-1, top-left of crop in source image
+  y: number;       // 0-1
+  width: number;   // 0-1
+  height: number;  // 0-1
 };
 
 export type Scene = {
@@ -54,6 +74,12 @@ export type Scene = {
    * with future intent. `undefined` falls back to `duration` at request time.
    */
   generationTargetSeconds?: number;
+  /**
+   * Optional non-destructive crop on the source photo. Applied at generation
+   * time (rasterized + uploaded as derivative) and reflected in previews via
+   * CSS. Reset automatically when the photo is replaced via IA-edit.
+   */
+  crop?: ImageCrop;
 };
 
 export type Transition = {
@@ -93,12 +119,10 @@ export type ProjectStore = {
   editNodeSelected: boolean;
   musicPrompt: string;
   musicUrl: string | null;
-  isMusicGenerating: boolean;
   exportAspectRatio: "16:9" | "9:16";
   audioMix: AudioMixSettings;
   isLoading: boolean;
   isDirty: boolean;
-  isGenerating: boolean;
   isSaving: boolean;
 
   _photoFiles: Record<string, File>;
@@ -122,6 +146,7 @@ export type ProjectStore = {
     sceneId: string,
     trim: { trimStart?: number | null; trimEnd?: number | null },
   ) => void;
+  setSceneCrop: (sceneId: string, crop: ImageCrop | null) => void;
   setActiveVersion: (sceneId: string, version: number) => void;
   updateSceneImage: (sceneId: string, newImageUrl: string) => void;
 
@@ -140,11 +165,28 @@ export type ProjectStore = {
 
   /**
    * Reconciles a stored `videoVersions[i].duration` with what the `<video>`
-   * element actually reports after it loads its metadata. Only ever grows
-   * the stored value (never shrinks) so the trim handles can expand back to
-   * the file's native length when the duration was persisted smaller than
-   * reality (e.g. legacy rows where a regeneration passed the trimmed
-   * scene.duration as the new version's `duration`).
+   * element actually reports after it loads its metadata. Heals in both
+   * directions:
+   *  - Grow when the stored value is smaller (legacy regeneration paths
+   *    persisted the trimmed scene.duration as the version's duration,
+   *    which capped trim handles below the file's real native length).
+   *  - Shrink when the stored value overshoots the file (adapters like
+   *    Kling V3 return the *requested* duration as `durationSeconds`, so
+   *    a 5s ask that yields a 3s file leaves stored=5/real=3 — the engine
+   *    then plays out at native end and freezes on the last frame until
+   *    the segment boundary, see use-timeline-engine drift correction).
+   *
+   * Shrink uses a wider tolerance (`SHRINK_TOLERANCE`) than grow because
+   * progressively-loaded sources can transiently report partial durations
+   * before the moov atom is fully parsed. For Fal.ai outputs and direct
+   * uploads (the only sources Animov has today) `loadedmetadata` is
+   * definitive, so the wider window is conservative noise insurance, not
+   * a behavioural compromise.
+   *
+   * When shrinking, also clamps `scene.trimEnd` to the new native (a
+   * pre-shrink trim end could point past the real file end — those frames
+   * never decoded, so clamping is non-destructive housekeeping) and
+   * recomputes `scene.duration` from the (possibly clamped) trim window.
    */
   reconcileVideoVersionDuration: (sceneId: string, versionIndex: number, realDuration: number) => void;
 
@@ -213,13 +255,42 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
+const VALID_CROP_ASPECTS = new Set<ImageCropAspect>(["free", "16:9", "9:16", "1:1", "4:5"]);
+
+/**
+ * Defensive parse for the `crop` JSONB column. Returns undefined for any
+ * malformed payload — keeps the inspector and CroppedImage components free
+ * of `if (crop && typeof crop === ...)` defensive code at every render.
+ */
+function parseCropFromDb(raw: unknown): ImageCrop | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const c = raw as Partial<Record<keyof ImageCrop, unknown>>;
+  if (!VALID_CROP_ASPECTS.has(c.aspect as ImageCropAspect)) return undefined;
+  if (
+    typeof c.x !== "number" ||
+    typeof c.y !== "number" ||
+    typeof c.width !== "number" ||
+    typeof c.height !== "number"
+  ) {
+    return undefined;
+  }
+  if (c.width <= 0 || c.height <= 0) return undefined;
+  return {
+    aspect: c.aspect as ImageCropAspect,
+    x: Math.max(0, Math.min(1, c.x)),
+    y: Math.max(0, Math.min(1, c.y)),
+    width: Math.max(0, Math.min(1, c.width)),
+    height: Math.max(0, Math.min(1, c.height)),
+  };
+}
+
 async function dataUrlToFile(dataUrl: string, name: string): Promise<File> {
   const res = await fetch(dataUrl);
   const blob = await res.blob();
   return new File([blob], name, { type: blob.type });
 }
 
-async function persistVideoToStorage(
+export async function persistVideoToStorage(
   falUrl: string,
   projectId: string,
   sceneId: string,
@@ -248,7 +319,7 @@ async function persistVideoToStorage(
  * and not subject to the provider's CDN expiry. Returns `null` on failure so
  * the caller can fall back to the original URL without breaking UX.
  */
-async function persistMusicUrlToStorage(
+export async function persistMusicUrlToStorage(
   remoteUrl: string,
   projectId: string | null,
 ): Promise<string | null> {
@@ -308,7 +379,7 @@ async function persistMusicFileToStorage(
  * methods can reference it before it runs. The useProjectStore reference
  * inside is resolved lazily at call time, so the forward reference is safe.
  */
-async function kickoffStaging(
+export async function kickoffStaging(
   sceneId: string,
   videoUrl: string,
   duration: number,
@@ -371,7 +442,7 @@ async function kickoffStaging(
  * helper — `/api/persist-sprite` only cares that the id is unique per project.
  * Non-blocking and best-effort: failure degrades to raw `<video>` scrub.
  */
-async function kickoffStagingForTransition(
+export async function kickoffStagingForTransition(
   transitionId: string,
   videoUrl: string,
   duration: number,
@@ -504,56 +575,164 @@ async function resolveSceneFile(
   return file ?? null;
 }
 
+// In-memory cache for cropped derivatives. Key = `${baseUrl}::${cropHash}`.
+// Avoids re-rendering+re-uploading on retries within the same session (the
+// most common cause: failed Fal generation that the user clicks Generate
+// again on). Server-side persistence is unnecessary because the next page
+// load will resolve the same key against `scene.photoUrl` (still the
+// original) and trigger a fresh render+upload — Supabase storage de-dupes
+// by content hash anyway in practice. The cache holds string URLs only, so
+// memory pressure is negligible.
+const croppedUrlCache = new Map<string, string>();
+
+function cropCacheKey(baseUrl: string, crop: ImageCrop): string {
+  return `${baseUrl}::${crop.x.toFixed(4)},${crop.y.toFixed(4)},${crop.width.toFixed(4)},${crop.height.toFixed(4)}`;
+}
+
+/**
+ * Loads `baseUrl` into an off-screen <img>, crops the region defined by
+ * `crop` (normalized 0..1 over the source image's natural dimensions) onto
+ * a canvas, and uploads the resulting JPEG to Supabase Storage. Returns
+ * the public URL. Throws if any step fails — the caller falls back to the
+ * uncropped baseUrl in that case (better a slightly off video than no
+ * generation at all).
+ *
+ * `crossOrigin = "anonymous"` is required because the canvas would
+ * otherwise be tainted (Supabase Storage serves with appropriate CORS
+ * headers, so this works in practice). For data: URLs no CORS handshake
+ * happens, so the attribute is a no-op there.
+ */
+async function renderCroppedAndUpload(
+  baseUrl: string,
+  crop: ImageCrop,
+  projectId: string,
+  sceneId: string,
+): Promise<string> {
+  const cacheKey = cropCacheKey(baseUrl, crop);
+  const cached = croppedUrlCache.get(cacheKey);
+  if (cached) return cached;
+
+  const img = new Image();
+  img.crossOrigin = "anonymous";
+  img.decoding = "async";
+
+  await new Promise<void>((resolve, reject) => {
+    img.onload = () => resolve();
+    img.onerror = () => reject(new Error("crop image load failed"));
+    img.src = baseUrl;
+  });
+
+  const naturalW = img.naturalWidth;
+  const naturalH = img.naturalHeight;
+  if (!naturalW || !naturalH) {
+    throw new Error("crop source has zero dimensions");
+  }
+
+  const sx = Math.round(crop.x * naturalW);
+  const sy = Math.round(crop.y * naturalH);
+  const sw = Math.max(1, Math.round(crop.width * naturalW));
+  const sh = Math.max(1, Math.round(crop.height * naturalH));
+
+  const canvas = document.createElement("canvas");
+  canvas.width = sw;
+  canvas.height = sh;
+  const ctx = canvas.getContext("2d");
+  if (!ctx) throw new Error("crop canvas 2d context unavailable");
+  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+
+  const blob = await new Promise<Blob | null>((resolve) =>
+    canvas.toBlob((b) => resolve(b), "image/jpeg", 0.92),
+  );
+  if (!blob) throw new Error("crop canvas toBlob returned null");
+
+  const file = new File([blob], `${sceneId}-crop.jpg`, { type: "image/jpeg" });
+  const url = await uploadPhoto(file, projectId);
+  croppedUrlCache.set(cacheKey, url);
+  return url;
+}
+
 /**
  * Ensures the scene has a usable HTTPS URL (Supabase Storage) that can be sent
  * to `/api/generate-scene` as JSON, bypassing Vercel's 4.5MB request body limit.
  * If the scene only has a blob:/data: URL or a pending upload, this uploads
- * on-demand and patches the store so subsequent calls are cheap.
+ * on-demand and patches the store so subsequent calls are cheap. When a
+ * non-destructive crop is set on the scene, the upload returns the cropped
+ * derivative URL instead of the original (the original `scene.photoUrl` is
+ * left untouched so the crop remains editable).
  */
-async function ensureSceneHttpsPhotoUrl(
+export async function ensureSceneHttpsPhotoUrl(
   scene: Scene,
   photoFiles: Record<string, File>,
   projectId: string,
 ): Promise<string | null> {
+  let baseUrl: string | null = null;
   if (
     scene.photoUrl &&
     scene.photoUrl.startsWith("https://") &&
     scene.photoUrl !== PLACEHOLDER_IMG
   ) {
-    return scene.photoUrl;
+    baseUrl = scene.photoUrl;
+  } else {
+    const file = await resolveSceneFile(scene, photoFiles);
+    if (!file) return null;
+    try {
+      baseUrl = await uploadPhoto(file, projectId);
+      useProjectStore.setState((state) => ({
+        scenes: state.scenes.map((s) =>
+          s.id === scene.id ? { ...s, photoUrl: baseUrl ?? s.photoUrl } : s,
+        ),
+        isDirty: true,
+      }));
+    } catch (err) {
+      console.error("[ensureSceneHttpsPhotoUrl]", err);
+      return null;
+    }
   }
-  const file = await resolveSceneFile(scene, photoFiles);
-  if (!file) return null;
+
+  if (!scene.crop || !baseUrl) return baseUrl;
   try {
-    const url = await uploadPhoto(file, projectId);
-    useProjectStore.setState((state) => ({
-      scenes: state.scenes.map((s) =>
-        s.id === scene.id ? { ...s, photoUrl: url } : s,
-      ),
-      isDirty: true,
-    }));
-    return url;
+    return await renderCroppedAndUpload(baseUrl, scene.crop, projectId, scene.id);
   } catch (err) {
-    console.error("[ensureSceneHttpsPhotoUrl]", err);
-    return null;
+    // Falling back to the uncropped URL is intentional: the user's intent
+    // was to generate, not to enforce the crop perfectly. A noticeable
+    // ratio mismatch in the resulting video is recoverable; failing the
+    // generation outright with no asset is not.
+    console.error("[ensureSceneHttpsPhotoUrl] crop render failed", err);
+    return baseUrl;
   }
 }
 
-async function resolveSceneHttpsUrl(
+export async function resolveSceneHttpsUrl(
   scene: Scene,
   photoFiles: Record<string, File>,
   projectId: string,
 ): Promise<string | null> {
+  let baseUrl: string | null = null;
   if (scene.photoUrl && scene.photoUrl.startsWith("https://")) {
-    if (!photoFiles[scene.id]) return scene.photoUrl;
+    if (!photoFiles[scene.id]) {
+      baseUrl = scene.photoUrl;
+    }
   }
-  const file = await resolveSceneFile(scene, photoFiles);
-  if (!file) return scene.photoUrl?.startsWith("https://") ? scene.photoUrl : null;
+  if (!baseUrl) {
+    const file = await resolveSceneFile(scene, photoFiles);
+    if (!file) {
+      baseUrl = scene.photoUrl?.startsWith("https://") ? scene.photoUrl : null;
+    } else {
+      try {
+        baseUrl = await uploadPhoto(file, projectId);
+      } catch (e) {
+        console.error("[resolveSceneHttpsUrl] upload failed", e);
+        baseUrl = scene.photoUrl?.startsWith("https://") ? scene.photoUrl : null;
+      }
+    }
+  }
+  if (!baseUrl) return null;
+  if (!scene.crop) return baseUrl;
   try {
-    return await uploadPhoto(file, projectId);
+    return await renderCroppedAndUpload(baseUrl, scene.crop, projectId, scene.id);
   } catch (e) {
-    console.error("[resolveSceneHttpsUrl] upload failed", e);
-    return scene.photoUrl?.startsWith("https://") ? scene.photoUrl : null;
+    console.error("[resolveSceneHttpsUrl] crop render failed", e);
+    return baseUrl;
   }
 }
 
@@ -571,12 +750,10 @@ export const useProjectStore = create<ProjectStore>()(
       editNodeSelected: false,
       musicPrompt: "Calm ambient instrumental, warm piano, soft strings, real estate luxury, 90 BPM, elegant and inviting",
       musicUrl: null,
-      isMusicGenerating: false,
       exportAspectRatio: "16:9",
       audioMix: { ...DEFAULT_AUDIO_MIX },
       isLoading: false,
       isDirty: false,
-      isGenerating: false,
       isSaving: false,
       _photoFiles: {},
 
@@ -1058,6 +1235,26 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
+      setSceneCrop: (sceneId, crop) => {
+        // `null` removes the crop entirely (image renders at full extent
+        // again). Setting a crop bumps `isDirty` so the project save
+        // pipeline picks it up; the actual rasterization happens later in
+        // ensureSceneHttpsPhotoUrl when the user clicks Generate.
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            const next: Scene = { ...s };
+            if (crop === null) {
+              delete next.crop;
+            } else {
+              next.crop = crop;
+            }
+            return next;
+          }),
+          isDirty: true,
+        }));
+      },
+
       setActiveVersion: (sceneId, version) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
@@ -1081,11 +1278,24 @@ export const useProjectStore = create<ProjectStore>()(
           const files = { ...state._photoFiles };
           delete files[sceneId];
           return {
-            scenes: state.scenes.map((s) =>
-              s.id === sceneId
-                ? { ...s, photoUrl: newImageUrl, photoDataUrl: newImageUrl, status: "idle" as const, videoUrl: undefined, videoVersions: [], activeVersion: 0 }
-                : s,
-            ),
+            scenes: state.scenes.map((s) => {
+              if (s.id !== sceneId) return s;
+              // Drop any saved crop: it referenced the *previous* image's
+              // pixel layout, and the IA-generated replacement may have an
+              // entirely different composition. Forcing a re-crop here is
+              // less surprising than silently applying a misaligned region.
+              const next: Scene = {
+                ...s,
+                photoUrl: newImageUrl,
+                photoDataUrl: newImageUrl,
+                status: "idle" as const,
+                videoUrl: undefined,
+                videoVersions: [],
+                activeVersion: 0,
+              };
+              delete next.crop;
+              return next;
+            }),
             isDirty: true,
             _photoFiles: files,
           };
@@ -1107,72 +1317,32 @@ export const useProjectStore = create<ProjectStore>()(
         const toScene = state.scenes.find((s) => s.id === toSceneId);
         if (!fromScene || !toScene) return;
 
-        const pid = state.supabaseProjectId ?? state.projectId;
-        const [startUrl, endUrl] = await Promise.all([
-          resolveSceneHttpsUrl(fromScene, state._photoFiles, pid),
-          resolveSceneHttpsUrl(toScene, state._photoFiles, pid),
-        ]);
-        if (!startUrl || !endUrl) {
-          console.error("[generateTransition] Could not resolve image URLs");
-          return;
-        }
-
         const transitionId = `t-${fromSceneId}-${toSceneId}`;
+        const pid = state.supabaseProjectId ?? state.projectId;
 
-        set((state) => ({
-          transitions: state.transitions.map((t) =>
-            t.id === transitionId ? { ...t, status: "generating" as const, enabled: true } : t,
-          ),
-        }));
-
-        try {
-          const res = await fetch("/api/generate-transition", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              startImageUrl: startUrl,
-              endImageUrl: endUrl,
-              duration,
-              modelId: state.modelId,
-            }),
-          });
-
-          if (!res.ok) {
-            const err = await res.json();
-            throw new Error(err.error ?? "Failed");
-          }
-
-          const data = await res.json();
-          const realCost = typeof data.creditsCost === "number" ? data.creditsCost : duration;
-          const realDuration = typeof data.duration === "number" && data.duration > 0 ? data.duration : duration;
-          set((state) => ({
-            transitions: state.transitions.map((t) =>
-              t.id === transitionId
-                ? { ...t, status: "ready" as const, videoUrl: data.videoUrl, costCredits: realCost, duration: realDuration }
-                : t,
-            ),
-            isDirty: true,
-          }));
-
-          const pid = get().supabaseProjectId ?? get().projectId;
-          persistVideoToStorage(data.videoUrl, pid, transitionId).then((permUrl) => {
-            if (!permUrl) return;
-            set((state) => ({
-              transitions: state.transitions.map((t) =>
-                t.id === transitionId ? { ...t, videoUrl: permUrl } : t,
-              ),
-              isDirty: true,
-            }));
-            void kickoffStagingForTransition(transitionId, permUrl, realDuration);
-          });
-        } catch (err) {
-          console.error(`[generateTransition] ${transitionId}:`, err);
-          set((state) => ({
-            transitions: state.transitions.map((t) =>
-              t.id === transitionId ? { ...t, status: "failed" as const } : t,
-            ),
-          }));
-        }
+        const batchId = useBatchesStore.getState().createPreview(
+          [
+            {
+              targetId: transitionId,
+              label: `Transição · ${duration}s`,
+              estimatedCost: duration,
+              type: "video.transition" as const,
+              payload: {
+                transitionId,
+                fromSceneId,
+                toSceneId,
+                projectId: pid,
+                duration,
+                modelId: state.modelId,
+              },
+            },
+          ],
+          {
+            title: "1 transição",
+            projectId: pid,
+          },
+        );
+        useBatchesStore.getState().dispatch(batchId);
       },
 
       setHasEditNode: (has) => set({ hasEditNode: has, editNodeSelected: has, isDirty: true }),
@@ -1192,35 +1362,41 @@ export const useProjectStore = create<ProjectStore>()(
 
       generateMusic: async () => {
         const state = get();
-        if (state.isMusicGenerating) return;
-        set({ isMusicGenerating: true });
+        const pid = state.supabaseProjectId;
 
-        try {
-          const res = await fetch("/api/generate-music", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ prompt: state.musicPrompt, instrumental: true }),
-          });
-          if (!res.ok) throw new Error("Music generation failed");
-          const data = await res.json();
-          const falUrl = data.audioUrl as string;
-          // Optimistic: show Fal URL immediately so user hears music ASAP.
-          set({ musicUrl: falUrl, isMusicGenerating: false, isDirty: true });
-
-          // Mirror to Supabase in the background. If this fails we keep the
-          // Fal URL — user still hears the track, just without long-term
-          // persistence guarantee (the provider URL may expire later).
-          const mirrored = await persistMusicUrlToStorage(
-            falUrl,
-            get().supabaseProjectId,
+        // Dedupe: if any music job is already queued/running, ignore the
+        // click. Covered by both per-batch status and the global `music`
+        // selector in batches-store so double-binds (toolbar + inspector)
+        // don't stack requests.
+        const hasActive = useJobsStore
+          .getState()
+          .jobs.some(
+            (j) =>
+              j.type === "music" &&
+              (j.status === "queued" || j.status === "running"),
           );
-          if (mirrored) {
-            set({ musicUrl: mirrored, isDirty: true });
-          }
-        } catch (err) {
-          console.error("[generateMusic]", err);
-          set({ isMusicGenerating: false });
-        }
+        if (hasActive) return;
+
+        const batchId = useBatchesStore.getState().createPreview(
+          [
+            {
+              targetId: "music",
+              label: `Música · ${state.musicPrompt.slice(0, 40) || "(sem prompt)"}`,
+              estimatedCost: 10,
+              type: "music" as const,
+              payload: {
+                prompt: state.musicPrompt,
+                projectId: pid,
+                instrumental: true,
+              },
+            },
+          ],
+          {
+            title: "Música",
+            projectId: pid,
+          },
+        );
+        useBatchesStore.getState().dispatch(batchId);
       },
 
       uploadMusicFile: async (file: File) => {
@@ -1258,9 +1434,16 @@ export const useProjectStore = create<ProjectStore>()(
 
       reconcileVideoVersionDuration: (sceneId, versionIndex, realDuration) => {
         // Guard: browsers hand back 0 / NaN / Infinity before metadata settles
-        // for streamed content. Only apply positive, finite, strictly larger
-        // values so a mid-load callback can't shrink a valid stored duration.
+        // for streamed content.
         if (!Number.isFinite(realDuration) || realDuration <= 0) return;
+        // Tolerances differ by direction:
+        //  - GROW_TOLERANCE (50ms): codec rounding can produce sub-frame diffs
+        //    that aren't worth a store thrash.
+        //  - SHRINK_TOLERANCE (500ms): defends against partial-load duration
+        //    reports on streaming sources. Fal/upload MP4s aren't streamed,
+        //    but the wider window is cheap insurance against future sources.
+        const GROW_TOLERANCE = 0.05;
+        const SHRINK_TOLERANCE = 0.5;
         set((state) => {
           let changed = false;
           const scenes = state.scenes.map((s) => {
@@ -1268,12 +1451,38 @@ export const useProjectStore = create<ProjectStore>()(
             const versions = s.videoVersions ?? [];
             const ver = versions[versionIndex];
             if (!ver) return s;
-            // 50ms tolerance — browsers round sub-frame durations differently
-            // and we don't want to thrash the store on harmless noise.
-            if (realDuration <= (ver.duration ?? 0) + 0.05) return s;
+            const stored = ver.duration ?? 0;
+            const diff = realDuration - stored;
+            const grow = diff > GROW_TOLERANCE;
+            const shrink = diff < -SHRINK_TOLERANCE;
+            if (!grow && !shrink) return s;
             const nextVersions = versions.map((v, i) =>
               i === versionIndex ? { ...v, duration: realDuration } : v,
             );
+            // On shrink, clamp trimEnd into the real file range and recompute
+            // scene.duration so segments.ts builds the correct slot. Only
+            // touches fields that would otherwise reference frames that
+            // physically don't exist — the user can't "lose" content that
+            // was never reproducible. Skip when this isn't the active
+            // version: trim is a per-scene field, not per-version, so other
+            // versions' shrink shouldn't perturb the active trim.
+            if (shrink && versionIndex === s.activeVersion) {
+              const trimStart = s.trimStart ?? 0;
+              const clampedEnd =
+                typeof s.trimEnd === "number" && s.trimEnd > realDuration
+                  ? realDuration
+                  : s.trimEnd;
+              const window =
+                (clampedEnd ?? realDuration) - trimStart;
+              const nextDuration = Math.max(0.01, window);
+              changed = true;
+              return {
+                ...s,
+                videoVersions: nextVersions,
+                trimEnd: clampedEnd,
+                duration: nextDuration,
+              };
+            }
             changed = true;
             return { ...s, videoVersions: nextVersions };
           });
@@ -1360,7 +1569,7 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null; crop?: unknown }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
@@ -1373,6 +1582,10 @@ export const useProjectStore = create<ProjectStore>()(
               typeof s.generation_target_seconds === "number"
                 ? s.generation_target_seconds
                 : undefined;
+            // Validate the crop blob defensively — JSONB columns can hold
+            // anything if a future migration writes other shapes, and trying
+            // to render an invalid crop would break the inspector.
+            const crop = parseCropFromDb(s.crop);
             return {
               id: s.id,
               photoUrl: s.photo_url,
@@ -1389,6 +1602,7 @@ export const useProjectStore = create<ProjectStore>()(
               trimStart,
               trimEnd,
               generationTargetSeconds,
+              crop,
             };
           });
 
@@ -1463,7 +1677,6 @@ export const useProjectStore = create<ProjectStore>()(
             selectedSceneId: null,
             isLoading: false,
             isDirty: false,
-            isGenerating: false,
           });
 
           // Backfill sprite staging for scenes that already have a persisted
@@ -1594,6 +1807,7 @@ export const useProjectStore = create<ProjectStore>()(
                   typeof s.generationTargetSeconds === "number"
                     ? s.generationTargetSeconds
                     : null,
+                crop: s.crop ?? null,
               };
             })
             .filter(Boolean);
@@ -1661,161 +1875,67 @@ export const useProjectStore = create<ProjectStore>()(
 
       generateAll: async () => {
         const state = get();
-        if (state.isGenerating || state.scenes.length === 0) return;
-        set({ isGenerating: true });
+        if (state.scenes.length === 0) return;
 
-        for (const scene of state.scenes) {
-          if (scene.status === "ready") continue;
+        const pid = state.supabaseProjectId ?? state.projectId;
+        const pending = state.scenes.filter((s) => s.status !== "ready");
+        if (pending.length === 0) return;
 
-          const pid = state.supabaseProjectId ?? state.projectId;
-          const httpsUrl = await ensureSceneHttpsPhotoUrl(
-            scene,
-            state._photoFiles,
-            pid,
-          );
-          if (!httpsUrl) continue;
-
-          get().updateSceneStatus(scene.id, "generating");
-
+        const items = pending.map((scene, idx) => {
           const targetDuration = scene.generationTargetSeconds ?? scene.duration;
+          return {
+            targetId: scene.id,
+            label: `Cena ${idx + 1} · ${scene.presetId.replace(/_/g, " ")} · ${targetDuration}s`,
+            estimatedCost: targetDuration,
+            type: "video.scene" as const,
+            payload: {
+              sceneId: scene.id,
+              projectId: pid,
+              presetId: scene.presetId,
+              duration: targetDuration,
+              modelId: state.modelId,
+            },
+          };
+        });
 
-          try {
-            const res = await fetch("/api/generate-scene", {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({
-                photoUrl: httpsUrl,
-                presetId: scene.presetId,
-                duration: targetDuration,
-                modelId: state.modelId,
-              }),
-            });
-
-            if (!res.ok) {
-              const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-              throw new Error(err.error ?? "Failed");
-            }
-
-            const data = await res.json();
-            const realCost = typeof data.creditsCost === "number" ? data.creditsCost : targetDuration;
-            const realDuration = typeof data.duration === "number" ? data.duration : targetDuration;
-            get().updateSceneStatus(scene.id, "ready", data.videoUrl, realCost, realDuration);
-
-            // Clear the generation target now that we have the real duration
-            // bound to `scene.duration`. Keeps future inspector tweaks honest.
-            set((st) => ({
-              scenes: st.scenes.map((s) =>
-                s.id === scene.id ? { ...s, generationTargetSeconds: undefined } : s,
-              ),
-            }));
-
-            const falVideoUrl = data.videoUrl;
-            persistVideoToStorage(falVideoUrl, pid, scene.id).then((permUrl) => {
-              if (!permUrl) return;
-              set((st) => ({
-                scenes: st.scenes.map((s) => {
-                  if (s.id !== scene.id) return s;
-                  return {
-                    ...s,
-                    videoUrl: permUrl,
-                    videoVersions: s.videoVersions.map((v) =>
-                      v.url === falVideoUrl ? { ...v, url: permUrl } : v,
-                    ),
-                  };
-                }),
-                isDirty: true,
-              }));
-              void kickoffStaging(scene.id, permUrl, realDuration);
-            });
-          } catch (err) {
-            console.error(`[generate] scene ${scene.id}:`, err);
-            get().updateSceneStatus(scene.id, "failed");
-          }
-        }
-
-        set({ isGenerating: false });
-        get().saveToSupabase();
+        const batchId = useBatchesStore.getState().createPreview(items, {
+          title: `${items.length} cena${items.length === 1 ? "" : "s"}`,
+          projectId: pid,
+        });
+        useBatchesStore.getState().dispatch(batchId);
       },
 
       generateScene: async (sceneId) => {
         const state = get();
         const scene = state.scenes.find((s) => s.id === sceneId);
-        if (!scene || state.isGenerating) return;
-
-        set({ isGenerating: true });
+        if (!scene) return;
 
         const pid = state.supabaseProjectId ?? state.projectId;
-        const httpsUrl = await ensureSceneHttpsPhotoUrl(
-          scene,
-          state._photoFiles,
-          pid,
-        );
-        if (!httpsUrl) {
-          console.error(`[generate] No photo URL available for scene ${sceneId}`);
-          set({ isGenerating: false });
-          return;
-        }
-
-        get().updateSceneStatus(sceneId, "generating");
-
         const targetDuration = scene.generationTargetSeconds ?? scene.duration;
 
-        try {
-          const res = await fetch("/api/generate-scene", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              photoUrl: httpsUrl,
-              presetId: scene.presetId,
-              duration: targetDuration,
-              modelId: state.modelId,
-            }),
-          });
-
-          if (!res.ok) {
-            const errBody = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-            console.error(`[generate] API error for scene ${sceneId}:`, errBody);
-            throw new Error(errBody.error ?? "Failed");
-          }
-
-          const data = await res.json();
-          const realCost = typeof data.creditsCost === "number" ? data.creditsCost : targetDuration;
-          const realDuration = typeof data.duration === "number" ? data.duration : targetDuration;
-          get().updateSceneStatus(sceneId, "ready", data.videoUrl, realCost, realDuration);
-
-          // Clear the generation target now that we have the real duration
-          // bound to `scene.duration`. Keeps future inspector tweaks honest.
-          set((st) => ({
-            scenes: st.scenes.map((s) =>
-              s.id === sceneId ? { ...s, generationTargetSeconds: undefined } : s,
-            ),
-          }));
-
-          const falVideoUrl = data.videoUrl;
-          persistVideoToStorage(falVideoUrl, pid, sceneId).then((permUrl) => {
-            if (!permUrl) return;
-            set((st) => ({
-              scenes: st.scenes.map((s) => {
-                if (s.id !== sceneId) return s;
-                return {
-                  ...s,
-                  videoUrl: permUrl,
-                  videoVersions: s.videoVersions.map((v) =>
-                    v.url === falVideoUrl ? { ...v, url: permUrl } : v,
-                  ),
-                };
-              }),
-              isDirty: true,
-            }));
-            void kickoffStaging(sceneId, permUrl, realDuration);
-          });
-        } catch (err) {
-          console.error(`[generate] scene ${sceneId}:`, err);
-          get().updateSceneStatus(sceneId, "failed");
-        }
-
-        set({ isGenerating: false });
-        get().saveToSupabase();
+        const sceneIdx = state.scenes.findIndex((s) => s.id === sceneId);
+        const batchId = useBatchesStore.getState().createPreview(
+          [
+            {
+              targetId: sceneId,
+              label: `Cena ${sceneIdx + 1} · ${scene.presetId.replace(/_/g, " ")} · ${targetDuration}s`,
+              estimatedCost: targetDuration,
+              type: "video.scene" as const,
+              payload: {
+                sceneId,
+                projectId: pid,
+                presetId: scene.presetId,
+                duration: targetDuration,
+                modelId: state.modelId,
+              },
+            },
+          ],
+          {
+            title: "1 cena",
+            projectId: pid,
+          },
+        );
+        useBatchesStore.getState().dispatch(batchId);
       },
 
       totalCost: () => {

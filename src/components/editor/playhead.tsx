@@ -78,6 +78,10 @@ export function Playhead({
   const dragStartClientX = useRef(0);
   const dragStartTime = useRef(0);
   const dragStartPanX = useRef(0);
+  // Snapshot of zoom at pointer-down. Reused for the entire drag so a +/-
+  // press mid-gesture doesn't retroactively change the pixel→time scale
+  // that's converting the accumulated dx into deltaT.
+  const dragStartZoom = useRef(1);
   const lastClientX = useRef(0);
   const rafHandle = useRef<number | null>(null);
   const zoomRef = useRef(zoom);
@@ -127,7 +131,7 @@ export function Playhead({
     const state = useTimelineStore.getState();
     const pps = state.pixelsPerSecond;
     const total = totalDuration(segments);
-    const effectivePps = Math.max(1, pps * (zoomRef.current || 1));
+    const effectivePps = Math.max(1, pps * (dragStartZoom.current || 1));
     // currentTime must reflect the pointer's position ON the content. Since
     // panX changes under the pointer, the "effective" dx grows by -appliedPan
     // — the content moved, the pointer stayed, so we gained that much content
@@ -147,6 +151,7 @@ export function Playhead({
     dragStartClientX.current = e.clientX;
     dragStartTime.current = useTimelineStore.getState().currentTime;
     dragStartPanX.current = panXRef.current;
+    dragStartZoom.current = zoomRef.current;
     lastClientX.current = e.clientX;
     setScrubbing(true);
     (e.currentTarget as HTMLElement).setPointerCapture?.(e.pointerId);

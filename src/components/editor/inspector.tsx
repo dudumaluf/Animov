@@ -1,8 +1,12 @@
 "use client";
 
-import { CroppedImage } from "@/components/editor/cropped-image";
+import { TransformedImage } from "@/components/editor/transformed-image";
+import { FrameOverlay, aspectRatioClass } from "@/components/editor/frame-overlay";
 import { useState, useRef, useEffect, useCallback } from "react";
-import { useProjectStore } from "@/stores/project-store";
+import {
+  useProjectStore,
+  type ExportAspectRatio,
+} from "@/stores/project-store";
 import { useHasActiveMusicJob } from "@/stores/batches-store";
 import {
   Maximize2,
@@ -500,8 +504,9 @@ function EditPreview({
 }: {
   musicUrl: string | null;
   onExport?: () => void | Promise<void>;
-  aspectRatio?: "16:9" | "9:16";
+  aspectRatio?: ExportAspectRatio;
 }) {
+  const frameOverlay = useEditorSettingsStore((s) => s.frameOverlay);
   const preview = useProjectStore((s) => s.scenes.find((sc) => sc.status === "ready" && sc.videoUrl));
   const readyForExport = useProjectStore((s) => s.scenes.some((sc) => sc.status === "ready" && sc.videoUrl));
   const videoRef = useRef<HTMLVideoElement>(null);
@@ -531,7 +536,13 @@ function EditPreview({
   };
 
   return (
-    <div className={`relative w-full bg-white/5 ${aspectRatio === "9:16" ? "aspect-[9/16]" : "aspect-video"}`}>
+    <FrameOverlay
+      aspectRatio={aspectRatio}
+      mode={frameOverlay.mode}
+      overflowOpacity={frameOverlay.overflowOpacity}
+      enabled={frameOverlay.enabled}
+      className={`w-full bg-white/5 ${aspectRatioClass(aspectRatio)}`}
+    >
       {preview?.videoUrl ? (
         <video
           ref={videoRef}
@@ -544,9 +555,10 @@ function EditPreview({
           onClick={() => (videoRef.current?.paused ? syncPlay() : syncPause())}
         />
       ) : preview ? (
-        <CroppedImage
+        <TransformedImage
           src={preview.photoDataUrl ?? preview.photoUrl}
-          crop={preview.crop}
+          transform={preview.imageTransform}
+          aspectRatio={aspectRatio}
           alt="edit"
           className="absolute inset-0 h-full w-full"
         />
@@ -556,7 +568,7 @@ function EditPreview({
         </div>
       )}
       {musicUrl && <audio ref={audioRef} src={musicUrl} loop />}
-      <div className="absolute right-2 top-2 flex items-center gap-1">
+      <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
         {onExport && (
           <button
             type="button"
@@ -581,7 +593,7 @@ function EditPreview({
           </button>
         )}
       </div>
-    </div>
+    </FrameOverlay>
   );
 }
 
@@ -759,12 +771,19 @@ export function Inspector({
   onExport,
   onDownloadLast,
   onEditImage,
+  onOpenProjectSettings,
   embedded = false,
 }: {
   onPreviewVideo?: (url: string) => void;
   onExport?: () => void;
   onDownloadLast?: () => void;
   onEditImage?: (sceneId: string) => void;
+  /**
+   * Opens the Settings modal on the Projeto section. Used by the Edit Node
+   * "Alterar formato" chip so the user can change the now-global aspect ratio
+   * without leaving the inspector context.
+   */
+  onOpenProjectSettings?: () => void;
   /**
    * When true, the Inspector renders without its standalone `<aside>` shell
    * so it can slot cleanly into the DockRail's `PropertiesDrawer` chassis.
@@ -794,7 +813,7 @@ export function Inspector({
   const uploadMusicFileAction = useProjectStore((s) => s.uploadMusicFile);
   const clearMusic = useProjectStore((s) => s.clearMusic);
   const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
-  const setExportAspectRatio = useProjectStore((s) => s.setExportAspectRatio);
+  const frameOverlay = useEditorSettingsStore((s) => s.frameOverlay);
   const audioMix = useProjectStore((s) => s.audioMix);
   const setAudioMixSetting = useProjectStore((s) => s.setAudioMixSetting);
   const setSceneAudioVolume = useProjectStore((s) => s.setSceneAudioVolume);
@@ -819,7 +838,20 @@ export function Inspector({
       {scene && selectedSceneId && showScene && (
         <div className={innerClass}>
           {showInspectorPreview ? (
-            <div className="relative aspect-video w-full shrink-0 bg-white/5">
+            // Container stays at aspect-video so the inspector card has stable
+            // height regardless of the project aspect ratio; the FrameOverlay
+            // draws the export rectangle inside it. When the project is 16:9
+            // the frame matches the container exactly (just a thin gold border
+            // for guideframe mode); when the project is 9:16 / 1:1 / 4:5 the
+            // user sees the source content fill the container with the
+            // narrower frame highlighted in the middle.
+            <FrameOverlay
+              aspectRatio={exportAspectRatio}
+              mode={frameOverlay.mode}
+              overflowOpacity={frameOverlay.overflowOpacity}
+              enabled={frameOverlay.enabled}
+              className="aspect-video w-full shrink-0 bg-white/5"
+            >
               {scene.status === "ready" && scene.videoUrl ? (
                 <InspectorPreviewVideo
                   sceneId={scene.id}
@@ -831,14 +863,15 @@ export function Inspector({
                   nativeDuration={scene.videoVersions?.[scene.activeVersion]?.duration}
                 />
               ) : (
-                <CroppedImage
+                <TransformedImage
                   src={scene.photoDataUrl ?? scene.photoUrl}
-                  crop={scene.crop}
+                  transform={scene.imageTransform}
+                  aspectRatio={exportAspectRatio}
                   alt="Pré-visualização da cena"
                   className="absolute inset-0 h-full w-full"
                 />
               )}
-              <div className="absolute right-2 top-2 flex items-center gap-1">
+              <div className="absolute right-2 top-2 z-10 flex items-center gap-1">
                 {scene.status === "ready" && scene.videoUrl && (
                   <button
                     type="button"
@@ -855,13 +888,13 @@ export function Inspector({
                 <button
                   type="button"
                   onClick={() => onPreviewVideo(scene.videoUrl!)}
-                  className="absolute bottom-2 right-2 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
+                  className="absolute bottom-2 right-2 z-10 flex h-6 w-6 items-center justify-center rounded-full bg-black/60 text-white/60 transition-colors hover:text-white"
                   aria-label="Tela cheia"
                 >
                   <Maximize2 size={12} />
                 </button>
               )}
-            </div>
+            </FrameOverlay>
           ) : (
             // Preview lives elsewhere (headline/theater) — show only a compact
             // chrome row so the close button + download stay reachable.
@@ -1086,36 +1119,24 @@ export function Inspector({
 
             <MixagemSection audioMix={audioMix} onUpdate={setAudioMixSetting} />
 
-            <div className="mt-3">
-              <label className="mb-1.5 block font-mono text-[9px] uppercase tracking-wider text-text-secondary">
-                Formato
-              </label>
-              <div className="grid grid-cols-2 gap-1">
+            {/* Formato is now a project-global setting (top toolbar +
+                Settings → Projeto). The Edit Node only reflects it as a
+                read-only chip with a deep link, so users don't get confused
+                by two competing controls. */}
+            <div className="mt-3 flex items-center justify-between rounded-md border border-white/5 px-3 py-2 font-mono text-[10px] text-text-secondary">
+              <span>
+                Formato:{" "}
+                <span className="text-accent-gold">{exportAspectRatio}</span>
+              </span>
+              {onOpenProjectSettings && (
                 <button
                   type="button"
-                  onClick={() => setExportAspectRatio("16:9")}
-                  className={`flex items-center justify-center gap-1.5 rounded-md border py-1.5 font-mono text-[10px] transition-all ${
-                    exportAspectRatio === "16:9"
-                      ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
-                      : "border-white/5 text-text-secondary hover:border-white/10"
-                  }`}
+                  onClick={onOpenProjectSettings}
+                  className="rounded px-1.5 py-0.5 uppercase tracking-wider text-text-secondary transition-colors hover:bg-white/5 hover:text-accent-gold"
                 >
-                  <span className="inline-block h-2.5 w-4 rounded-[2px] border border-current" />
-                  16:9
+                  Alterar
                 </button>
-                <button
-                  type="button"
-                  onClick={() => setExportAspectRatio("9:16")}
-                  className={`flex items-center justify-center gap-1.5 rounded-md border py-1.5 font-mono text-[10px] transition-all ${
-                    exportAspectRatio === "9:16"
-                      ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
-                      : "border-white/5 text-text-secondary hover:border-white/10"
-                  }`}
-                >
-                  <span className="inline-block h-4 w-2.5 rounded-[2px] border border-current" />
-                  9:16
-                </button>
-              </div>
+              )}
             </div>
 
             <div className="min-h-4 flex-1" aria-hidden />

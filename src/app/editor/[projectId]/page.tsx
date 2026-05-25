@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, useCallback } from "react";
-import { useProjectStore } from "@/stores/project-store";
+import { useProjectStore, hasPendingPhotoUploads } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { FilmStrip } from "@/components/editor/film-strip";
@@ -13,10 +13,14 @@ import { TransportBar } from "@/components/editor/transport-bar";
 import { TimelineRuler } from "@/components/editor/timeline-ruler";
 import { ViewModeToggle } from "@/components/editor/view-mode-toggle";
 import { LayoutBar } from "@/components/editor/layout-bar";
+import { AspectRatioChip } from "@/components/editor/aspect-ratio-chip";
 import { TheaterView } from "@/components/editor/theater-view";
 import { TheaterDivider } from "@/components/editor/theater-divider";
 import { HeadlinePreview } from "@/components/editor/headline-preview";
 import { SettingsModal } from "@/components/editor/settings-modal";
+import { ConflictResolutionModal } from "@/components/editor/conflict-resolution-modal";
+import { VersionHistoryDrawer } from "@/components/editor/version-history-drawer";
+import { useProjectPresence } from "@/hooks/use-project-presence";
 import {
   DockRail,
   PanelTogglePill,
@@ -32,7 +36,7 @@ import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 // Register all job executors at the editor boundary so batches-store can
 // dispatch video/music/image-edit jobs without each caller wiring them up.
 import "@/lib/jobs/executors";
-import { composeVideos, downloadBlob, type ComposeProgress } from "@/lib/composition/compose";
+import { composeVideos, downloadBlob, RATIO_DIMS, type ComposeProgress } from "@/lib/composition/compose";
 import { buildSegments, findNextSceneTime, findPreviousSceneTime, timeToSegment, totalDuration } from "@/lib/timeline/segments";
 import { useTimelineEngine } from "@/hooks/use-timeline-engine";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
@@ -61,8 +65,15 @@ export default function EditorPage({
   const isLoading = useProjectStore((s) => s.isLoading);
   const initProject = useProjectStore((s) => s.initProject);
   const saveToSupabase = useProjectStore((s) => s.saveToSupabase);
+  const conflict = useProjectStore((s) => s.conflict);
+  const supabaseProjectId = useProjectStore((s) => s.supabaseProjectId);
   const musicUrl = useProjectStore((s) => s.musicUrl);
   const audioMix = useProjectStore((s) => s.audioMix);
+
+  // Realtime presence — also consumed by PresenceBadge in the toolbar.
+  // The hook is safe to call twice; Supabase channels are keyed by name and
+  // both call sites resolve to the same underlying socket.
+  const { otherSessions } = useProjectPresence(supabaseProjectId);
   const viewMode = useTimelineStore((s) => s.viewMode);
   const timelineSeek = useTimelineStore((s) => s.seek);
   const timelineTogglePlay = useTimelineStore((s) => s.togglePlay);
@@ -84,6 +95,19 @@ export default function EditorPage({
   const [panY, setPanY] = useState(0);
   const [isPanning, setIsPanning] = useState(false);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [versionHistoryOpen, setVersionHistoryOpen] = useState(false);
+  // Section the Settings modal opens on. Default = "editor"; some entry points
+  // (e.g. the Edit Node "Alterar formato" chip) deep link straight to "projeto".
+  const [settingsSection, setSettingsSection] = useState<
+    "editor" | "projeto" | "conta"
+  >("editor");
+  const openSettings = useCallback(
+    (section: "editor" | "projeto" | "conta" = "editor") => {
+      setSettingsSection(section);
+      setSettingsOpen(true);
+    },
+    [],
+  );
   // Snapshot the gesture entry state. `zoom` is captured at mousedown so a
   // mid-drag zoom change (user hits +/- while panning) doesn't retroactively
   // reinterpret the accumulated dx — the pixel→time sensitivity stays
@@ -203,13 +227,35 @@ export default function EditorPage({
   useEffect(() => {
     if (!isDirty) return;
     clearTimeout(saveTimer.current);
-    saveTimer.current = setTimeout(() => { saveToSupabase(); }, 3000);
+
+    const attempt = () => {
+      // Defer the save while photos are still uploading. The store's
+      // `saveToSupabase` would early-return anyway, but reattempting here
+      // keeps the "save eventually happens" guarantee — without this loop,
+      // a save attempt that landed mid-upload would be silently dropped.
+      const state = useProjectStore.getState();
+      if (hasPendingPhotoUploads(state)) {
+        saveTimer.current = setTimeout(attempt, 1000);
+        return;
+      }
+      saveToSupabase();
+    };
+
+    saveTimer.current = setTimeout(attempt, 3000);
     return () => clearTimeout(saveTimer.current);
   }, [isDirty, scenes, saveToSupabase]);
 
   useEffect(() => {
     const flush = () => {
-      if (useProjectStore.getState().isDirty) saveToSupabase();
+      const state = useProjectStore.getState();
+      if (!state.isDirty) return;
+      // On `beforeunload` we can't reasonably wait for uploads to finish
+      // (page is gone in milliseconds). Skipping the save here is the
+      // correct choice — the backend's "PATCH never deletes" guarantee
+      // means the in-flight scene won't be silently wiped, and the next
+      // session will resume from the last clean save.
+      if (hasPendingPhotoUploads(state)) return;
+      saveToSupabase();
     };
     window.addEventListener("beforeunload", flush);
     return () => window.removeEventListener("beforeunload", flush);
@@ -690,13 +736,13 @@ export default function EditorPage({
         }
       }
       if (clips.length === 0) return;
-      const isVertical = state.exportAspectRatio === "9:16";
+      const dims = RATIO_DIMS[state.exportAspectRatio];
       const blob = await composeVideos({
         clips,
         audioUrl: state.musicUrl ?? undefined,
         audioMix: state.audioMix,
-        width: isVertical ? 1080 : 1920,
-        height: isVertical ? 1920 : 1080,
+        width: dims.w,
+        height: dims.h,
         onProgress: setExportProgress,
       });
       const blobUrl = URL.createObjectURL(blob);
@@ -756,11 +802,16 @@ export default function EditorPage({
     onExport: handleExport,
     onDownloadLast: lastExportBlobUrl ? handleDownloadLast : undefined,
     onEditImage: setEditingSceneId,
+    onOpenProjectSettings: () => openSettings("projeto"),
   };
 
   return (
     <div className="flex h-screen w-screen flex-col overflow-hidden bg-[#0A0A09]">
-      <EditorToolbar onExportVideo={handleExport} onOpenSettings={() => setSettingsOpen(true)} />
+      <EditorToolbar
+        onExportVideo={handleExport}
+        onOpenSettings={() => openSettings("editor")}
+        onOpenVersionHistory={() => setVersionHistoryOpen(true)}
+      />
 
       {isEmpty ? (
         <div className="flex flex-1 items-center justify-center p-8">
@@ -936,6 +987,15 @@ export default function EditorPage({
               {!isTheater && <ViewModeToggle />}
             </div>
 
+            {/* Aspect ratio chip — bottom-right of the canvas viewport, where
+                final-cut format controls feel at home in pro editors and the
+                user's eye naturally goes when reasoning about the export
+                shape. Stays inside viewportRef so Foco mode reuses the same
+                anchor (chip rides on the strip). */}
+            <div className="absolute bottom-4 right-4 z-20">
+              <AspectRatioChip />
+            </div>
+
             {/* Mode indicator / Transport bar */}
             {viewMode === "timeline" ? (
               <TransportBar segments={segments} viewportRef={viewportRef} mainFlexRef={mainFlexRef} />
@@ -976,9 +1036,9 @@ export default function EditorPage({
         return (
           <ImageEditModal
             imageUrl={imgUrl}
-            currentCrop={editScene.crop ?? null}
-            onCropChange={(crop) =>
-              useProjectStore.getState().setSceneCrop(editingSceneId, crop)
+            currentTransform={editScene.imageTransform ?? null}
+            onTransformChange={(transform) =>
+              useProjectStore.getState().setSceneTransform(editingSceneId, transform)
             }
             onClose={() => setEditingSceneId(null)}
             onResult={(editedUrl, mode) => {
@@ -1028,7 +1088,20 @@ export default function EditorPage({
         </div>
       )}
 
-      <SettingsModal open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <SettingsModal
+        open={settingsOpen}
+        onClose={() => setSettingsOpen(false)}
+        defaultSection={settingsSection}
+      />
+
+      {conflict && (
+        <ConflictResolutionModal hasOtherSession={otherSessions.length > 0} />
+      )}
+
+      <VersionHistoryDrawer
+        open={versionHistoryOpen}
+        onClose={() => setVersionHistoryOpen(false)}
+      />
     </div>
   );
 }

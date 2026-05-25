@@ -1,17 +1,28 @@
 "use client";
 
 import { useMemo } from "react";
-import { useProjectStore } from "@/stores/project-store";
+import { useProjectStore, type ExportAspectRatio } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
+import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { VideoMirror } from "@/components/editor/video-mirror";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
-import { CroppedImage } from "@/components/editor/cropped-image";
+import { TransformedImage } from "@/components/editor/transformed-image";
+import { FrameOverlay } from "@/components/editor/frame-overlay";
 import { useStableCenterX } from "@/hooks/use-stable-center";
 import { spriteProgressForScene } from "@/lib/timeline/segments";
 
-const HEADLINE_DEFAULT_WIDTH = 320;
-const HEADLINE_DEFAULT_HEIGHT = 180;
+// The card is height-anchored: keep a constant 180px tall and let the width
+// follow the project's aspect ratio so a 9:16 project doesn't get a tiny
+// pillar inside a 16:9 card (or vice versa). Numbers below are width = height
+// * ratio, rounded for crisp rendering.
+const HEADLINE_HEIGHT = 180;
 const HEADLINE_TOP_OFFSET = 36;
+const HEADLINE_RATIO_NUM: Record<ExportAspectRatio, number> = {
+  "16:9": 16 / 9,
+  "9:16": 9 / 16,
+  "1:1": 1,
+  "4:5": 4 / 5,
+};
 
 /**
  * Floating preview card anchored to the stable horizontal center of the editor
@@ -40,8 +51,14 @@ export function HeadlinePreview({
   const scenes = useProjectStore((s) => s.scenes);
   const transitions = useProjectStore((s) => s.transitions);
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
+  const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
+  const frameOverlay = useEditorSettingsStore((s) => s.frameOverlay);
 
   const stableCenterX = useStableCenterX(viewportRef, mainFlexRef);
+
+  const headlineWidth = Math.round(
+    HEADLINE_HEIGHT * HEADLINE_RATIO_NUM[exportAspectRatio],
+  );
 
   const resolved = useMemo(() => {
     const candidateId =
@@ -53,7 +70,7 @@ export function HeadlinePreview({
         id: scene.id,
         videoUrl: scene.videoUrl ?? null,
         poster: scene.photoDataUrl ?? scene.photoUrl ?? null,
-        crop: scene.crop ?? null,
+        imageTransform: scene.imageTransform ?? null,
         sprite: scene.sprite ?? null,
         duration: scene.duration,
         trimStart: scene.trimStart,
@@ -66,7 +83,7 @@ export function HeadlinePreview({
         id: transition.id,
         videoUrl: transition.videoUrl ?? null,
         poster: null,
-        crop: null,
+        imageTransform: null,
         sprite: transition.sprite ?? null,
         duration: transition.duration ?? transition.costCredits ?? 1,
         trimStart: undefined,
@@ -91,46 +108,55 @@ export function HeadlinePreview({
         top: HEADLINE_TOP_OFFSET,
         left: `${stableCenterX}px`,
         transform: "translateX(-50%)",
-        width: HEADLINE_DEFAULT_WIDTH,
-        height: HEADLINE_DEFAULT_HEIGHT,
+        width: headlineWidth,
+        height: HEADLINE_HEIGHT,
         opacity: hasContent ? 1 : 0,
-        transition: "opacity 150ms ease-out",
+        transition: "opacity 150ms ease-out, width 200ms ease-out",
       }}
       aria-hidden={!hasContent}
     >
-      {resolved && resolved.videoUrl ? (
-        <div className="relative h-full w-full overflow-hidden rounded-xl border border-white/10 bg-black shadow-[0_12px_40px_-12px_rgba(0,0,0,0.6)]">
-          <VideoMirror
-            sourceId={resolved.id}
-            poster={null}
-            className="h-full w-full"
-            style={{ backgroundColor: "transparent" }}
-            objectFit="contain"
-          />
-          {showSprite && resolved.sprite && (
-            <SpriteFrame
-              sprite={resolved.sprite}
-              progress={spriteProgressForScene(
-                segmentLocalOffset,
-                resolved.trimStart,
-                resolved.nativeDuration,
-                resolved.duration,
-              )}
-              className="absolute inset-0 h-full w-full"
+      <FrameOverlay
+        aspectRatio={exportAspectRatio}
+        mode={frameOverlay.mode}
+        overflowOpacity={frameOverlay.overflowOpacity}
+        enabled={frameOverlay.enabled && hasContent}
+        className="h-full w-full overflow-hidden rounded-xl border border-white/10 bg-black shadow-[0_12px_40px_-12px_rgba(0,0,0,0.6)]"
+      >
+        {resolved && resolved.videoUrl ? (
+          <div className="relative h-full w-full">
+            <VideoMirror
+              sourceId={resolved.id}
+              poster={null}
+              className="h-full w-full"
+              style={{ backgroundColor: "transparent" }}
               objectFit="contain"
             />
-          )}
-        </div>
-      ) : resolved && resolved.poster ? (
-        <CroppedImage
-          src={resolved.poster}
-          crop={resolved.crop}
-          alt=""
-          className="h-full w-full rounded-xl border border-white/10 bg-black shadow-[0_12px_40px_-12px_rgba(0,0,0,0.6)]"
-          objectFit="contain"
-          draggable={false}
-        />
-      ) : null}
+            {showSprite && resolved.sprite && (
+              <SpriteFrame
+                sprite={resolved.sprite}
+                progress={spriteProgressForScene(
+                  segmentLocalOffset,
+                  resolved.trimStart,
+                  resolved.nativeDuration,
+                  resolved.duration,
+                )}
+                className="absolute inset-0 h-full w-full"
+                objectFit="contain"
+              />
+            )}
+          </div>
+        ) : resolved && resolved.poster ? (
+          <TransformedImage
+            src={resolved.poster}
+            transform={resolved.imageTransform}
+            aspectRatio={exportAspectRatio}
+            alt=""
+            className="h-full w-full"
+            objectFit="contain"
+            draggable={false}
+          />
+        ) : null}
+      </FrameOverlay>
     </div>
   );
 }

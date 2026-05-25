@@ -8,7 +8,11 @@ import {
 } from "@/lib/project-portable";
 import { DEFAULT_MODEL_ID } from "@/lib/adapters";
 import { extractVideoThumbnail } from "@/lib/utils/video-thumbnail";
-import { type AudioMixSettings, DEFAULT_AUDIO_MIX } from "@/lib/composition/compose";
+import {
+  type AudioMixSettings,
+  DEFAULT_AUDIO_MIX,
+  RATIO_DIMS,
+} from "@/lib/composition/compose";
 import { stageVideoForTimeline } from "@/lib/staging/video-staging";
 import { useBatchesStore } from "@/stores/batches-store";
 import { useJobsStore } from "@/stores/jobs-store";
@@ -26,22 +30,83 @@ export type SceneSprite = {
   thumbHeight: number;
 };
 
-export type ImageCropAspect = "free" | "16:9" | "9:16" | "1:1" | "4:5";
+/**
+ * Aspect ratio of the final exported video / project canvas. Drives
+ * `composeVideos` output dimensions and the FrameOverlay shown in the
+ * consolidated previews (Foco / headline / inspector). Now also drives the
+ * frame inside which each scene's image is placed via `imageTransform`.
+ */
+export type ExportAspectRatio = "16:9" | "9:16" | "1:1" | "4:5";
+
+const VALID_EXPORT_ASPECTS = new Set<ExportAspectRatio>([
+  "16:9",
+  "9:16",
+  "1:1",
+  "4:5",
+]);
 
 /**
- * Non-destructive crop applied to the scene's source photo. Coordinates are
- * normalized (0-1) so the rectangle stays valid if the underlying image is
- * later re-uploaded at a different resolution. The original `photoUrl` is
- * never mutated; the crop is rasterized just-in-time by the generation
- * pipeline (canvas + uploadPhoto) and reflected in the UI via CSS positioning
- * (CroppedImage component) — see render-cropped-on-generate logic.
+ * Background fill used when the image transform leaves area visible outside
+ * the photo (letterbox). `color` accepts any CSS color string (hex, rgb, hsl,
+ * named colors). `blur` uses the source image itself blown up + blurred to
+ * fill the margins (cinematic look).
  */
-export type ImageCrop = {
-  aspect: ImageCropAspect;
-  x: number;       // 0-1, top-left of crop in source image
-  y: number;       // 0-1
-  width: number;   // 0-1
-  height: number;  // 0-1
+export type ImageBackground =
+  | { type: "color"; color: string }
+  | { type: "blur" };
+
+/**
+ * Non-destructive transform that places a scene's source photo inside the
+ * project's global canvas (whose aspect = `exportAspectRatio`). Replaces the
+ * old `crop` rect with a single coherent model:
+ *
+ * - `scale`: 1 = "cover" (image just covers the canvas, smallest dim aligned).
+ *   `>1` zooms in (effectively cropping the image). `<1` zooms out and leaves
+ *   margins on the canvas (letterbox), filled by `background`.
+ * - `offsetX/offsetY`: -1..1 normalized translation. 0 = centered. 1 means
+ *   the image is shifted by one full canvas dimension in that direction.
+ *
+ * Default (transform absent) = `{ scale: 1, offsetX: 0, offsetY: 0 }` =
+ * cover-centered. The original `photoUrl` is never mutated; the transform is
+ * applied at generation time (canvas + uploadPhoto) and reflected in the UI
+ * via the `<TransformedImage>` component.
+ */
+export type ImageTransform = {
+  scale: number;
+  offsetX: number;
+  offsetY: number;
+  background?: ImageBackground;
+};
+
+/** Cover-centered: the safe default when no user adjustment exists. */
+export const DEFAULT_TRANSFORM: ImageTransform = {
+  scale: 1,
+  offsetX: 0,
+  offsetY: 0,
+};
+
+/**
+ * Conflict descriptor surfaced when `saveToSupabase` hits a 409 because the
+ * server's `updated_at` no longer matches the cached `lastKnownUpdatedAt`.
+ * UI consumes this to render the conflict-resolution modal. `null` once
+ * cleared or successfully resolved.
+ */
+export type ProjectConflict = {
+  /** updated_at currently in the DB — the value the user is conflicting with. */
+  currentUpdatedAt: string | null;
+  /** updated_at the client thought was current when it tried to save. */
+  attemptedUpdatedAt: string | null;
+  /** When the conflict was detected (used for "stale conflict" expiry checks). */
+  detectedAt: number;
+};
+
+/** Shape of a snapshot row as returned by the snapshots listing endpoint. */
+export type ProjectSnapshotEntry = {
+  id: string;
+  reason: "auto" | "manual" | "pre-restore" | "pre-overwrite";
+  createdAt: string;
+  projectName: string | null;
+  sceneCount: number;
 };
 
 export type Scene = {
@@ -75,11 +140,13 @@ export type Scene = {
    */
   generationTargetSeconds?: number;
   /**
-   * Optional non-destructive crop on the source photo. Applied at generation
-   * time (rasterized + uploaded as derivative) and reflected in previews via
-   * CSS. Reset automatically when the photo is replaced via IA-edit.
+   * Optional non-destructive transform that places the source photo inside
+   * the project's global canvas (whose aspect = `exportAspectRatio`). Applied
+   * at generation time (rasterized + uploaded as derivative) and reflected in
+   * previews via the `<TransformedImage>` component. Reset automatically when
+   * the photo is replaced via IA-edit.
    */
-  crop?: ImageCrop;
+  imageTransform?: ImageTransform;
 };
 
 export type Transition = {
@@ -119,11 +186,26 @@ export type ProjectStore = {
   editNodeSelected: boolean;
   musicPrompt: string;
   musicUrl: string | null;
-  exportAspectRatio: "16:9" | "9:16";
+  exportAspectRatio: ExportAspectRatio;
   audioMix: AudioMixSettings;
   isLoading: boolean;
   isDirty: boolean;
   isSaving: boolean;
+
+  /**
+   * Latest `updated_at` we've observed for this project — set on load and
+   * after every successful save. The PATCH handler uses it as the optimistic
+   * concurrency check: if the row moved on while we held a stale value, the
+   * server rejects with 409 and we surface a `ProjectConflict`.
+   */
+  lastKnownUpdatedAt: string | null;
+
+  /**
+   * Populated when a save fails with 409. UI shows the resolution modal;
+   * `clearConflict()` dismisses without resolving, `loadFromSupabase()` or
+   * `saveToSupabase({ force: true })` both clear it on success.
+   */
+  conflict: ProjectConflict | null;
 
   _photoFiles: Record<string, File>;
 
@@ -146,7 +228,7 @@ export type ProjectStore = {
     sceneId: string,
     trim: { trimStart?: number | null; trimEnd?: number | null },
   ) => void;
-  setSceneCrop: (sceneId: string, crop: ImageCrop | null) => void;
+  setSceneTransform: (sceneId: string, transform: ImageTransform | null) => void;
   setActiveVersion: (sceneId: string, version: number) => void;
   updateSceneImage: (sceneId: string, newImageUrl: string) => void;
 
@@ -159,7 +241,7 @@ export type ProjectStore = {
   generateMusic: () => Promise<void>;
   uploadMusicFile: (file: File) => Promise<void>;
   clearMusic: () => void;
-  setExportAspectRatio: (ratio: "16:9" | "9:16") => void;
+  setExportAspectRatio: (ratio: ExportAspectRatio) => void;
   setAudioMixSetting: <K extends keyof AudioMixSettings>(key: K, val: AudioMixSettings[K]) => void;
   setSceneAudioVolume: (sceneId: string, vol: number) => void;
 
@@ -195,8 +277,25 @@ export type ProjectStore = {
   generateScene: (sceneId: string) => Promise<void>;
 
   initProject: (urlProjectId: string) => Promise<void>;
-  saveToSupabase: () => Promise<void>;
+
+  /**
+   * Persist current state to Supabase.
+   *
+   * @param opts.force - skip the optimistic concurrency check (used by the
+   *   "Sobrescrever" action in the conflict modal). Server captures a
+   *   `pre-overwrite` snapshot before clobbering, so the user can still recover.
+   * @param opts.system - background system update (executor finishing a job).
+   *   Implies `force: true` semantics (bypasses concurrency) AND suppresses
+   *   snapshot creation so the history doesn't fill with auto-generated noise.
+   */
+  saveToSupabase: (opts?: { force?: boolean; system?: boolean }) => Promise<void>;
   loadFromSupabase: (supabaseId: string) => Promise<void>;
+
+  /** Dismiss a 409 conflict descriptor without resolving it. */
+  clearConflict: () => void;
+
+  /** Replace current state with the contents of a previously saved snapshot. */
+  restoreSnapshot: (snapshotId: string) => Promise<void>;
 
   exportProjectJson: () => { json: string; skippedSceneIds: string[] };
   importPortableProject: (
@@ -255,32 +354,39 @@ function fileToDataUrl(file: File): Promise<string> {
   });
 }
 
-const VALID_CROP_ASPECTS = new Set<ImageCropAspect>(["free", "16:9", "9:16", "1:1", "4:5"]);
-
 /**
- * Defensive parse for the `crop` JSONB column. Returns undefined for any
- * malformed payload — keeps the inspector and CroppedImage components free
- * of `if (crop && typeof crop === ...)` defensive code at every render.
+ * Defensive parse for the `image_transform` JSONB column. Returns undefined
+ * for any malformed payload — keeps consumers free of defensive checks at
+ * every render. Old `crop` payloads (rect-based) are not handled here:
+ * they're silently ignored at load time and scenes default to cover.
  */
-function parseCropFromDb(raw: unknown): ImageCrop | undefined {
+function parseTransformFromDb(raw: unknown): ImageTransform | undefined {
   if (!raw || typeof raw !== "object") return undefined;
-  const c = raw as Partial<Record<keyof ImageCrop, unknown>>;
-  if (!VALID_CROP_ASPECTS.has(c.aspect as ImageCropAspect)) return undefined;
+  const t = raw as Partial<Record<keyof ImageTransform, unknown>>;
   if (
-    typeof c.x !== "number" ||
-    typeof c.y !== "number" ||
-    typeof c.width !== "number" ||
-    typeof c.height !== "number"
+    typeof t.scale !== "number" ||
+    typeof t.offsetX !== "number" ||
+    typeof t.offsetY !== "number"
   ) {
     return undefined;
   }
-  if (c.width <= 0 || c.height <= 0) return undefined;
+  if (!Number.isFinite(t.scale) || t.scale <= 0) return undefined;
+  if (!Number.isFinite(t.offsetX) || !Number.isFinite(t.offsetY)) return undefined;
+  // Background is best-effort: kept if structurally valid, otherwise dropped.
+  let background: ImageBackground | undefined;
+  if (t.background && typeof t.background === "object") {
+    const b = t.background as Partial<Record<string, unknown>>;
+    if (b.type === "color" && typeof b.color === "string") {
+      background = { type: "color", color: b.color };
+    } else if (b.type === "blur") {
+      background = { type: "blur" };
+    }
+  }
   return {
-    aspect: c.aspect as ImageCropAspect,
-    x: Math.max(0, Math.min(1, c.x)),
-    y: Math.max(0, Math.min(1, c.y)),
-    width: Math.max(0, Math.min(1, c.width)),
-    height: Math.max(0, Math.min(1, c.height)),
+    scale: Math.max(0.05, Math.min(20, t.scale)),
+    offsetX: Math.max(-5, Math.min(5, t.offsetX)),
+    offsetY: Math.max(-5, Math.min(5, t.offsetY)),
+    ...(background ? { background } : {}),
   };
 }
 
@@ -418,7 +524,10 @@ export async function kickoffStaging(
         ),
         isDirty: true,
       }));
-      void useProjectStore.getState().saveToSupabase();
+      // System save: bypass optimistic concurrency (we may be racing with
+      // the user's own concurrent save) and skip snapshot creation so the
+      // history doesn't fill with sprite-staging noise.
+      void useProjectStore.getState().saveToSupabase({ system: true });
     } else {
       useProjectStore.setState((st) => ({
         scenes: st.scenes.map((s) =>
@@ -479,7 +588,8 @@ export async function kickoffStagingForTransition(
         ),
         isDirty: true,
       }));
-      void useProjectStore.getState().saveToSupabase();
+      // System save (same rationale as kickoffStaging above).
+      void useProjectStore.getState().saveToSupabase({ system: true });
     } else {
       useProjectStore.setState((st) => ({
         transitions: st.transitions.map((t) =>
@@ -575,41 +685,85 @@ async function resolveSceneFile(
   return file ?? null;
 }
 
-// In-memory cache for cropped derivatives. Key = `${baseUrl}::${cropHash}`.
-// Avoids re-rendering+re-uploading on retries within the same session (the
-// most common cause: failed Fal generation that the user clicks Generate
-// again on). Server-side persistence is unnecessary because the next page
-// load will resolve the same key against `scene.photoUrl` (still the
-// original) and trigger a fresh render+upload — Supabase storage de-dupes
-// by content hash anyway in practice. The cache holds string URLs only, so
-// memory pressure is negligible.
-const croppedUrlCache = new Map<string, string>();
+// In-memory cache for transformed derivatives. Key bundles the source URL,
+// the project aspect, and the transform JSON so the cache invalidates the
+// moment any of those change. Avoids re-rendering+re-uploading on retries
+// within the same session (most common: failed Fal generation that the user
+// clicks Generate again on). The cache holds string URLs only, so memory
+// pressure is negligible.
+const transformedUrlCache = new Map<string, string>();
 
-function cropCacheKey(baseUrl: string, crop: ImageCrop): string {
-  return `${baseUrl}::${crop.x.toFixed(4)},${crop.y.toFixed(4)},${crop.width.toFixed(4)},${crop.height.toFixed(4)}`;
+function transformCacheKey(
+  baseUrl: string,
+  aspectRatio: ExportAspectRatio,
+  transform: ImageTransform,
+): string {
+  const bg =
+    transform.background?.type === "color"
+      ? `c:${transform.background.color}`
+      : transform.background?.type === "blur"
+        ? "blur"
+        : "none";
+  return `${baseUrl}::${aspectRatio}::${transform.scale.toFixed(4)},${transform.offsetX.toFixed(4)},${transform.offsetY.toFixed(4)}::${bg}`;
 }
 
 /**
- * Loads `baseUrl` into an off-screen <img>, crops the region defined by
- * `crop` (normalized 0..1 over the source image's natural dimensions) onto
- * a canvas, and uploads the resulting JPEG to Supabase Storage. Returns
+ * Computes the destination rectangle inside the canvas for an image of
+ * `(naturalW, naturalH)` placed under `transform`. With `scale=1` the image
+ * exactly covers the canvas (smallest dimension aligned). `>1` zooms in (image
+ * spills outside, gets cropped); `<1` zooms out (image is smaller than the
+ * canvas, leaves margins). `offsetX/offsetY` are normalized translations in
+ * canvas units.
+ */
+function computeImageRect(
+  canvasW: number,
+  canvasH: number,
+  naturalW: number,
+  naturalH: number,
+  transform: ImageTransform,
+): { dx: number; dy: number; dw: number; dh: number } {
+  const imgAspect = naturalW / naturalH;
+  const canvasAspect = canvasW / canvasH;
+  // Cover-fit base: pick the dimension whose ratio drives the other.
+  let baseW: number, baseH: number;
+  if (imgAspect > canvasAspect) {
+    // image is wider — match heights, image overflows horizontally
+    baseH = canvasH;
+    baseW = canvasH * imgAspect;
+  } else {
+    // image is taller — match widths, image overflows vertically
+    baseW = canvasW;
+    baseH = canvasW / imgAspect;
+  }
+  const dw = baseW * transform.scale;
+  const dh = baseH * transform.scale;
+  const dx = (canvasW - dw) / 2 + transform.offsetX * canvasW;
+  const dy = (canvasH - dh) / 2 + transform.offsetY * canvasH;
+  return { dx, dy, dw, dh };
+}
+
+/**
+ * Loads `baseUrl` into an off-screen <img>, paints it onto a canvas sized at
+ * `RATIO_DIMS[aspectRatio]` according to `transform` (scale, offset,
+ * background), and uploads the resulting JPEG to Supabase Storage. Returns
  * the public URL. Throws if any step fails — the caller falls back to the
- * uncropped baseUrl in that case (better a slightly off video than no
+ * untransformed baseUrl in that case (better a slightly off video than no
  * generation at all).
  *
- * `crossOrigin = "anonymous"` is required because the canvas would
- * otherwise be tainted (Supabase Storage serves with appropriate CORS
- * headers, so this works in practice). For data: URLs no CORS handshake
- * happens, so the attribute is a no-op there.
+ * `crossOrigin = "anonymous"` is required because the canvas would otherwise
+ * be tainted (Supabase Storage serves with appropriate CORS headers, so this
+ * works in practice). For data: URLs no CORS handshake happens, so the
+ * attribute is a no-op there.
  */
-async function renderCroppedAndUpload(
+async function renderTransformedAndUpload(
   baseUrl: string,
-  crop: ImageCrop,
+  aspectRatio: ExportAspectRatio,
+  transform: ImageTransform,
   projectId: string,
   sceneId: string,
 ): Promise<string> {
-  const cacheKey = cropCacheKey(baseUrl, crop);
-  const cached = croppedUrlCache.get(cacheKey);
+  const cacheKey = transformCacheKey(baseUrl, aspectRatio, transform);
+  const cached = transformedUrlCache.get(cacheKey);
   if (cached) return cached;
 
   const img = new Image();
@@ -618,52 +772,117 @@ async function renderCroppedAndUpload(
 
   await new Promise<void>((resolve, reject) => {
     img.onload = () => resolve();
-    img.onerror = () => reject(new Error("crop image load failed"));
+    img.onerror = () => reject(new Error("transform image load failed"));
     img.src = baseUrl;
   });
 
   const naturalW = img.naturalWidth;
   const naturalH = img.naturalHeight;
   if (!naturalW || !naturalH) {
-    throw new Error("crop source has zero dimensions");
+    throw new Error("transform source has zero dimensions");
   }
 
-  const sx = Math.round(crop.x * naturalW);
-  const sy = Math.round(crop.y * naturalH);
-  const sw = Math.max(1, Math.round(crop.width * naturalW));
-  const sh = Math.max(1, Math.round(crop.height * naturalH));
-
+  const dims = RATIO_DIMS[aspectRatio];
   const canvas = document.createElement("canvas");
-  canvas.width = sw;
-  canvas.height = sh;
+  canvas.width = dims.w;
+  canvas.height = dims.h;
   const ctx = canvas.getContext("2d");
-  if (!ctx) throw new Error("crop canvas 2d context unavailable");
-  ctx.drawImage(img, sx, sy, sw, sh, 0, 0, sw, sh);
+  if (!ctx) throw new Error("transform canvas 2d context unavailable");
+
+  // Background: paint the full canvas first so any letterbox margin shows
+  // through. Default = black (matches the player chrome). `blur` paints the
+  // image covering the canvas with a heavy filter so margins look like a
+  // soft extension of the photo.
+  const bg = transform.background;
+  if (bg?.type === "color") {
+    ctx.fillStyle = bg.color;
+    ctx.fillRect(0, 0, dims.w, dims.h);
+  } else if (bg?.type === "blur") {
+    // Cover the canvas with the source, then blur. Canvas filters are
+    // supported in all evergreen browsers we target.
+    const coverRect = computeImageRect(dims.w, dims.h, naturalW, naturalH, {
+      scale: 1.1, // slight overshoot so blur edges don't show seams
+      offsetX: 0,
+      offsetY: 0,
+    });
+    ctx.save();
+    ctx.filter = "blur(36px)";
+    ctx.drawImage(img, coverRect.dx, coverRect.dy, coverRect.dw, coverRect.dh);
+    ctx.restore();
+  } else {
+    ctx.fillStyle = "#000000";
+    ctx.fillRect(0, 0, dims.w, dims.h);
+  }
+
+  const rect = computeImageRect(dims.w, dims.h, naturalW, naturalH, transform);
+  ctx.drawImage(img, rect.dx, rect.dy, rect.dw, rect.dh);
 
   const blob = await new Promise<Blob | null>((resolve) =>
     canvas.toBlob((b) => resolve(b), "image/jpeg", 0.92),
   );
-  if (!blob) throw new Error("crop canvas toBlob returned null");
+  if (!blob) throw new Error("transform canvas toBlob returned null");
 
-  const file = new File([blob], `${sceneId}-crop.jpg`, { type: "image/jpeg" });
+  const file = new File([blob], `${sceneId}-frame.jpg`, { type: "image/jpeg" });
   const url = await uploadPhoto(file, projectId);
-  croppedUrlCache.set(cacheKey, url);
+  transformedUrlCache.set(cacheKey, url);
   return url;
 }
 
 /**
+ * Decides whether the rasterized derivative MUST be produced. We always run
+ * the pipeline when:
+ *   - the scene has an explicit transform (user adjusted pan/zoom/background)
+ *   - the source image's natural aspect ≠ project aspect (so the model
+ *     receives a frame in the correct ratio rather than an arbitrary photo)
+ *
+ * If neither condition is true we can short-circuit and use the source URL
+ * directly, saving an upload round-trip.
+ */
+async function shouldRenderForExport(
+  baseUrl: string,
+  scene: Scene,
+  aspectRatio: ExportAspectRatio,
+): Promise<boolean> {
+  if (scene.imageTransform) return true;
+  // Probe the natural aspect of the source. Any failure (CORS, network) =
+  // err on the side of rendering, since cover-default is a safe no-op when
+  // the aspects already match.
+  try {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.decoding = "async";
+    await new Promise<void>((resolve, reject) => {
+      img.onload = () => resolve();
+      img.onerror = () => reject(new Error("aspect probe failed"));
+      img.src = baseUrl;
+    });
+    if (!img.naturalWidth || !img.naturalHeight) return true;
+    const naturalAspect = img.naturalWidth / img.naturalHeight;
+    const dims = RATIO_DIMS[aspectRatio];
+    const projectAspect = dims.w / dims.h;
+    return Math.abs(naturalAspect - projectAspect) > 0.01;
+  } catch {
+    return true;
+  }
+}
+
+/**
  * Ensures the scene has a usable HTTPS URL (Supabase Storage) that can be sent
- * to `/api/generate-scene` as JSON, bypassing Vercel's 4.5MB request body limit.
- * If the scene only has a blob:/data: URL or a pending upload, this uploads
- * on-demand and patches the store so subsequent calls are cheap. When a
- * non-destructive crop is set on the scene, the upload returns the cropped
- * derivative URL instead of the original (the original `scene.photoUrl` is
- * left untouched so the crop remains editable).
+ * to `/api/generate-scene` as JSON, bypassing Vercel's 4.5MB request body
+ * limit. If the scene only has a blob:/data: URL or a pending upload, this
+ * uploads on-demand and patches the store so subsequent calls are cheap.
+ *
+ * When the scene has an `imageTransform` OR its source aspect differs from
+ * the project's `exportAspectRatio`, the pipeline renders a derivative
+ * sized to the project canvas (with letterbox/background applied) and
+ * returns its URL. The original `scene.photoUrl` is left untouched so the
+ * transform remains editable.
  */
 export async function ensureSceneHttpsPhotoUrl(
   scene: Scene,
   photoFiles: Record<string, File>,
   projectId: string,
+  aspectRatio: ExportAspectRatio,
 ): Promise<string | null> {
   let baseUrl: string | null = null;
   if (
@@ -689,15 +908,25 @@ export async function ensureSceneHttpsPhotoUrl(
     }
   }
 
-  if (!scene.crop || !baseUrl) return baseUrl;
+  if (!baseUrl) return baseUrl;
+  const transform = scene.imageTransform ?? DEFAULT_TRANSFORM;
+  if (!(await shouldRenderForExport(baseUrl, scene, aspectRatio))) {
+    return baseUrl;
+  }
   try {
-    return await renderCroppedAndUpload(baseUrl, scene.crop, projectId, scene.id);
+    return await renderTransformedAndUpload(
+      baseUrl,
+      aspectRatio,
+      transform,
+      projectId,
+      scene.id,
+    );
   } catch (err) {
-    // Falling back to the uncropped URL is intentional: the user's intent
-    // was to generate, not to enforce the crop perfectly. A noticeable
+    // Falling back to the untransformed URL is intentional: the user's
+    // intent was to generate, not to enforce framing perfectly. A noticeable
     // ratio mismatch in the resulting video is recoverable; failing the
     // generation outright with no asset is not.
-    console.error("[ensureSceneHttpsPhotoUrl] crop render failed", err);
+    console.error("[ensureSceneHttpsPhotoUrl] transform render failed", err);
     return baseUrl;
   }
 }
@@ -706,6 +935,7 @@ export async function resolveSceneHttpsUrl(
   scene: Scene,
   photoFiles: Record<string, File>,
   projectId: string,
+  aspectRatio: ExportAspectRatio,
 ): Promise<string | null> {
   let baseUrl: string | null = null;
   if (scene.photoUrl && scene.photoUrl.startsWith("https://")) {
@@ -727,13 +957,46 @@ export async function resolveSceneHttpsUrl(
     }
   }
   if (!baseUrl) return null;
-  if (!scene.crop) return baseUrl;
-  try {
-    return await renderCroppedAndUpload(baseUrl, scene.crop, projectId, scene.id);
-  } catch (e) {
-    console.error("[resolveSceneHttpsUrl] crop render failed", e);
+  const transform = scene.imageTransform ?? DEFAULT_TRANSFORM;
+  if (!(await shouldRenderForExport(baseUrl, scene, aspectRatio))) {
     return baseUrl;
   }
+  try {
+    return await renderTransformedAndUpload(
+      baseUrl,
+      aspectRatio,
+      transform,
+      projectId,
+      scene.id,
+    );
+  } catch (e) {
+    console.error("[resolveSceneHttpsUrl] transform render failed", e);
+    return baseUrl;
+  }
+}
+
+/**
+ * Returns true when at least one scene is mid-upload — either we still hold
+ * its `File` in `_photoFiles` (the upload promise hasn't resolved yet) or its
+ * `photoUrl` is still a local `blob:` / `data:` URL (we haven't received a
+ * Storage URL back).
+ *
+ * The debounced save in the editor consults this before firing `PATCH`,
+ * because otherwise the save would filter out the in-flight scene and (prior
+ * to the safety refactor) the backend would delete it. With the refactor the
+ * backend no longer deletes — but the scene still wouldn't get its real URL
+ * persisted, so the save would just leave stale data. Waiting is correct.
+ */
+export function hasPendingPhotoUploads(
+  state: Pick<ProjectStore, "scenes" | "_photoFiles">,
+): boolean {
+  if (Object.keys(state._photoFiles).length > 0) return true;
+  return state.scenes.some(
+    (s) =>
+      s.photoUrl &&
+      (s.photoUrl.startsWith("blob:") || s.photoUrl.startsWith("data:")) &&
+      s.photoUrl !== PLACEHOLDER_IMG,
+  );
 }
 
 export const useProjectStore = create<ProjectStore>()(
@@ -755,22 +1018,18 @@ export const useProjectStore = create<ProjectStore>()(
       isLoading: false,
       isDirty: false,
       isSaving: false,
+      lastKnownUpdatedAt: null,
+      conflict: null,
       _photoFiles: {},
 
       setProjectName: (name) => {
+        // Marks dirty so the debounced save in the editor page picks the
+        // name change up alongside any other pending edits, all gated by
+        // optimistic concurrency. Previously this path made its own inline
+        // PATCH which bumped `projects.updated_at` outside the store's
+        // tracking — the next debounced save would then 409 against its
+        // own earlier write.
         set({ projectName: name, isDirty: true });
-        const id = get().supabaseProjectId;
-        if (id) {
-          fetch(`/api/projects/${id}`, {
-            method: "PATCH",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ name }),
-          })
-            .then((res) => {
-              if (!res.ok) console.error("[setProjectName] PATCH failed:", res.status);
-            })
-            .catch((err) => console.error("[setProjectName]", err));
-        }
       },
       setModelId: (modelId) => set({ modelId, isDirty: true }),
       selectScene: (id) =>
@@ -1112,6 +1371,33 @@ export const useProjectStore = create<ProjectStore>()(
             _photoFiles: files,
           };
         });
+
+        // Explicit DELETE on the server. PATCH no longer prunes scenes
+        // missing from the payload, so removal must be intentional.
+        // Fire-and-forget — if the request fails the next save will
+        // upsert the still-existing scene back into the local list on
+        // reload, which is the safest possible outcome.
+        const sid = get().supabaseProjectId;
+        if (sid) {
+          fetch(`/api/projects/${sid}/scenes/${id}`, { method: "DELETE" })
+            .then(async (res) => {
+              if (!res.ok) {
+                console.error(
+                  "[removeScene] DELETE failed",
+                  res.status,
+                  await res.text().catch(() => ""),
+                );
+                return;
+              }
+              const body = (await res.json().catch(() => null)) as
+                | { updatedAt?: string | null }
+                | null;
+              if (body?.updatedAt) {
+                set({ lastKnownUpdatedAt: body.updatedAt });
+              }
+            })
+            .catch((err) => console.error("[removeScene]", err));
+        }
       },
 
       reorderScenes: (fromIndex, toIndex) => {
@@ -1235,19 +1521,19 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
-      setSceneCrop: (sceneId, crop) => {
-        // `null` removes the crop entirely (image renders at full extent
-        // again). Setting a crop bumps `isDirty` so the project save
+      setSceneTransform: (sceneId, transform) => {
+        // `null` clears the transform (image goes back to cover-centered
+        // default). Setting a transform bumps `isDirty` so the project save
         // pipeline picks it up; the actual rasterization happens later in
         // ensureSceneHttpsPhotoUrl when the user clicks Generate.
         set((state) => ({
           scenes: state.scenes.map((s) => {
             if (s.id !== sceneId) return s;
             const next: Scene = { ...s };
-            if (crop === null) {
-              delete next.crop;
+            if (transform === null) {
+              delete next.imageTransform;
             } else {
-              next.crop = crop;
+              next.imageTransform = transform;
             }
             return next;
           }),
@@ -1280,10 +1566,11 @@ export const useProjectStore = create<ProjectStore>()(
           return {
             scenes: state.scenes.map((s) => {
               if (s.id !== sceneId) return s;
-              // Drop any saved crop: it referenced the *previous* image's
-              // pixel layout, and the IA-generated replacement may have an
-              // entirely different composition. Forcing a re-crop here is
-              // less surprising than silently applying a misaligned region.
+              // Drop any saved transform: it referenced the *previous*
+              // image's pixel layout, and the IA-generated replacement may
+              // have an entirely different composition. Forcing a re-frame
+              // here is less surprising than silently applying a misaligned
+              // pan/zoom.
               const next: Scene = {
                 ...s,
                 photoUrl: newImageUrl,
@@ -1293,7 +1580,7 @@ export const useProjectStore = create<ProjectStore>()(
                 videoVersions: [],
                 activeVersion: 0,
               };
-              delete next.crop;
+              delete next.imageTransform;
               return next;
             }),
             isDirty: true,
@@ -1354,6 +1641,34 @@ export const useProjectStore = create<ProjectStore>()(
           ),
           isDirty: true,
         }));
+
+        // Server-side: explicit DELETE. The PATCH-driven save will no
+        // longer prune "idle" transitions on its own (intentional — the
+        // backend never deletes implicitly anymore), so the row would
+        // otherwise linger with stale data.
+        const sid = get().supabaseProjectId;
+        if (sid) {
+          fetch(`/api/projects/${sid}/transitions/${transitionId}`, {
+            method: "DELETE",
+          })
+            .then(async (res) => {
+              if (!res.ok) {
+                console.error(
+                  "[removeTransition] DELETE failed",
+                  res.status,
+                  await res.text().catch(() => ""),
+                );
+                return;
+              }
+              const body = (await res.json().catch(() => null)) as
+                | { updatedAt?: string | null }
+                | null;
+              if (body?.updatedAt) {
+                set({ lastKnownUpdatedAt: body.updatedAt });
+              }
+            })
+            .catch((err) => console.error("[removeTransition]", err));
+        }
       },
 
       selectEditNode: () => set({ editNodeSelected: true, selectedSceneId: null }),
@@ -1569,7 +1884,7 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null; crop?: unknown }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null; crop?: unknown; image_transform?: unknown }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
@@ -1582,10 +1897,12 @@ export const useProjectStore = create<ProjectStore>()(
               typeof s.generation_target_seconds === "number"
                 ? s.generation_target_seconds
                 : undefined;
-            // Validate the crop blob defensively — JSONB columns can hold
-            // anything if a future migration writes other shapes, and trying
-            // to render an invalid crop would break the inspector.
-            const crop = parseCropFromDb(s.crop);
+            // Validate the image_transform blob defensively — JSONB columns
+            // can hold anything if a future migration writes other shapes,
+            // and trying to render an invalid transform would break the
+            // inspector. Old `crop` payloads are silently dropped: scenes
+            // re-default to cover-centered (no best-effort migration).
+            const imageTransform = parseTransformFromDb(s.image_transform);
             return {
               id: s.id,
               photoUrl: s.photo_url,
@@ -1602,7 +1919,7 @@ export const useProjectStore = create<ProjectStore>()(
               trimStart,
               trimEnd,
               generationTargetSeconds,
-              crop,
+              imageTransform,
             };
           });
 
@@ -1672,11 +1989,23 @@ export const useProjectStore = create<ProjectStore>()(
             editNodeSelected: false,
             musicPrompt: meta.musicPrompt ?? "",
             musicUrl: meta.musicUrl ?? "",
-            exportAspectRatio: meta.exportAspectRatio === "9:16" ? "9:16" : "16:9",
+            exportAspectRatio: VALID_EXPORT_ASPECTS.has(
+              meta.exportAspectRatio as ExportAspectRatio,
+            )
+              ? (meta.exportAspectRatio as ExportAspectRatio)
+              : "16:9",
             audioMix: restoredMix,
             selectedSceneId: null,
             isLoading: false,
             isDirty: false,
+            // Cache the version we just observed so the next save can pass
+            // it as `expected_updated_at`. Clearing `conflict` here is what
+            // makes "Recarregar" in the conflict modal resolve cleanly.
+            lastKnownUpdatedAt:
+              typeof data.project.updated_at === "string"
+                ? data.project.updated_at
+                : null,
+            conflict: null,
           });
 
           // Backfill sprite staging for scenes that already have a persisted
@@ -1772,45 +2101,86 @@ export const useProjectStore = create<ProjectStore>()(
         });
 
         queueMicrotask(() => {
-          get().saveToSupabase();
+          // Import is a deliberate full-state replacement, so we force the
+          // save (bypassing optimistic concurrency) — the user has already
+          // implicitly opted in to overwriting whatever was there.
+          get().saveToSupabase({ force: true });
         });
 
         return { ok: true, skippedSceneIds: [] };
       },
 
-      saveToSupabase: async () => {
+      saveToSupabase: async (opts) => {
         const state = get();
         if (!state.supabaseProjectId || state.isSaving) return;
+
+        const force = opts?.force === true;
+        const isSystem = opts?.system === true;
+
+        // ─── Upload guard: refuse to save while photos are still uploading.
+        // The previous behaviour silently filtered such scenes from the
+        // payload; with the new "PATCH never deletes" backend that means
+        // they'd just go stale on the server. Either way, we want to wait.
+        // Caller (debounce effect in the editor page) reschedules.
+        if (hasPendingPhotoUploads(state)) {
+          console.warn(
+            "[saveToSupabase] Pending photo uploads — deferring save",
+          );
+          return;
+        }
+
         set({ isSaving: true });
 
         try {
-          const scenesPayload = state.scenes
-            .filter((s) => s.status !== "processing")
-            .map((s) => {
-              const photoUrl = s.photoUrl.startsWith("http") ? s.photoUrl : undefined;
-              if (!photoUrl) return null;
-              return {
-                id: s.id,
-                photo_url: photoUrl,
-                preset_key: s.presetId,
-                duration: s.duration,
-                status: s.status,
-                video_url: s.videoUrl,
-                cost_credits: s.costCredits,
-                video_versions: s.videoVersions ?? [],
-                active_version: s.activeVersion ?? 0,
-                source_type: s.sourceType ?? "image",
-                audio_volume: s.audioVolume ?? 1,
-                trim_start: typeof s.trimStart === "number" ? s.trimStart : null,
-                trim_end: typeof s.trimEnd === "number" ? s.trimEnd : null,
-                generation_target_seconds:
-                  typeof s.generationTargetSeconds === "number"
-                    ? s.generationTargetSeconds
-                    : null,
-                crop: s.crop ?? null,
-              };
-            })
-            .filter(Boolean);
+          // Track scenes we intentionally skip (status === "processing")
+          // versus scenes we'd be silently dropping (no usable URL).
+          // The former is fine; the latter is a bug we MUST abort on.
+          const eligibleScenes = state.scenes.filter(
+            (s) => s.status !== "processing",
+          );
+          const scenesPayload: Array<Record<string, unknown>> = [];
+          const silentlySkipped: string[] = [];
+
+          for (const s of eligibleScenes) {
+            const photoUrl = s.photoUrl.startsWith("http") ? s.photoUrl : undefined;
+            if (!photoUrl) {
+              silentlySkipped.push(s.id);
+              continue;
+            }
+            scenesPayload.push({
+              id: s.id,
+              photo_url: photoUrl,
+              preset_key: s.presetId,
+              duration: s.duration,
+              status: s.status,
+              video_url: s.videoUrl,
+              cost_credits: s.costCredits,
+              video_versions: s.videoVersions ?? [],
+              active_version: s.activeVersion ?? 0,
+              source_type: s.sourceType ?? "image",
+              audio_volume: s.audioVolume ?? 1,
+              trim_start: typeof s.trimStart === "number" ? s.trimStart : null,
+              trim_end: typeof s.trimEnd === "number" ? s.trimEnd : null,
+              generation_target_seconds:
+                typeof s.generationTargetSeconds === "number"
+                  ? s.generationTargetSeconds
+                  : null,
+              image_transform: s.imageTransform ?? null,
+            });
+          }
+
+          // Belt-and-suspenders against the very bug class this whole
+          // refactor exists to prevent. If `hasPendingPhotoUploads` ever
+          // misses a case (e.g. an https URL was nulled mid-flight), abort
+          // rather than send a partial payload.
+          if (silentlySkipped.length > 0) {
+            console.error(
+              "[saveToSupabase] Refusing to save — would silently skip scenes:",
+              silentlySkipped,
+            );
+            set({ isSaving: false });
+            return;
+          }
 
           const readyTransitions = state.transitions.filter(
             (t) => t.status === "ready" || t.status === "generating" || t.status === "failed",
@@ -1841,18 +2211,26 @@ export const useProjectStore = create<ProjectStore>()(
               audioMix: state.audioMix,
               sceneStaging: Object.keys(sceneStaging).length > 0 ? sceneStaging : undefined,
             },
+            transitions: transitionsPayload,
           };
-
-          if (transitionsPayload.length > 0) {
-            payload.transitions = transitionsPayload;
-          } else {
-            payload.transitions = [];
-          }
 
           if (scenesPayload.length > 0) {
             payload.scenes = scenesPayload;
           } else if (state.scenes.length > 0) {
-            console.warn("[saveToSupabase] Skipping scenes — no uploadable URLs yet");
+            console.warn("[saveToSupabase] No scenes have uploadable URLs yet");
+          }
+
+          // ─── Concurrency hints.
+          // User saves carry expected_updated_at; the server rejects 409 if
+          // the row moved on. System saves (executors finalising a model
+          // job) and forced saves (post-conflict-modal overwrite) skip it.
+          if (isSystem || force) {
+            payload.force = true;
+          } else if (state.lastKnownUpdatedAt) {
+            payload.expected_updated_at = state.lastKnownUpdatedAt;
+          }
+          if (isSystem) {
+            payload.system = true;
           }
 
           const res = await fetch(`/api/projects/${state.supabaseProjectId}`, {
@@ -1861,15 +2239,78 @@ export const useProjectStore = create<ProjectStore>()(
             body: JSON.stringify(payload),
           });
 
-          if (!res.ok) {
-            console.error("[saveToSupabase] HTTP", res.status, await res.text().catch(() => ""));
-          } else {
-            set({ isDirty: false });
+          if (res.status === 409) {
+            const body = (await res.json().catch(() => null)) as
+              | { currentUpdatedAt?: string | null }
+              | null;
+            // Surface the conflict to the UI; do NOT clear isDirty so the
+            // user's local changes stay queued for the resolution path.
+            set({
+              conflict: {
+                currentUpdatedAt: body?.currentUpdatedAt ?? null,
+                attemptedUpdatedAt: state.lastKnownUpdatedAt,
+                detectedAt: Date.now(),
+              },
+            });
+            return;
           }
+
+          if (!res.ok) {
+            console.error(
+              "[saveToSupabase] HTTP",
+              res.status,
+              await res.text().catch(() => ""),
+            );
+            return;
+          }
+
+          const body = (await res.json().catch(() => null)) as
+            | { updatedAt?: string }
+            | null;
+
+          set({
+            isDirty: false,
+            // Advance the concurrency cache so the next save can pass it
+            // through; null leaves us conservative (next save won't gate).
+            lastKnownUpdatedAt: body?.updatedAt ?? null,
+            // Successful save clears any stale conflict descriptor.
+            conflict: null,
+          });
         } catch (err) {
           console.error("[saveToSupabase]", err);
         } finally {
           set({ isSaving: false });
+        }
+      },
+
+      clearConflict: () => set({ conflict: null }),
+
+      restoreSnapshot: async (snapshotId) => {
+        const state = get();
+        if (!state.supabaseProjectId) return;
+
+        try {
+          const res = await fetch(
+            `/api/projects/${state.supabaseProjectId}/snapshots/${snapshotId}?action=restore`,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+            },
+          );
+          if (!res.ok) {
+            console.error(
+              "[restoreSnapshot] HTTP",
+              res.status,
+              await res.text().catch(() => ""),
+            );
+            return;
+          }
+          // Reload from the now-restored state so the store reflects what
+          // the server holds. The endpoint already captured a pre-restore
+          // snapshot, so this is reversible from the version-history UI.
+          await get().loadFromSupabase(state.supabaseProjectId);
+        } catch (err) {
+          console.error("[restoreSnapshot]", err);
         }
       },
 
@@ -1956,6 +2397,8 @@ export const useProjectStore = create<ProjectStore>()(
           transitions: [],
           selectedSceneId: null,
           isDirty: false,
+          lastKnownUpdatedAt: null,
+          conflict: null,
           _photoFiles: {},
         }),
     }),

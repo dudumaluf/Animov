@@ -38,8 +38,18 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
   }
 
   const [startUrl, endUrl] = await Promise.all([
-    resolveSceneHttpsUrl(fromScene, state._photoFiles, p.projectId),
-    resolveSceneHttpsUrl(toScene, state._photoFiles, p.projectId),
+    resolveSceneHttpsUrl(
+      fromScene,
+      state._photoFiles,
+      p.projectId,
+      state.exportAspectRatio,
+    ),
+    resolveSceneHttpsUrl(
+      toScene,
+      state._photoFiles,
+      p.projectId,
+      state.exportAspectRatio,
+    ),
   ]);
   if (!startUrl || !endUrl) {
     throw new Error("Could not resolve image URLs for transition");

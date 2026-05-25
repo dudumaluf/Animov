@@ -50,7 +50,12 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
   // Resolve a usable HTTPS photo URL (upload on demand if the scene only has
   // a blob/data URL). Must happen before /api/generate-scene because the API
   // rejects >4.5MB payloads — see ensureSceneHttpsPhotoUrl for details.
-  const httpsUrl = await ensureSceneHttpsPhotoUrl(scene, state._photoFiles, p.projectId);
+  const httpsUrl = await ensureSceneHttpsPhotoUrl(
+    scene,
+    state._photoFiles,
+    p.projectId,
+    state.exportAspectRatio,
+  );
   if (!httpsUrl) {
     throw new Error(`No photo URL available for scene ${p.sceneId}`);
   }
@@ -113,7 +118,10 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
 
     // Kick off project save once the cycle settles — keeps the in-store data
     // consistent with what Supabase holds so a reload matches the canvas.
-    void store.getState().saveToSupabase();
+    // System save: bypasses optimistic concurrency (executor may be racing
+    // with the user's own pending edits) and skips snapshot creation so
+    // automated job completions don't crowd the version history.
+    void store.getState().saveToSupabase({ system: true });
 
     return {
       actualCost: realCost,

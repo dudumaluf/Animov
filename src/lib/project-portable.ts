@@ -14,7 +14,16 @@ export type PortableProjectV1 = {
   transitions: Transition[];
 };
 
-export type PortableScene = Omit<Scene, "photoDataUrl">;
+/**
+ * Portable scene shape. Mirrors the in-memory Scene minus runtime-only
+ * fields (`photoDataUrl`). The legacy `crop` is accepted on import for
+ * backward compatibility with old backups but never written: such crops
+ * are silently dropped on portableToScene (cover-default).
+ */
+export type PortableScene = Omit<Scene, "photoDataUrl"> & {
+  /** Legacy non-destructive crop. Kept for read-only back-compat. */
+  crop?: unknown;
+};
 
 function isHttpUrl(u: string | undefined | null): u is string {
   return !!u && (u.startsWith("https://") || u.startsWith("http://"));
@@ -51,7 +60,7 @@ export function sceneToPortable(s: Scene): PortableScene | null {
     sourceType: s.sourceType,
     trimStart: s.trimStart,
     trimEnd: s.trimEnd,
-    crop: s.crop,
+    imageTransform: s.imageTransform,
   };
 }
 
@@ -77,7 +86,7 @@ export function portableToScene(p: PortableScene): Scene {
     sourceType: p.sourceType,
     trimStart: p.trimStart,
     trimEnd: p.trimEnd,
-    crop: p.crop,
+    imageTransform: p.imageTransform,
   };
 }
 

@@ -14,6 +14,8 @@ import {
   ExternalLink,
   RotateCcw,
   LayoutPanelTop,
+  Ratio,
+  Frame,
 } from "lucide-react";
 import {
   useEditorSettingsStore,
@@ -23,25 +25,45 @@ import {
   type PreviewPlacement,
   type InspectorDensity,
   type LayoutPreset,
+  type FrameOverlayMode,
   playheadLineCssColorSolid,
 } from "@/stores/editor-settings-store";
+import {
+  useProjectStore,
+  type ExportAspectRatio,
+} from "@/stores/project-store";
 
 type SettingsSection = "editor" | "projeto" | "conta";
+
+/**
+ * The Settings modal accepts an optional `defaultSection` so callers can deep
+ * link to a specific tab — used by the Edit Node "Alterar" chip to land the
+ * user directly on the Projeto section where the global aspect ratio lives.
+ */
 
 export function SettingsModal({
   open,
   onClose,
+  defaultSection = "editor",
 }: {
   open: boolean;
   onClose: () => void;
+  defaultSection?: SettingsSection;
 }) {
-  const [section, setSection] = useState<SettingsSection>("editor");
+  const [section, setSection] = useState<SettingsSection>(defaultSection);
   const [mounted, setMounted] = useState(false);
   const panelRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     setMounted(true);
   }, []);
+
+  // When `open` flips true, honor the requested defaultSection so deep links
+  // (e.g. "open Settings on Projeto") land on the right tab even after the
+  // user previously left the modal on a different section.
+  useEffect(() => {
+    if (open) setSection(defaultSection);
+  }, [open, defaultSection]);
 
   useEffect(() => {
     if (!open) return;
@@ -314,19 +336,67 @@ function EditorSection() {
   );
 }
 
-/* ─── Section: Projeto (stub) ────────────────────────────────────── */
+/* ─── Section: Projeto ───────────────────────────────────────────── */
 
 function ProjetoSection() {
+  const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
+  const setExportAspectRatio = useProjectStore((s) => s.setExportAspectRatio);
+  const frameOverlay = useEditorSettingsStore((s) => s.frameOverlay);
+  const setFrameOverlayEnabled = useEditorSettingsStore(
+    (s) => s.setFrameOverlayEnabled,
+  );
+  const setFrameOverlayMode = useEditorSettingsStore(
+    (s) => s.setFrameOverlayMode,
+  );
+  const setFrameOverlayOpacity = useEditorSettingsStore(
+    (s) => s.setFrameOverlayOpacity,
+  );
+
   return (
-    <div className="flex h-full items-center justify-center px-8">
-      <div className="flex max-w-sm flex-col items-center gap-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] px-8 py-10 text-center">
-        <FolderKanban size={28} className="text-text-secondary" />
-        <div className="font-mono text-[11px] text-[var(--text)]">Em breve</div>
-        <p className="font-mono text-[10px] leading-relaxed text-text-secondary">
-          Aqui voce vai poder configurar aspect ratio de export, mix de audio,
-          preset padrao e mais — tudo por projeto.
+    <div className="flex flex-col gap-6 px-6 py-6">
+      <Subsection icon={<Ratio size={13} />} title="Formato">
+        <RadioRow<ExportAspectRatio>
+          label="Aspect ratio do projeto"
+          value={exportAspectRatio}
+          onChange={setExportAspectRatio}
+          options={[
+            { id: "16:9", label: "16:9" },
+            { id: "9:16", label: "9:16" },
+            { id: "1:1", label: "1:1" },
+            { id: "4:5", label: "4:5" },
+          ]}
+        />
+        <p className="font-mono text-[9px] leading-relaxed text-text-secondary">
+          Define o tamanho do canvas e do video exportado. Imagens e videos
+          mantem seu tamanho original; somente o frame visivel muda.
         </p>
-      </div>
+      </Subsection>
+
+      <Subsection icon={<Frame size={13} />} title="Frame de export no canvas">
+        <ToggleRow
+          label="Mostrar overlay de frame"
+          hint="Indica visualmente o que sera incluido no export"
+          value={frameOverlay.enabled}
+          onChange={setFrameOverlayEnabled}
+        />
+        <RadioRow<FrameOverlayMode>
+          label="Modo"
+          value={frameOverlay.mode}
+          onChange={setFrameOverlayMode}
+          options={[
+            { id: "guideframe", label: "Guideframe" },
+            { id: "letterbox", label: "Letterbox" },
+          ]}
+        />
+        {frameOverlay.mode === "guideframe" && (
+          <NumberRow
+            label="Opacidade do conteudo fora do frame"
+            value={frameOverlay.overflowOpacity}
+            onChange={setFrameOverlayOpacity}
+            disabled={!frameOverlay.enabled}
+          />
+        )}
+      </Subsection>
     </div>
   );
 }

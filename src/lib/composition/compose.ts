@@ -51,6 +51,23 @@ export const DEFAULT_AUDIO_MIX: AudioMixSettings = {
   duckingRelease: 0.4,
 };
 
+/**
+ * Output dimensions for each project export aspect ratio. Kept colocated with
+ * the composer so the `width`/`height` we pass to `composeVideos` always match
+ * a known target. Heights/widths chosen to keep the long edge at 1920 (16:9 /
+ * 9:16) or 1080 (square / portrait social), which lines up with what major
+ * platforms (YouTube, Reels, TikTok, Instagram feed) actually display.
+ */
+export const RATIO_DIMS: Record<
+  "16:9" | "9:16" | "1:1" | "4:5",
+  { w: number; h: number }
+> = {
+  "16:9": { w: 1920, h: 1080 },
+  "9:16": { w: 1080, h: 1920 },
+  "1:1": { w: 1080, h: 1080 },
+  "4:5": { w: 1080, h: 1350 },
+};
+
 type CompositionInput = {
   clips: ClipInfo[];
   audioUrl?: string;

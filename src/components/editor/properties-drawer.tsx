@@ -21,6 +21,7 @@ export type PropertiesDrawerProps = {
   onExport?: () => void;
   onDownloadLast?: () => void;
   onEditImage?: (sceneId: string) => void;
+  onOpenProjectSettings?: () => void;
   /** Controlled by the DockRail from `dock.resize_enabled`. */
   resizable?: boolean;
 };

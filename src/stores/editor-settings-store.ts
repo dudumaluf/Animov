@@ -7,6 +7,15 @@ export type PlayheadLineVisibility = "always" | "only_scrub" | "never";
 export type PlayheadLineColor = "gold" | "white" | "blue" | "red";
 export type RulerDensityMode = "auto" | "dense" | "sparse";
 
+/**
+ * How the FrameOverlay renders content that falls outside the project's
+ * `exportAspectRatio`. `letterbox` clips strictly to the frame (final-cut feel);
+ * `guideframe` keeps the full source visible at reduced opacity so the user can
+ * still see what's being cropped, with a thin gold border marking the export
+ * boundary.
+ */
+export type FrameOverlayMode = "guideframe" | "letterbox";
+
 export type PreviewPlacement = "inspector" | "headline" | "theater";
 export type InspectorDensity = "full" | "railed" | "hidden";
 export type LayoutPreset = "edicao" | "revisao" | "foco" | "livre";
@@ -47,6 +56,18 @@ export type EditorSettings = {
     hoverPlayEnabled: boolean;
   };
   layout: LayoutSettings;
+  /**
+   * Visualization of the project's export aspect ratio on top of preview
+   * surfaces (Foco / headline / inspector). Local-only setting (kept out of
+   * project payload because it's a personal viewing preference, not part of
+   * the cut).
+   */
+  frameOverlay: {
+    enabled: boolean;
+    mode: FrameOverlayMode;
+    /** 0..100 — visibility of content outside the export frame in `guideframe` mode. */
+    overflowOpacity: number;
+  };
 };
 
 /**
@@ -98,6 +119,11 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
     showLayoutBar: true,
     theaterStripHeight: THEATER_STRIP_DEFAULT,
   },
+  frameOverlay: {
+    enabled: true,
+    mode: "guideframe",
+    overflowOpacity: 25,
+  },
 };
 
 type EditorSettingsStore = EditorSettings & {
@@ -119,6 +145,10 @@ type EditorSettingsStore = EditorSettings & {
   setTimelineRibbon: (v: boolean) => void;
   setShowLayoutBar: (v: boolean) => void;
   setTheaterStripHeight: (px: number) => void;
+
+  setFrameOverlayEnabled: (v: boolean) => void;
+  setFrameOverlayMode: (m: FrameOverlayMode) => void;
+  setFrameOverlayOpacity: (pct: number) => void;
 
   resetDefaults: () => void;
 };
@@ -215,12 +245,21 @@ export const useEditorSettingsStore = create<EditorSettingsStore>()(
           },
         })),
 
+      setFrameOverlayEnabled: (v) =>
+        set((s) => ({ frameOverlay: { ...s.frameOverlay, enabled: v } })),
+      setFrameOverlayMode: (m) =>
+        set((s) => ({ frameOverlay: { ...s.frameOverlay, mode: m } })),
+      setFrameOverlayOpacity: (pct) =>
+        set((s) => ({
+          frameOverlay: { ...s.frameOverlay, overflowOpacity: clampPct(pct) },
+        })),
+
       resetDefaults: () =>
         set(() => ({ ...DEFAULT_EDITOR_SETTINGS })),
     }),
     {
       name: "animov-editor-settings-v1",
-      version: 3,
+      version: 4,
       migrate: (persisted: unknown, version) => {
         if (!persisted || typeof persisted !== "object") {
           return DEFAULT_EDITOR_SETTINGS;
@@ -244,6 +283,19 @@ export const useEditorSettingsStore = create<EditorSettingsStore>()(
               theaterStripHeight:
                 prev.layout?.theaterStripHeight ?? THEATER_STRIP_DEFAULT,
             },
+            frameOverlay:
+              (prev as Partial<EditorSettings>).frameOverlay ??
+              DEFAULT_EDITOR_SETTINGS.frameOverlay,
+          };
+        }
+        // v3 didn't have `frameOverlay`; backfill defaults so the global
+        // aspect-ratio frame appears with sensible values on first open.
+        if (version < 4) {
+          const prev = persisted as Partial<EditorSettings>;
+          return {
+            ...(prev as EditorSettings),
+            frameOverlay:
+              prev.frameOverlay ?? DEFAULT_EDITOR_SETTINGS.frameOverlay,
           };
         }
         return persisted as EditorSettings;
@@ -253,6 +305,7 @@ export const useEditorSettingsStore = create<EditorSettingsStore>()(
         ruler: s.ruler,
         behavior: s.behavior,
         layout: s.layout,
+        frameOverlay: s.frameOverlay,
       }),
     },
   ),

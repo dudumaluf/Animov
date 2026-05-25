@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/stores/project-store";
 import { useHasActiveJobs } from "@/stores/jobs-store";
 import { createClient } from "@/lib/supabase/client";
+import { PresenceBadge } from "@/components/editor/presence-badge";
 import {
   ArrowLeft,
   Save,
@@ -24,6 +25,7 @@ import {
   ChevronRight,
   ChevronDown,
   Coins,
+  History,
 } from "lucide-react";
 
 /* ── Types ─────────────────────────────────────────────────────── */
@@ -290,9 +292,11 @@ function SaveIndicator({ isSaving, isDirty, hasScenes }: { isSaving: boolean; is
 export function EditorToolbar({
   onExportVideo,
   onOpenSettings,
+  onOpenVersionHistory,
 }: {
   onExportVideo?: () => void;
   onOpenSettings?: () => void;
+  onOpenVersionHistory?: () => void;
 }) {
   const {
     projectName,
@@ -310,6 +314,7 @@ export function EditorToolbar({
     hasEditNode,
     setHasEditNode,
     modelId,
+    supabaseProjectId,
   } = useProjectStore();
 
   // `hasActiveJobs` replaces the legacy global isGenerating flag. With
@@ -417,6 +422,13 @@ export function EditorToolbar({
       icon: <Save size={14} />,
       shortcut: `${mod}S`,
       onClick: () => saveToSupabase(),
+    },
+    {
+      type: "action",
+      label: "Historico de versoes",
+      icon: <History size={14} />,
+      disabled: !onOpenVersionHistory,
+      onClick: () => { onOpenVersionHistory?.(); },
     },
     { type: "separator" },
     {
@@ -605,6 +617,8 @@ export function EditorToolbar({
         )}
 
         <SaveIndicator isSaving={isSaving} isDirty={isDirty} hasScenes={scenes.length > 0} />
+
+        <PresenceBadge projectId={supabaseProjectId} />
       </div>
 
       {/* Right: credits */}

@@ -3,7 +3,9 @@
 import { useMemo } from "react";
 import { useProjectStore } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
-import { CroppedImage } from "@/components/editor/cropped-image";
+import { useEditorSettingsStore } from "@/stores/editor-settings-store";
+import { TransformedImage } from "@/components/editor/transformed-image";
+import { FrameOverlay } from "@/components/editor/frame-overlay";
 import { VideoMirror } from "@/components/editor/video-mirror";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
 import { spriteProgressForScene } from "@/lib/timeline/segments";
@@ -23,6 +25,8 @@ export function TheaterView() {
   const scenes = useProjectStore((s) => s.scenes);
   const transitions = useProjectStore((s) => s.transitions);
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
+  const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
+  const frameOverlay = useEditorSettingsStore((s) => s.frameOverlay);
 
   const resolved = useMemo(() => {
     const candidateId =
@@ -34,7 +38,7 @@ export function TheaterView() {
         id: scene.id,
         videoUrl: scene.videoUrl ?? null,
         poster: scene.photoDataUrl ?? scene.photoUrl ?? null,
-        crop: scene.crop ?? null,
+        imageTransform: scene.imageTransform ?? null,
         sprite: scene.sprite ?? null,
         duration: scene.duration,
         trimStart: scene.trimStart,
@@ -47,7 +51,7 @@ export function TheaterView() {
         id: transition.id,
         videoUrl: transition.videoUrl ?? null,
         poster: null,
-        crop: null,
+        imageTransform: null,
         sprite: transition.sprite ?? null,
         duration: transition.duration ?? transition.costCredits ?? 1,
         trimStart: undefined,
@@ -66,48 +70,57 @@ export function TheaterView() {
 
   return (
     <div className="relative flex h-full w-full items-center justify-center overflow-hidden bg-black animate-in fade-in duration-200">
-      {resolved && resolved.videoUrl ? (
-        <div className="relative h-full w-full">
-          <VideoMirror
-            sourceId={resolved.id}
-            poster={null}
-            className="h-full w-full"
-            style={{ backgroundColor: "transparent" }}
-            objectFit="contain"
-          />
-          {showSprite && resolved.sprite && (
-            <SpriteFrame
-              sprite={resolved.sprite}
-              progress={spriteProgressForScene(
-                segmentLocalOffset,
-                resolved.trimStart,
-                resolved.nativeDuration,
-                resolved.duration,
-              )}
-              className="absolute inset-0 h-full w-full"
+      <FrameOverlay
+        aspectRatio={exportAspectRatio}
+        mode={frameOverlay.mode}
+        overflowOpacity={frameOverlay.overflowOpacity}
+        enabled={frameOverlay.enabled && !!resolved}
+        className="flex h-full w-full items-center justify-center"
+      >
+        {resolved && resolved.videoUrl ? (
+          <div className="relative h-full w-full">
+            <VideoMirror
+              sourceId={resolved.id}
+              poster={null}
+              className="h-full w-full"
+              style={{ backgroundColor: "transparent" }}
               objectFit="contain"
             />
-          )}
-        </div>
-      ) : resolved && resolved.poster ? (
-        <CroppedImage
-          src={resolved.poster}
-          crop={resolved.crop}
-          alt=""
-          className="h-full w-full"
-          objectFit="contain"
-          draggable={false}
-        />
-      ) : (
-        <div className="flex flex-col items-center gap-2 text-white/30">
-          <span className="font-mono text-[10px] uppercase tracking-widest">
-            Foco
-          </span>
-          <span className="text-xs">
-            Selecione uma cena ou de play para ver o preview aqui.
-          </span>
-        </div>
-      )}
+            {showSprite && resolved.sprite && (
+              <SpriteFrame
+                sprite={resolved.sprite}
+                progress={spriteProgressForScene(
+                  segmentLocalOffset,
+                  resolved.trimStart,
+                  resolved.nativeDuration,
+                  resolved.duration,
+                )}
+                className="absolute inset-0 h-full w-full"
+                objectFit="contain"
+              />
+            )}
+          </div>
+        ) : resolved && resolved.poster ? (
+          <TransformedImage
+            src={resolved.poster}
+            transform={resolved.imageTransform}
+            aspectRatio={exportAspectRatio}
+            alt=""
+            className="h-full w-full"
+            objectFit="contain"
+            draggable={false}
+          />
+        ) : (
+          <div className="flex flex-col items-center gap-2 text-white/30">
+            <span className="font-mono text-[10px] uppercase tracking-widest">
+              Foco
+            </span>
+            <span className="text-xs">
+              Selecione uma cena ou de play para ver o preview aqui.
+            </span>
+          </div>
+        )}
+      </FrameOverlay>
     </div>
   );
 }

@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { CroppedImage } from "@/components/editor/cropped-image";
+import { TransformedImage } from "@/components/editor/transformed-image";
 import { createPortal } from "react-dom";
 import { useProjectStore } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
@@ -122,6 +122,7 @@ function SortableSceneCard({
   const removeScene = useProjectStore((s) => s.removeScene);
   const setActiveVersion = useProjectStore((s) => s.setActiveVersion);
   const sceneIndex = useProjectStore((s) => s.scenes.findIndex((sc) => sc.id === sceneId));
+  const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
   const viewMode = useTimelineStore((s) => s.viewMode);
   const pixelsPerSecond = useTimelineStore((s) => s.pixelsPerSecond);
   const isScrubbing = useTimelineStore((s) => s.isScrubbing);
@@ -378,9 +379,10 @@ function SortableSceneCard({
         ) : isProcessing ? (
           <div className="flex h-full w-full items-center justify-center bg-white/[0.03]" />
         ) : (
-          <CroppedImage
+          <TransformedImage
             src={scene.photoDataUrl ?? scene.photoUrl}
-            crop={scene.crop}
+            transform={scene.imageTransform}
+            aspectRatio={exportAspectRatio}
             alt={`Cena ${sceneIndex + 1}`}
             className="pointer-events-none absolute inset-0 h-full w-full"
             draggable={false}
@@ -805,6 +807,7 @@ function TransitionNode({
   const transition = useProjectStore((s) => s.transitions.find((t) => t.id === transitionId));
   const fromScene = useProjectStore((s) => s.scenes.find((sc) => sc.id === fromSceneId));
   const removeTransition = useProjectStore((s) => s.removeTransition);
+  const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
   const viewMode = useTimelineStore((s) => s.viewMode);
   const pixelsPerSecond = useTimelineStore((s) => s.pixelsPerSecond);
   const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
@@ -872,9 +875,10 @@ function TransitionNode({
             }}
           />
         ) : fromScene ? (
-          <CroppedImage
+          <TransformedImage
             src={fromScene.photoDataUrl ?? fromScene.photoUrl}
-            crop={fromScene.crop}
+            transform={fromScene.imageTransform}
+            aspectRatio={exportAspectRatio}
             alt="transition"
             className="pointer-events-none absolute inset-0 h-full w-full opacity-40"
             draggable={false}
@@ -920,6 +924,7 @@ function EditNode({ onExport }: { onExport: () => void }) {
   const selectEditNode = useProjectStore((s) => s.selectEditNode);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const musicUrl = useProjectStore((s) => s.musicUrl);
+  const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
   const viewMode = useTimelineStore((s) => s.viewMode);
   const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
   const readyScenes = scenes.filter((s) => s.status === "ready" && s.videoUrl);
@@ -967,9 +972,10 @@ function EditNode({ onExport }: { onExport: () => void }) {
             }}
           />
         ) : previewScene ? (
-          <CroppedImage
+          <TransformedImage
             src={previewScene.photoDataUrl ?? previewScene.photoUrl}
-            crop={previewScene.crop}
+            transform={previewScene.imageTransform}
+            aspectRatio={exportAspectRatio}
             alt="edit"
             className="pointer-events-none absolute inset-0 h-full w-full"
             draggable={false}

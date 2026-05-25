@@ -14,6 +14,7 @@ type InspectorRailProps = {
   onExport?: () => void;
   onDownloadLast?: () => void;
   onEditImage?: (sceneId: string) => void;
+  onOpenProjectSettings?: () => void;
 };
 
 /**
@@ -30,6 +31,7 @@ export function InspectorRail({
   onExport,
   onDownloadLast,
   onEditImage,
+  onOpenProjectSettings,
 }: InspectorRailProps) {
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
@@ -168,6 +170,7 @@ export function InspectorRail({
                 onExport={onExport}
                 onDownloadLast={onDownloadLast}
                 onEditImage={onEditImage}
+                onOpenProjectSettings={onOpenProjectSettings}
               />
             </div>,
             document.body,

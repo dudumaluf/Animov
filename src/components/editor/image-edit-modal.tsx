@@ -40,6 +40,7 @@ import { AssetContextMenu } from "@/components/editor/asset-context-menu";
 import { TransformedImage } from "@/components/editor/transformed-image";
 import {
   DEFAULT_TRANSFORM,
+  ensureSceneHttpsPhotoUrl,
   useProjectStore,
   type ImageBackground,
   type ImageTransform,
@@ -309,12 +310,22 @@ function DroppableTarget({
 
 export function ImageEditModal({
   imageUrl,
+  sceneId,
   onClose,
   onResult,
   currentTransform = null,
   onTransformChange,
 }: {
   imageUrl: string;
+  /**
+   * Scene this modal is editing. When provided, the IA edit pipeline sends
+   * the composed (pan/zoom/background-rasterized) frame instead of the raw
+   * source — that way the LLM "sees" what the user sees on the canvas, which
+   * is required for outpainting / fill-the-borders type edits.
+   *
+   * Omit for ad-hoc / detached usage where there's no scene to look up.
+   */
+  sceneId?: string;
   onClose: () => void;
   onResult: (editedUrl: string, mode: "replace" | "new_node") => void;
   /**
@@ -331,6 +342,15 @@ export function ImageEditModal({
   onTransformChange?: (transform: ImageTransform | null) => void;
 }) {
   const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
+  // URL of the composed (transform-rasterized) frame for this scene.
+  // - Populated lazily when the user actually submits an edit (so the upload
+  //   only happens if/when it's needed).
+  // - Reset whenever the transform changes so the next submit picks up the
+  //   new framing.
+  // - Used as the "before" image in the compare slider too, so the visual
+  //   diff matches what the LLM actually saw.
+  const [composedSourceUrl, setComposedSourceUrl] = useState<string | null>(null);
+  const [composingSource, setComposingSource] = useState(false);
   const [prompt, setPrompt] = useState("");
   const [references, setReferences] = useState<ReferenceImage[]>([]);
   const [aspectRatio, setAspectRatio] = useState("auto");
@@ -410,6 +430,10 @@ export function ImageEditModal({
   const commitTransform = useCallback(
     (next: ImageTransform) => {
       setTransform(next);
+      // Any framing change invalidates the cached composed frame — the next
+      // submit needs to re-rasterize the new view (otherwise the LLM would
+      // still see the stale framing).
+      setComposedSourceUrl(null);
       if (!onTransformChange) return;
       const isDefault =
         next.scale === DEFAULT_TRANSFORM.scale &&
@@ -420,6 +444,64 @@ export function ImageEditModal({
     },
     [onTransformChange],
   );
+
+  // True when the current transform actually changes how the image fills the
+  // canvas (so we need to rasterize a composed frame before sending to the
+  // LLM). DEFAULT_TRANSFORM is "cover-centered, no background" — equivalent
+  // to just using the raw source image cropped by the canvas, so it's the
+  // one case where we can short-circuit and avoid an extra upload.
+  const hasCustomTransform = useMemo(
+    () =>
+      transform.scale !== DEFAULT_TRANSFORM.scale ||
+      transform.offsetX !== DEFAULT_TRANSFORM.offsetX ||
+      transform.offsetY !== DEFAULT_TRANSFORM.offsetY ||
+      Boolean(transform.background),
+    [transform.scale, transform.offsetX, transform.offsetY, transform.background],
+  );
+
+  /**
+   * Resolves the URL we should send to the IA pipeline:
+   *
+   * 1. If there's no scene context OR no transform customization, the raw
+   *    `imageUrl` is fine — the LLM sees the original, untouched source.
+   * 2. Otherwise, we rasterize the current scene transform (pan/zoom/bg) at
+   *    project-canvas resolution and upload the JPEG to Supabase Storage.
+   *    The resulting URL is cached on `composedSourceUrl` so repeated edits
+   *    don't re-upload (and `ensureSceneHttpsPhotoUrl` has its own URL-level
+   *    cache as a second layer of safety).
+   *
+   * Important: this is what makes outpainting / fill-borders actually work.
+   * Without it, when the user zooms out and asks "fill the black margins",
+   * the LLM only ever receives the original image with no margins to fill.
+   */
+  const resolveSourceUrlForEdit = useCallback(async (): Promise<string> => {
+    if (!sceneId || !hasCustomTransform) return imageUrl;
+    if (composedSourceUrl) return composedSourceUrl;
+    const store = useProjectStore.getState();
+    const scene = store.scenes.find((s) => s.id === sceneId);
+    if (!scene) return imageUrl;
+    const projectId = store.supabaseProjectId ?? store.projectId;
+    if (!projectId) return imageUrl;
+    setComposingSource(true);
+    try {
+      const url = await ensureSceneHttpsPhotoUrl(
+        scene,
+        store._photoFiles,
+        projectId,
+        store.exportAspectRatio,
+      );
+      if (!url) return imageUrl;
+      setComposedSourceUrl(url);
+      return url;
+    } catch (err) {
+      // Same fallback strategy used by the video executors: an off-frame
+      // generation is recoverable; a failed generation is not.
+      console.error("[ImageEditModal] composed source upload failed", err);
+      return imageUrl;
+    } finally {
+      setComposingSource(false);
+    }
+  }, [sceneId, hasCustomTransform, composedSourceUrl, imageUrl]);
 
   const resetTransform = useCallback(() => {
     commitTransform(DEFAULT_TRANSFORM);
@@ -1009,6 +1091,11 @@ export function ImageEditModal({
           r.url && r.url.startsWith("https://") ? r.url : r.dataUrl ?? r.url,
         );
 
+      // Resolve the source URL the LLM should receive. When the user has
+      // panned/zoomed/changed background, this uploads a composed JPEG sized
+      // to the project canvas; otherwise it returns the raw `imageUrl`.
+      const effectiveSourceUrl = await resolveSourceUrlForEdit();
+
       if (hasRecipe) {
         // Recipe flow: have the server compose the final prompt, with optional
         // marker context and user hint passed through.
@@ -1019,7 +1106,7 @@ export function ImageEditModal({
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
               recipeId: attachedRecipe.id,
-              targetImageUrl: imageUrl,
+              targetImageUrl: effectiveSourceUrl,
               referenceUrls: refUrls,
               markers:
                 markers && hasPositioned
@@ -1078,7 +1165,7 @@ export function ImageEditModal({
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt: finalPrompt,
-          sourceImageUrl: imageUrl,
+          sourceImageUrl: effectiveSourceUrl,
           referenceImageUrls: refUrls,
           aspectRatio,
           resolution,
@@ -1099,7 +1186,6 @@ export function ImageEditModal({
     }
   }, [
     prompt,
-    imageUrl,
     references,
     aspectRatio,
     resolution,
@@ -1108,6 +1194,7 @@ export function ImageEditModal({
     analyzerKey,
     runAnalyze,
     attachedRecipe,
+    resolveSourceUrlForEdit,
   ]);
 
   const displayUrl = resultUrl ?? imageUrl;
@@ -1145,7 +1232,14 @@ export function ImageEditModal({
             </div>
           )}
           {resultUrl ? (
-            <CompareSlider originalUrl={imageUrl} editedUrl={resultUrl} />
+            // Show the composed framing as the "before" so the user sees
+            // exactly what the LLM was given (including any letterbox they
+            // asked it to fill). Falls back to the raw source when no
+            // composition was needed.
+            <CompareSlider
+              originalUrl={composedSourceUrl ?? imageUrl}
+              editedUrl={resultUrl}
+            />
           ) : (
             <DroppableTarget
               containerRef={targetContainerRef}
@@ -1287,8 +1381,13 @@ export function ImageEditModal({
                 </div>
               </div>
               {generating && (
-                <div className="pointer-events-none absolute inset-0 flex items-center justify-center rounded-xl bg-black/50">
+                <div className="pointer-events-none absolute inset-0 flex flex-col items-center justify-center gap-2 rounded-xl bg-black/50">
                   <Loader2 size={24} className="animate-spin text-accent-gold" />
+                  {composingSource && (
+                    <span className="font-mono text-[9px] uppercase tracking-widest text-white/60">
+                      Preparando enquadramento...
+                    </span>
+                  )}
                 </div>
               )}
             </DroppableTarget>

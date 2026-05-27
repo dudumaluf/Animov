@@ -1036,6 +1036,7 @@ export default function EditorPage({
         return (
           <ImageEditModal
             imageUrl={imgUrl}
+            sceneId={editingSceneId}
             currentTransform={editScene.imageTransform ?? null}
             onTransformChange={(transform) =>
               useProjectStore.getState().setSceneTransform(editingSceneId, transform)

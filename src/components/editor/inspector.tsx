@@ -795,6 +795,7 @@ export function Inspector({
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
   const setScenePreset = useProjectStore((s) => s.setScenePreset);
+  const setSceneGuidancePrompt = useProjectStore((s) => s.setSceneGuidancePrompt);
   const setSceneGenerationTarget = useProjectStore(
     (s) => s.setSceneGenerationTarget,
   );
@@ -983,6 +984,21 @@ export function Inspector({
                   <PresetSelector
                     selectedId={scene.presetId}
                     onSelect={(id) => setScenePreset(selectedSceneId, id)}
+                  />
+                </div>
+
+                {/* Optional free-text to steer the preset. Appended to the
+                    auto-built prompt at generation time; empty = preset only. */}
+                <div className="mt-3">
+                  <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                    Guia (opcional)
+                  </label>
+                  <textarea
+                    value={scene.guidancePrompt ?? ""}
+                    onChange={(e) => setSceneGuidancePrompt(selectedSceneId, e.target.value)}
+                    placeholder="Ex: foco na lareira, luz mais quente, leve movimento de cortina"
+                    rows={2}
+                    className="w-full resize-none rounded-lg border border-white/5 bg-black/20 px-2.5 py-2 font-mono text-[11px] leading-snug text-[var(--text)] placeholder:text-text-secondary/40 transition-colors focus:border-accent-gold/30 focus:outline-none"
                   />
                 </div>
 

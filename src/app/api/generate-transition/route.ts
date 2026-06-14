@@ -26,6 +26,8 @@ export async function POST(req: NextRequest) {
   const { startImageUrl, endImageUrl } = body;
   const duration = Number(body.duration ?? 5) || 5;
   const modelId = (body.modelId as string) || DEFAULT_MODEL_ID;
+  const guidancePrompt =
+    typeof body.guidancePrompt === "string" ? body.guidancePrompt.trim() : "";
 
   if (!startImageUrl || !endImageUrl) {
     return NextResponse.json(
@@ -61,10 +63,16 @@ export async function POST(req: NextRequest) {
       fetchAndUploadToFal(endImageUrl),
     ]);
 
-    const prompt =
+    const basePrompt =
       "Smooth cinematic camera transition between two interior spaces. " +
       "Continuous fluid movement, photorealistic, locked architecture, " +
       "preserve all visible surfaces exactly. No new elements, no scene morphing, natural camera flow.";
+    // User guidance gets the last word so it can steer the motion (e.g. "whip
+    // pan to the right", "slow push through the doorway") without losing the
+    // safety rails of the base prompt.
+    const prompt = guidancePrompt
+      ? `${basePrompt} Director's note: ${guidancePrompt}`
+      : basePrompt;
 
     const result = await adapter.generateTransition({
       startFrameUrl: falStartUrl,

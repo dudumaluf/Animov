@@ -147,6 +147,12 @@ export type Scene = {
    * the photo is replaced via IA-edit.
    */
   imageTransform?: ImageTransform;
+  /**
+   * Optional free-text the user attaches to steer the motion preset. Appended
+   * to the preset-built prompt on the NEXT generation; the curated template
+   * still provides the structure. Empty/undefined = preset only.
+   */
+  guidancePrompt?: string;
 };
 
 export type Transition = {
@@ -172,6 +178,11 @@ export type Transition = {
    */
   sprite?: SceneSprite;
   stagingStatus?: SceneStagingStatus;
+  /**
+   * Optional free-text appended to the base transition prompt to steer the
+   * generated motion. Empty/undefined = default cinematic transition prompt.
+   */
+  guidancePrompt?: string;
 };
 
 export type ProjectStore = {
@@ -229,11 +240,17 @@ export type ProjectStore = {
     trim: { trimStart?: number | null; trimEnd?: number | null },
   ) => void;
   setSceneTransform: (sceneId: string, transform: ImageTransform | null) => void;
+  setSceneGuidancePrompt: (sceneId: string, prompt: string) => void;
   setActiveVersion: (sceneId: string, version: number) => void;
   updateSceneImage: (sceneId: string, newImageUrl: string) => void;
 
   toggleTransition: (transitionId: string) => void;
-  generateTransition: (fromSceneId: string, toSceneId: string, duration?: number) => Promise<void>;
+  generateTransition: (
+    fromSceneId: string,
+    toSceneId: string,
+    duration?: number,
+    guidancePrompt?: string,
+  ) => Promise<void>;
   removeTransition: (transitionId: string) => void;
   setHasEditNode: (has: boolean) => void;
   selectEditNode: () => void;
@@ -607,7 +624,7 @@ export async function kickoffStagingForTransition(
   }
 }
 
-async function uploadPhoto(file: File, projectId: string): Promise<string> {
+export async function uploadPhoto(file: File, projectId: string): Promise<string> {
   // Use signed-URL pattern to bypass Vercel's 4.5MB function body limit.
   // Client PUTs the file directly to Supabase Storage.
   const res = await fetch("/api/upload", {
@@ -1541,6 +1558,25 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
+      setSceneGuidancePrompt: (sceneId, prompt) => {
+        // Store the raw text (so trailing spaces while typing don't fight the
+        // input); whitespace-only collapses to undefined. The API + prompt
+        // builder trim before use, so stored slack is harmless.
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            const next: Scene = { ...s };
+            if (prompt.trim()) {
+              next.guidancePrompt = prompt;
+            } else {
+              delete next.guidancePrompt;
+            }
+            return next;
+          }),
+          isDirty: true,
+        }));
+      },
+
       setActiveVersion: (sceneId, version) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
@@ -1598,7 +1634,7 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
-      generateTransition: async (fromSceneId, toSceneId, duration = 5) => {
+      generateTransition: async (fromSceneId, toSceneId, duration = 5, guidancePrompt) => {
         const state = get();
         const fromScene = state.scenes.find((s) => s.id === fromSceneId);
         const toScene = state.scenes.find((s) => s.id === toSceneId);
@@ -1606,6 +1642,40 @@ export const useProjectStore = create<ProjectStore>()(
 
         const transitionId = `t-${fromSceneId}-${toSceneId}`;
         const pid = state.supabaseProjectId ?? state.projectId;
+        const trimmedPrompt = guidancePrompt?.trim() || undefined;
+
+        // Persist the prompt onto the transition row so a later regeneration
+        // (or reload) keeps the user's steering. The transition may not exist
+        // in the store yet (first time) — upsert it as idle so the field has
+        // somewhere to live until the executor flips it to generating.
+        set((st) => {
+          const existing = st.transitions.find((t) => t.id === transitionId);
+          if (existing) {
+            return {
+              transitions: st.transitions.map((t) =>
+                t.id === transitionId ? { ...t, guidancePrompt: trimmedPrompt } : t,
+              ),
+            };
+          }
+          // Defensive fallback: a transition for this pair normally already
+          // exists (rebuildTransitions seeds an idle one per adjacent pair),
+          // so this branch is rare. Match its defaults for consistency.
+          return {
+            transitions: [
+              ...st.transitions,
+              {
+                id: transitionId,
+                fromSceneId,
+                toSceneId,
+                presetId: "soft_dissolve_drift",
+                enabled: true,
+                status: "idle" as const,
+                costCredits: 5,
+                guidancePrompt: trimmedPrompt,
+              },
+            ],
+          };
+        });
 
         const batchId = useBatchesStore.getState().createPreview(
           [
@@ -1621,6 +1691,7 @@ export const useProjectStore = create<ProjectStore>()(
                 projectId: pid,
                 duration,
                 modelId: state.modelId,
+                guidancePrompt: trimmedPrompt,
               },
             },
           ],
@@ -1884,7 +1955,7 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null; crop?: unknown; image_transform?: unknown }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null; crop?: unknown; image_transform?: unknown; guidance_prompt?: string | null }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
@@ -1920,6 +1991,10 @@ export const useProjectStore = create<ProjectStore>()(
               trimEnd,
               generationTargetSeconds,
               imageTransform,
+              guidancePrompt:
+                typeof s.guidance_prompt === "string" && s.guidance_prompt.trim()
+                  ? s.guidance_prompt
+                  : undefined,
             };
           });
 
@@ -1933,6 +2008,7 @@ export const useProjectStore = create<ProjectStore>()(
               duration_seconds?: number | string | null;
               sprite_json?: SceneSprite | null;
               staging_status?: SceneStagingStatus | null;
+              guidance_prompt?: string | null;
             }) => {
               const duration =
                 typeof t.duration_seconds === "number"
@@ -1956,6 +2032,10 @@ export const useProjectStore = create<ProjectStore>()(
                 duration,
                 sprite,
                 stagingStatus: t.staging_status ?? undefined,
+                guidancePrompt:
+                  typeof t.guidance_prompt === "string" && t.guidance_prompt.trim()
+                    ? t.guidance_prompt
+                    : undefined,
               };
             },
           );
@@ -2166,6 +2246,7 @@ export const useProjectStore = create<ProjectStore>()(
                   ? s.generationTargetSeconds
                   : null,
               image_transform: s.imageTransform ?? null,
+              guidance_prompt: s.guidancePrompt ?? null,
             });
           }
 
@@ -2194,6 +2275,7 @@ export const useProjectStore = create<ProjectStore>()(
             duration_seconds: typeof t.duration === "number" ? t.duration : null,
             sprite_json: t.sprite ?? null,
             staging_status: t.stagingStatus ?? null,
+            guidance_prompt: t.guidancePrompt ?? null,
           }));
 
           const sceneStaging: Record<string, SceneSprite> = {};
@@ -2335,6 +2417,7 @@ export const useProjectStore = create<ProjectStore>()(
               presetId: scene.presetId,
               duration: targetDuration,
               modelId: state.modelId,
+              guidancePrompt: scene.guidancePrompt,
             },
           };
         });
@@ -2368,6 +2451,7 @@ export const useProjectStore = create<ProjectStore>()(
                 presetId: scene.presetId,
                 duration: targetDuration,
                 modelId: state.modelId,
+                guidancePrompt: scene.guidancePrompt,
               },
             },
           ],

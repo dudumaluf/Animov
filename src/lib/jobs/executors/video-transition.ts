@@ -7,14 +7,23 @@ import {
   persistVideoToStorage,
   kickoffStagingForTransition,
   resolveSceneHttpsUrl,
+  uploadPhoto,
+  type Scene,
 } from "@/stores/project-store";
+import { extractFrameFile, sourceTimeForEdge } from "@/lib/video/extract-frame";
 
 /**
  * video.transition executor
  * -------------------------
- * Generates an AI transition between two scenes via first/last frame. Same
- * pattern as video-scene: side-effects on project-store, background persist +
- * stage. The AbortSignal cancels in-flight fetches cleanly.
+ * Generates an AI transition between two scenes. The transition connects the
+ * actual clip content: the LAST (trimmed) frame of the outgoing scene's video
+ * and the FIRST (trimmed) frame of the incoming scene's video. This respects
+ * any timeline trim — what you see leaving/entering a clip is what the model
+ * gets. When a scene has no generated video yet, we fall back to its source
+ * still photo (transformed for the export frame).
+ *
+ * Same lifecycle pattern as video-scene: side-effects on project-store,
+ * background persist + stage. The AbortSignal cancels in-flight fetches.
  */
 
 export type VideoTransitionPayload = {
@@ -24,7 +33,54 @@ export type VideoTransitionPayload = {
   projectId: string;
   duration: number;
   modelId: string;
+  /** Optional user steering appended to the base transition prompt. */
+  guidancePrompt?: string;
 };
+
+/**
+ * Resolves the image URL that represents `edge` of `scene` for the transition:
+ *   - "last"  → last visible frame of the (trimmed) clip
+ *   - "first" → first visible frame of the (trimmed) clip
+ *
+ * Extracts + uploads a real video frame when the scene has a generated video;
+ * otherwise falls back to the scene's source still (so transitions still work
+ * before a clip is generated, matching the old behavior).
+ */
+async function resolveTransitionFrame(
+  scene: Scene,
+  edge: "first" | "last",
+  photoFiles: Record<string, File>,
+  projectId: string,
+  aspectRatio: Parameters<typeof resolveSceneHttpsUrl>[3],
+): Promise<string | null> {
+  const isReadyVideo = scene.status === "ready" && !!scene.videoUrl;
+  if (isReadyVideo && scene.videoUrl) {
+    try {
+      const activeVer = scene.videoVersions?.[scene.activeVersion];
+      const nativeDuration = activeVer?.duration;
+      const sourceTime = sourceTimeForEdge(
+        edge,
+        scene.trimStart,
+        scene.trimEnd,
+        nativeDuration,
+      );
+      const file = await extractFrameFile(
+        scene.videoUrl,
+        sourceTime,
+        `${scene.id}-${edge}.png`,
+      );
+      return await uploadPhoto(file, projectId);
+    } catch (err) {
+      // Fall through to the still photo — a transition from the source image
+      // is recoverable; failing the whole job is not.
+      console.error(
+        `[video-transition] ${edge} frame extract failed, using source photo`,
+        err,
+      );
+    }
+  }
+  return resolveSceneHttpsUrl(scene, photoFiles, projectId, aspectRatio);
+}
 
 const execute: ExecutorFn = async ({ payload, signal }) => {
   const p = payload as VideoTransitionPayload;
@@ -38,14 +94,16 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
   }
 
   const [startUrl, endUrl] = await Promise.all([
-    resolveSceneHttpsUrl(
+    resolveTransitionFrame(
       fromScene,
+      "last",
       state._photoFiles,
       p.projectId,
       state.exportAspectRatio,
     ),
-    resolveSceneHttpsUrl(
+    resolveTransitionFrame(
       toScene,
+      "first",
       state._photoFiles,
       p.projectId,
       state.exportAspectRatio,
@@ -72,6 +130,7 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
         endImageUrl: endUrl,
         duration: p.duration,
         modelId: p.modelId,
+        guidancePrompt: p.guidancePrompt,
       }),
       signal,
     });

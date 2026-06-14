@@ -45,6 +45,7 @@ type ScenePayload = {
   trim_end?: number | null;
   generation_target_seconds?: number | null;
   image_transform?: unknown;
+  guidance_prompt?: string | null;
 };
 
 type TransitionPayload = {
@@ -56,6 +57,7 @@ type TransitionPayload = {
   duration_seconds?: number | null;
   sprite_json?: unknown;
   staging_status?: string | null;
+  guidance_prompt?: string | null;
 };
 
 /** Decide whether the change set warrants a fresh auto snapshot. */
@@ -245,6 +247,10 @@ export async function PATCH(
           ? s.generation_target_seconds
           : null,
       image_transform: s.image_transform ?? null,
+      guidance_prompt:
+        typeof s.guidance_prompt === "string" && s.guidance_prompt.trim()
+          ? s.guidance_prompt
+          : null,
     }));
 
     const { error } = await supabase.from("scenes").upsert(scenesToUpsert, {
@@ -272,6 +278,10 @@ export async function PATCH(
         typeof t.duration_seconds === "number" ? t.duration_seconds : null,
       sprite_json: t.sprite_json ?? null,
       staging_status: t.staging_status ?? null,
+      guidance_prompt:
+        typeof t.guidance_prompt === "string" && t.guidance_prompt.trim()
+          ? t.guidance_prompt
+          : null,
     }));
 
     const { error } = await supabase.from("transitions").upsert(transToUpsert, {

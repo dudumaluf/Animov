@@ -35,6 +35,8 @@ export type VideoScenePayload = {
   /** Target duration the model should render. Falls back to scene.duration. */
   duration: number;
   modelId: string;
+  /** Optional user steering appended to the preset-built prompt. */
+  guidancePrompt?: string;
 };
 
 const execute: ExecutorFn = async ({ payload, signal }) => {
@@ -71,6 +73,7 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
         presetId: p.presetId,
         duration: p.duration,
         modelId: p.modelId,
+        guidancePrompt: p.guidancePrompt,
       }),
       signal,
     });

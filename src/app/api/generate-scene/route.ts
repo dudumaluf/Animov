@@ -13,6 +13,7 @@ type JsonBody = {
   presetId?: string;
   duration?: number;
   modelId?: string;
+  guidancePrompt?: string;
 };
 
 export async function POST(req: NextRequest) {
@@ -34,6 +35,7 @@ export async function POST(req: NextRequest) {
   let presetId = "push_in_serene";
   let duration = 5;
   let modelId = DEFAULT_MODEL_ID;
+  let guidancePrompt: string | undefined;
 
   try {
     if (isJson) {
@@ -48,6 +50,7 @@ export async function POST(req: NextRequest) {
       presetId = body.presetId ?? presetId;
       duration = Number(body.duration ?? duration);
       modelId = body.modelId ?? modelId;
+      guidancePrompt = body.guidancePrompt?.trim() || undefined;
     } else {
       const formData = await req.formData();
       const photo = formData.get("photo") as File | null;
@@ -61,6 +64,7 @@ export async function POST(req: NextRequest) {
       presetId = (formData.get("presetId") as string) ?? presetId;
       duration = Number(formData.get("duration") ?? duration);
       modelId = (formData.get("modelId") as string) || modelId;
+      guidancePrompt = (formData.get("guidancePrompt") as string)?.trim() || undefined;
     }
   } catch (err) {
     console.error("[generate-scene] parse body", err);
@@ -97,6 +101,7 @@ export async function POST(req: NextRequest) {
       photoUrl: falPhotoUrl,
       presetId,
       adapter,
+      guidancePrompt,
     });
 
     const result = await adapter.generateScene({

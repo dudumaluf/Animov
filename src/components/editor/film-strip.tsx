@@ -28,7 +28,13 @@ import { SpriteFrame } from "@/components/editor/sprite-frame";
 import { spritePreloader } from "@/lib/timeline/sprite-preloader";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { DurationPill } from "@/components/editor/duration-pill";
-import { spriteProgressForScene } from "@/lib/timeline/segments";
+import {
+  spriteProgressForScene,
+  buildSegments,
+  timeToSegment,
+} from "@/lib/timeline/segments";
+import { extractFrameFile, sourceTimeForEdge } from "@/lib/video/extract-frame";
+import type { Scene } from "@/stores/project-store";
 
 // Kept small on purpose: a larger min-width would clamp short/trimmed clips to
 // a visual width wider than their actual timeline slot (duration * pps), which
@@ -247,35 +253,11 @@ function SortableSceneCard({
 
   const closeContext = () => setContextMenu(null);
 
-  const handleExtractFrame = async (position: "first" | "last") => {
+  const handleExtractFrame = async (edge: FrameEdge) => {
     closeContext();
-    if (!scene.videoUrl) return;
-
-    const insertAt = position === "last" ? sceneIndex + 1 : sceneIndex;
-    const placeholderId = useProjectStore.getState().insertPlaceholder(insertAt);
-
-    try {
-      const video = document.createElement("video");
-      video.crossOrigin = "anonymous";
-      video.muted = true;
-      video.preload = "auto";
-      video.src = scene.videoUrl;
-      await new Promise<void>((resolve, reject) => {
-        video.onloadeddata = () => resolve();
-        video.onerror = () => reject();
-      });
-      video.currentTime = position === "last" ? video.duration - 0.1 : 0.1;
-      await new Promise<void>((resolve) => { video.onseeked = () => resolve(); });
-      const canvas = document.createElement("canvas");
-      canvas.width = video.videoWidth;
-      canvas.height = video.videoHeight;
-      canvas.getContext("2d")!.drawImage(video, 0, 0);
-      const blob = await new Promise<Blob>((resolve) => canvas.toBlob((b) => resolve(b!), "image/png"));
-      const file = new File([blob], `frame-${position}.png`, { type: "image/png" });
-      await useProjectStore.getState().updatePlaceholderImage(placeholderId, file);
-    } catch {
-      useProjectStore.getState().removeScene(placeholderId);
-    }
+    // Insert "first" before the scene, "last"/"current" after it.
+    const insertAt = edge === "first" ? sceneIndex : sceneIndex + 1;
+    await extractSceneFrame(scene, edge, insertAt);
   };
 
   const baseStyle: React.CSSProperties = {
@@ -494,6 +476,11 @@ function SortableSceneCard({
                 <button onClick={() => handleExtractFrame("last")} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
                   <Frame size={12} className="text-accent-gold" /> Último frame
                 </button>
+                {sourceTimeForSceneEdge(scene, "current") !== null && (
+                  <button onClick={() => handleExtractFrame("current")} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+                    <Frame size={12} className="text-accent-gold" /> Frame atual
+                  </button>
+                )}
                 <button onClick={async () => { closeContext(); await downloadVideoBlob(scene.videoUrl!, `cena-${sceneIndex + 1}.mp4`); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
                   <ArrowDownToLine size={12} className="text-text-secondary" /> Download
                 </button>
@@ -531,29 +518,51 @@ function SortableSceneCard({
   );
 }
 
-async function extractLastFrame(videoUrl: string, insertIndex: number): Promise<void> {
+type FrameEdge = "first" | "last" | "current";
+
+/**
+ * Returns the SOURCE time (seconds into the original file) for the requested
+ * edge of a scene's clip, honoring trim:
+ *   - "first"   → trimStart (or 0)
+ *   - "last"    → trimEnd (or native end) minus epsilon
+ *   - "current" → the playhead position mapped back into the source, only
+ *                 valid when the playhead currently sits inside this scene's
+ *                 timeline segment (returns null otherwise).
+ */
+function sourceTimeForSceneEdge(scene: Scene, edge: FrameEdge): number | null {
+  const nativeDuration = scene.videoVersions?.[scene.activeVersion]?.duration;
+  if (edge !== "current") {
+    return sourceTimeForEdge(edge, scene.trimStart, scene.trimEnd, nativeDuration);
+  }
+  // Map the global playhead into this scene's source time.
+  const { scenes, transitions } = useProjectStore.getState();
+  const segments = buildSegments(scenes, transitions);
+  const { segment, localOffset } = timeToSegment(
+    segments,
+    useTimelineStore.getState().currentTime,
+  );
+  if (!segment || segment.kind !== "scene" || segment.sceneId !== scene.id) {
+    return null;
+  }
+  return (scene.trimStart ?? 0) + Math.max(0, localOffset);
+}
+
+/**
+ * Extracts a frame (first/last/current) from a scene's video, honoring trim,
+ * and inserts it as a new placeholder scene at `insertIndex`.
+ */
+async function extractSceneFrame(
+  scene: Scene,
+  edge: FrameEdge,
+  insertIndex: number,
+): Promise<void> {
+  if (!scene.videoUrl) return;
+  const sourceTime = sourceTimeForSceneEdge(scene, edge);
+  if (sourceTime === null) return;
+
   const placeholderId = useProjectStore.getState().insertPlaceholder(insertIndex);
   try {
-    const video = document.createElement("video");
-    video.crossOrigin = "anonymous";
-    video.muted = true;
-    video.preload = "auto";
-    video.src = videoUrl;
-    await new Promise<void>((resolve, reject) => {
-      video.onloadeddata = () => resolve();
-      video.onerror = () => reject(new Error("Failed to load video"));
-    });
-    video.currentTime = video.duration - 0.1;
-    await new Promise<void>((resolve) => { video.onseeked = () => resolve(); });
-    const canvas = document.createElement("canvas");
-    canvas.width = video.videoWidth;
-    canvas.height = video.videoHeight;
-    const ctx = canvas.getContext("2d")!;
-    ctx.drawImage(video, 0, 0);
-    const blob = await new Promise<Blob>((resolve) =>
-      canvas.toBlob((b) => resolve(b!), "image/png"),
-    );
-    const file = new File([blob], "frame.png", { type: "image/png" });
+    const file = await extractFrameFile(scene.videoUrl, sourceTime, "frame.png");
     await useProjectStore.getState().updatePlaceholderImage(placeholderId, file);
   } catch (err) {
     console.error("[extractFrame]", err);
@@ -581,6 +590,8 @@ function InsertMenu({
 }) {
   const [open, setOpen] = useState(false);
   const [showDurationPicker, setShowDurationPicker] = useState(false);
+  const [showFramePicker, setShowFramePicker] = useState(false);
+  const [transitionPrompt, setTransitionPrompt] = useState("");
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
   const insertVideoAt = useProjectStore((s) => s.insertVideoAt);
@@ -607,8 +618,13 @@ function InsertMenu({
       setShowDurationPicker(true);
       return;
     }
+    if (action === "extract-frame") {
+      setShowFramePicker(true);
+      return;
+    }
     setOpen(false);
     setShowDurationPicker(false);
+    setShowFramePicker(false);
     if (action === "photo") {
       inputRef.current?.click();
     }
@@ -621,19 +637,24 @@ function InsertMenu({
     if (action === "edit") {
       setHasEditNode(true);
     }
-    if (action === "extract-frame" && fromSceneId) {
-      const scene = useProjectStore.getState().scenes.find((s) => s.id === fromSceneId);
-      if (scene?.videoUrl) {
-        extractLastFrame(scene.videoUrl, insertIndex);
-      }
-    }
   };
 
   const handleGenerateTransition = (duration: number) => {
     setOpen(false);
     setShowDurationPicker(false);
     if (fromSceneId && toSceneId) {
-      generateTransition(fromSceneId, toSceneId, duration);
+      generateTransition(fromSceneId, toSceneId, duration, transitionPrompt);
+      setTransitionPrompt("");
+    }
+  };
+
+  const handleExtractFrame = (edge: FrameEdge) => {
+    setOpen(false);
+    setShowFramePicker(false);
+    if (!fromSceneId) return;
+    const scene = useProjectStore.getState().scenes.find((s) => s.id === fromSceneId);
+    if (scene?.videoUrl) {
+      extractSceneFrame(scene, edge, insertIndex);
     }
   };
 
@@ -667,13 +688,15 @@ function InsertMenu({
 
   const fromScene = fromSceneId ? useProjectStore.getState().scenes.find((s) => s.id === fromSceneId) : null;
   const fromHasVideo = fromScene?.status === "ready" && !!fromScene?.videoUrl;
+  const currentFrameAvailable =
+    !!fromScene && fromHasVideo && sourceTimeForSceneEdge(fromScene, "current") !== null;
 
   const betweenOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
     { action: "photo", icon: ImagePlus, label: "Inserir foto", desc: "Nova cena nesta posição", ready: true },
     { action: "video", icon: Film, label: "Inserir vídeo", desc: "Upload de vídeo externo", ready: true },
     { action: "crossfade", icon: Blend, label: "Crossfade", desc: "Dissolve suave entre cenas", ready: false },
     ...(!hasTransition ? [{ action: "ai-transition" as const, icon: Sparkles, label: "Transição AI", desc: "Gera video conectando as cenas", ready: true }] : []),
-    ...(fromHasVideo ? [{ action: "extract-frame" as const, icon: Frame, label: "Extrair frame", desc: "Último frame do vídeo anterior", ready: true }] : []),
+    ...(fromHasVideo ? [{ action: "extract-frame" as const, icon: Frame, label: "Extrair frame", desc: "Primeiro, último ou atual do clip", ready: true }] : []),
   ];
 
   const endOptions: { action: InsertMenuAction; icon: typeof ImagePlus; label: string; desc: string; ready: boolean }[] = [
@@ -741,7 +764,7 @@ function InsertMenu({
 
       {open && menuPos && createPortal(
         <>
-          <div className="fixed inset-0 z-50" onClick={() => { setOpen(false); setShowDurationPicker(false); }} />
+          <div className="fixed inset-0 z-50" onClick={() => { setOpen(false); setShowDurationPicker(false); setShowFramePicker(false); }} />
           <div
             className="fixed z-50 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl"
             style={{ left: menuPos.x, top: menuPos.y }}
@@ -750,7 +773,19 @@ function InsertMenu({
               <div>
                 <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
                   <button onClick={() => setShowDurationPicker(false)} className="font-mono text-[10px] text-text-secondary hover:text-[var(--text)]">←</button>
-                  <span className="font-mono text-[10px] text-accent-gold">Duração da transição</span>
+                  <span className="font-mono text-[10px] text-accent-gold">Transição AI</span>
+                </div>
+                <div className="px-3 pt-2.5">
+                  <textarea
+                    value={transitionPrompt}
+                    onChange={(e) => setTransitionPrompt(e.target.value)}
+                    placeholder="Guia opcional (ex: giro lento pela porta)"
+                    rows={2}
+                    className="w-full resize-none rounded-md border border-white/10 bg-black/30 px-2 py-1.5 font-mono text-[10px] leading-snug text-[var(--text)] placeholder:text-text-secondary/50 focus:border-accent-gold/40 focus:outline-none"
+                  />
+                </div>
+                <div className="px-3 pb-1 pt-2">
+                  <span className="font-mono text-[9px] uppercase tracking-widest text-text-secondary">Duração</span>
                 </div>
                 {transitionDurations.map((d) => (
                   <button
@@ -760,6 +795,30 @@ function InsertMenu({
                   >
                     <span>{d}s · {d} cr.</span>
                     <span className="text-[9px] text-text-secondary">~${(d * 0.112).toFixed(2)}</span>
+                  </button>
+                ))}
+              </div>
+            ) : showFramePicker ? (
+              <div>
+                <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
+                  <button onClick={() => setShowFramePicker(false)} className="font-mono text-[10px] text-text-secondary hover:text-[var(--text)]">←</button>
+                  <span className="font-mono text-[10px] text-accent-gold">Extrair frame do clip anterior</span>
+                </div>
+                {([
+                  { edge: "last" as const, label: "Último frame", desc: "Fim do clip (já com trim)", ready: true },
+                  { edge: "first" as const, label: "Primeiro frame", desc: "Início do clip (já com trim)", ready: true },
+                  { edge: "current" as const, label: "Frame atual", desc: currentFrameAvailable ? "Posição do playhead" : "Playhead fora deste clip", ready: currentFrameAvailable },
+                ]).map((f) => (
+                  <button
+                    key={f.edge}
+                    onClick={() => f.ready && handleExtractFrame(f.edge)}
+                    className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${f.ready ? "hover:bg-white/5" : "opacity-30 cursor-not-allowed"}`}
+                  >
+                    <Frame size={14} className={f.ready ? "text-accent-gold" : "text-text-secondary"} />
+                    <div>
+                      <span className="block font-mono text-[11px] font-medium text-[var(--text)]">{f.label}</span>
+                      <span className="block font-mono text-[9px] text-text-secondary">{f.desc}</span>
+                    </div>
                   </button>
                 ))}
               </div>

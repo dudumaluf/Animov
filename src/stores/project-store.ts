@@ -220,6 +220,14 @@ export type ProjectStore = {
 
   _photoFiles: Record<string, File>;
 
+  /**
+   * In-memory clip clipboard for copy/paste. Holds a snapshot of the scene at
+   * copy time plus its pending photo File (if it hadn't uploaded yet) so paste
+   * can re-upload. Deliberately NOT persisted — copy/paste is session-scoped.
+   */
+  _clipboardScene: Scene | null;
+  _clipboardFile: File | null;
+
   setProjectName: (name: string) => void;
   setModelId: (modelId: string) => void;
   selectScene: (id: string | null) => void;
@@ -231,6 +239,19 @@ export type ProjectStore = {
   insertPlaceholder: (index: number) => string;
   updatePlaceholderImage: (sceneId: string, file: File) => Promise<void>;
   removeScene: (id: string) => void;
+  /**
+   * Clone a scene (new id) and insert it immediately after the source. Keeps
+   * the generated video/transform/preset/trim so it's a true duplicate; resets
+   * `costCredits` to 0 (no new generation spend). Selects + returns the new id.
+   */
+  duplicateScene: (id: string) => string | null;
+  /** Snapshot a scene into the session clipboard for later paste. */
+  copyScene: (id: string) => void;
+  /**
+   * Insert a clone of the clipboard scene after `afterSceneId` (falls back to
+   * the current selection, then the end). No-op when the clipboard is empty.
+   */
+  pasteScene: (afterSceneId?: string | null) => string | null;
   reorderScenes: (fromIndex: number, toIndex: number) => void;
   setScenePreset: (sceneId: string, presetId: string) => void;
   setSceneDuration: (sceneId: string, duration: number) => void;
@@ -336,6 +357,29 @@ function promoteReadyTransition(t: Transition): Scene {
     videoUrl: t.videoUrl!,
     videoVersions: [{ url: t.videoUrl!, duration: 5 }],
     activeVersion: 0,
+    costCredits: 0,
+  };
+}
+
+/**
+ * Produces a fresh-id copy of a scene suitable for insertion (duplicate/paste).
+ * Arrays/objects are shallow-copied so later edits to the original (or the copy)
+ * don't bleed across via shared references. Remote URLs (photo/video/sprite) are
+ * intentionally reused — they're read-only storage objects and deleting one
+ * scene only removes its DB row, never the shared asset. `costCredits` resets to
+ * 0 because a copy doesn't spend generation credits.
+ */
+function cloneSceneForInsert(scene: Scene): Scene {
+  // A clone has no in-flight job, so transient statuses ("generating" while a
+  // model runs, "processing" while a video upload finishes) would otherwise
+  // leave the copy stuck on a spinner forever. Settle it to a stable state.
+  const transient = scene.status === "generating" || scene.status === "processing";
+  return {
+    ...scene,
+    id: crypto.randomUUID(),
+    status: transient ? (scene.videoUrl ? "ready" : "idle") : scene.status,
+    videoVersions: scene.videoVersions.map((v) => ({ ...v })),
+    imageTransform: scene.imageTransform ? { ...scene.imageTransform } : undefined,
     costCredits: 0,
   };
 }
@@ -1038,6 +1082,8 @@ export const useProjectStore = create<ProjectStore>()(
       lastKnownUpdatedAt: null,
       conflict: null,
       _photoFiles: {},
+      _clipboardScene: null,
+      _clipboardFile: null,
 
       setProjectName: (name) => {
         // Marks dirty so the debounced save in the editor page picks the
@@ -1415,6 +1461,68 @@ export const useProjectStore = create<ProjectStore>()(
             })
             .catch((err) => console.error("[removeScene]", err));
         }
+      },
+
+      duplicateScene: (id) => {
+        let newId: string | null = null;
+        set((state) => {
+          const idx = state.scenes.findIndex((s) => s.id === id);
+          if (idx === -1) return state;
+          const clone = cloneSceneForInsert(state.scenes[idx]!);
+          newId = clone.id;
+          const scenes = [...state.scenes];
+          scenes.splice(idx + 1, 0, clone);
+          // Carry over a still-pending upload so the duplicate isn't stuck on a
+          // blob: URL if the source photo hasn't reached storage yet.
+          const files = { ...state._photoFiles };
+          if (files[id]) files[clone.id] = files[id]!;
+          return {
+            scenes,
+            transitions: rebuildTransitions(scenes, state.transitions),
+            selectedSceneId: clone.id,
+            editNodeSelected: false,
+            isDirty: true,
+            _photoFiles: files,
+          };
+        });
+        return newId;
+      },
+
+      copyScene: (id) => {
+        const scene = get().scenes.find((s) => s.id === id);
+        if (!scene) return;
+        set({
+          _clipboardScene: scene,
+          _clipboardFile: get()._photoFiles[id] ?? null,
+        });
+      },
+
+      pasteScene: (afterSceneId) => {
+        const clip = get()._clipboardScene;
+        if (!clip) return null;
+        let newId: string | null = null;
+        set((state) => {
+          const clone = cloneSceneForInsert(clip);
+          newId = clone.id;
+          const scenes = [...state.scenes];
+          const anchorId = afterSceneId ?? state.selectedSceneId;
+          const anchorIdx = anchorId
+            ? scenes.findIndex((s) => s.id === anchorId)
+            : -1;
+          const insertAt = anchorIdx === -1 ? scenes.length : anchorIdx + 1;
+          scenes.splice(insertAt, 0, clone);
+          const files = { ...state._photoFiles };
+          if (state._clipboardFile) files[clone.id] = state._clipboardFile;
+          return {
+            scenes,
+            transitions: rebuildTransitions(scenes, state.transitions),
+            selectedSceneId: clone.id,
+            editNodeSelected: false,
+            isDirty: true,
+            _photoFiles: files,
+          };
+        });
+        return newId;
       },
 
       reorderScenes: (fromIndex, toIndex) => {

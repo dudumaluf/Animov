@@ -6,7 +6,7 @@ import { createPortal } from "react-dom";
 import { useProjectStore } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { videoRegistry } from "@/lib/timeline/video-registry";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame, Pencil, ImageIcon, Film } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame, Pencil, ImageIcon, Film, CopyPlus, Copy, ClipboardPaste } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -46,6 +46,9 @@ const MIN_TIMELINE_CARD_WIDTH = 8;
 const TIMELINE_CARD_HEIGHT = 120;
 const TIMELINE_RIBBON_HEIGHT = 80;
 const MIN_RIBBON_CARD_WIDTH = 4;
+// Width the timeline parts to on hover so the insert (+) gets breathing room,
+// mirroring the persistent spacing canvas mode has between nodes (~6+32+6px).
+const SEAM_GAP_PX = 44;
 
 function canHoverPlay(): boolean {
   const ts = useTimelineStore.getState();
@@ -100,12 +103,113 @@ function TrimHandle({
       onDoubleClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
       title={hint}
-      className={`absolute top-0 bottom-0 z-30 w-[8px] cursor-ew-resize select-none opacity-0 transition-opacity group-hover:opacity-100 ${
+      className={`absolute top-0 bottom-0 z-30 w-[14px] cursor-ew-resize select-none opacity-0 transition-opacity group-hover:opacity-100 ${
         side === "left" ? "left-0" : "right-0"
       }`}
       style={{ touchAction: "none" }}
     >
-      <div className="absolute inset-y-1 left-1/2 w-[2px] -translate-x-1/2 rounded-sm bg-accent-gold/70 shadow-[0_0_6px_rgba(255,200,80,0.45)]" />
+      {/* Hit area is 14px (forgiving) but the gold bar stays pinned ~4px from
+          the visible clip edge so it still reads as the boundary. */}
+      <div
+        className={`absolute inset-y-1 w-[2px] rounded-sm bg-accent-gold/70 shadow-[0_0_6px_rgba(255,200,80,0.45)] ${
+          side === "left" ? "left-[4px]" : "right-[4px]"
+        }`}
+      />
+    </div>
+  );
+}
+
+/**
+ * Hover-to-insert affordance between two timeline clips. Collapsed it's a
+ * zero-width seam (so clip widths / playhead math stay untouched); on hover it
+ * eases open a small gap and fades the insert (+) in, giving it canvas-like
+ * breathing room. A persistent absolute hover-catcher (independent of the
+ * animating layout width) avoids open/close flicker, and the catcher is a small
+ * tab at the TOP of the seam so the full-height trim handles below stay easy to
+ * grab. The gap is suppressed during playback/scrub because the playhead is
+ * positioned from live clip DOM offsets when auto-follow is off.
+ */
+function TimelineSeam({
+  insertIndex,
+  fromSceneId,
+  toSceneId,
+}: {
+  insertIndex: number;
+  fromSceneId?: string;
+  toSceneId?: string;
+}) {
+  const [hovering, setHovering] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const closeTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isPlaying = useTimelineStore((s) => s.isPlaying);
+  const isScrubbing = useTimelineStore((s) => s.isScrubbing);
+  const interactive = !isPlaying && !isScrubbing;
+  const open = interactive && (hovering || menuOpen);
+
+  useEffect(
+    () => () => {
+      if (closeTimer.current) clearTimeout(closeTimer.current);
+    },
+    [],
+  );
+
+  const cancelClose = () => {
+    if (closeTimer.current) {
+      clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+  };
+  const handleEnter = () => {
+    cancelClose();
+    setHovering(true);
+  };
+  const handleLeave = () => {
+    cancelClose();
+    // Small grace period so a quick hop toward the (+) doesn't flicker it shut.
+    closeTimer.current = setTimeout(() => setHovering(false), 120);
+  };
+  const handleMenuOpenChange = useCallback((o: boolean) => setMenuOpen(o), []);
+
+  return (
+    <div
+      className="relative shrink-0 self-stretch"
+      style={{
+        width: open ? SEAM_GAP_PX : 0,
+        transition: "width 200ms cubic-bezier(0.22, 1, 0.36, 1)",
+        zIndex: open ? 45 : 40,
+      }}
+    >
+      <div
+        onMouseEnter={handleEnter}
+        onMouseLeave={handleLeave}
+        className="absolute left-1/2 -translate-x-1/2"
+        style={{
+          top: 0,
+          width: open ? SEAM_GAP_PX : 28,
+          height: open ? "100%" : 30,
+        }}
+      />
+      <div
+        className="absolute left-1/2 top-1/2 flex items-center justify-center"
+        style={{
+          opacity: open ? 1 : 0,
+          transform: open
+            ? "translate(-50%, -50%) scale(1)"
+            : "translate(-50%, -50%) scale(0.7)",
+          transition:
+            "opacity 140ms ease-out, transform 200ms cubic-bezier(0.22, 1, 0.36, 1)",
+          pointerEvents: open ? "auto" : "none",
+        }}
+      >
+        <InsertMenu
+          position="between"
+          insertIndex={insertIndex}
+          hasScenesOnBothSides={true}
+          fromSceneId={fromSceneId}
+          toSceneId={toSceneId}
+          onOpenChange={handleMenuOpenChange}
+        />
+      </div>
     </div>
   );
 }
@@ -126,6 +230,7 @@ function SortableSceneCard({
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const selectScene = useProjectStore((s) => s.selectScene);
   const removeScene = useProjectStore((s) => s.removeScene);
+  const hasClipboard = useProjectStore((s) => s._clipboardScene !== null);
   const setActiveVersion = useProjectStore((s) => s.setActiveVersion);
   const sceneIndex = useProjectStore((s) => s.scenes.findIndex((sc) => sc.id === sceneId));
   const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
@@ -501,6 +606,21 @@ function SortableSceneCard({
               </button>
             )}
             <div className="my-1 h-px bg-white/5" />
+            <button onClick={() => { closeContext(); useProjectStore.getState().duplicateScene(sceneId); }} className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+              <span className="flex items-center gap-2"><CopyPlus size={12} className="text-text-secondary" /> Duplicar</span>
+              <span className="text-[9px] text-text-secondary">⌘D</span>
+            </button>
+            <button onClick={() => { closeContext(); useProjectStore.getState().copyScene(sceneId); }} className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+              <span className="flex items-center gap-2"><Copy size={12} className="text-text-secondary" /> Copiar</span>
+              <span className="text-[9px] text-text-secondary">⌘C</span>
+            </button>
+            {hasClipboard && (
+              <button onClick={() => { closeContext(); useProjectStore.getState().pasteScene(sceneId); }} className="flex w-full items-center justify-between gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+                <span className="flex items-center gap-2"><ClipboardPaste size={12} className="text-text-secondary" /> Colar</span>
+                <span className="text-[9px] text-text-secondary">⌘V</span>
+              </button>
+            )}
+            <div className="my-1 h-px bg-white/5" />
             <button onClick={() => {
               closeContext();
               const transitions = useProjectStore.getState().transitions;
@@ -580,6 +700,7 @@ function InsertMenu({
   fromSceneId,
   toSceneId,
   variant = "plus",
+  onOpenChange,
 }: {
   position: InsertMenuPosition;
   insertIndex: number;
@@ -587,8 +708,14 @@ function InsertMenu({
   fromSceneId?: string;
   toSceneId?: string;
   variant?: "plus" | "equals";
+  onOpenChange?: (open: boolean) => void;
 }) {
   const [open, setOpen] = useState(false);
+  // Surface dropdown open/close so a parent (the timeline seam) can keep its
+  // hover gap from collapsing while the menu is up.
+  useEffect(() => {
+    onOpenChange?.(open);
+  }, [open, onOpenChange]);
   const [showDurationPicker, setShowDurationPicker] = useState(false);
   const [showFramePicker, setShowFramePicker] = useState(false);
   const [transitionPrompt, setTransitionPrompt] = useState("");
@@ -1129,24 +1256,12 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
                         toSceneId={scenes[i + 1]?.id}
                       />
                     )}
-                    {/* Timeline: zero-width seam so the clip layout/scale is
-                        untouched; a hover zone at the top of the seam reveals
-                        the same insert menu as canvas mode. Kept at the top so
-                        it doesn't fight the full-height trim handles. */}
                     {isTimeline && (
-                      <div className="relative z-40 w-0 self-stretch">
-                        <div className="group/seam absolute left-1/2 top-0 flex h-9 w-9 -translate-x-1/2 items-center justify-center">
-                          <div className="opacity-0 transition-opacity duration-150 group-hover/seam:opacity-100 focus-within:opacity-100">
-                            <InsertMenu
-                              position="between"
-                              insertIndex={i + 1}
-                              hasScenesOnBothSides={true}
-                              fromSceneId={scene.id}
-                              toSceneId={scenes[i + 1]?.id}
-                            />
-                          </div>
-                        </div>
-                      </div>
+                      <TimelineSeam
+                        insertIndex={i + 1}
+                        fromSceneId={scene.id}
+                        toSceneId={scenes[i + 1]?.id}
+                      />
                     )}
                     <TransitionNode
                       fromSceneId={scene.id}

@@ -642,6 +642,32 @@ export default function EditorPage({
       }
       if (isTyping) return;
 
+      // Clip manipulation: duplicate (⌘D), copy (⌘C), paste (⌘V). These act on
+      // the selected scene and are deliberately placed AFTER the isTyping guard
+      // so normal text copy/paste inside inputs is never hijacked.
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && (e.key === "d" || e.key === "D")) {
+        e.preventDefault();
+        const sid = useProjectStore.getState().selectedSceneId;
+        if (sid) useProjectStore.getState().duplicateScene(sid);
+        return;
+      }
+      if (mod && (e.key === "c" || e.key === "C")) {
+        // Preserve a genuine text-selection copy if the user has one.
+        if (window.getSelection()?.toString()) return;
+        const sid = useProjectStore.getState().selectedSceneId;
+        if (!sid) return;
+        e.preventDefault();
+        useProjectStore.getState().copyScene(sid);
+        return;
+      }
+      if (mod && (e.key === "v" || e.key === "V")) {
+        if (!useProjectStore.getState()._clipboardScene) return;
+        e.preventDefault();
+        useProjectStore.getState().pasteScene();
+        return;
+      }
+
       if (e.key === "=" || e.key === "+") {
         e.preventDefault();
         setZoom((z) => Math.min(ZOOM_MAX, z + ZOOM_STEP));

@@ -1129,6 +1129,25 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
                         toSceneId={scenes[i + 1]?.id}
                       />
                     )}
+                    {/* Timeline: zero-width seam so the clip layout/scale is
+                        untouched; a hover zone at the top of the seam reveals
+                        the same insert menu as canvas mode. Kept at the top so
+                        it doesn't fight the full-height trim handles. */}
+                    {isTimeline && (
+                      <div className="relative z-40 w-0 self-stretch">
+                        <div className="group/seam absolute left-1/2 top-0 flex h-9 w-9 -translate-x-1/2 items-center justify-center">
+                          <div className="opacity-0 transition-opacity duration-150 group-hover/seam:opacity-100 focus-within:opacity-100">
+                            <InsertMenu
+                              position="between"
+                              insertIndex={i + 1}
+                              hasScenesOnBothSides={true}
+                              fromSceneId={scene.id}
+                              toSceneId={scenes[i + 1]?.id}
+                            />
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <TransitionNode
                       fromSceneId={scene.id}
                       toSceneId={scenes[i + 1]!.id}

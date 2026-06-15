@@ -108,11 +108,12 @@ function TrimHandle({
       }`}
       style={{ touchAction: "none" }}
     >
-      {/* Hit area is 14px (forgiving) but the gold bar stays pinned ~4px from
-          the visible clip edge so it still reads as the boundary. */}
+      {/* Hit area is 14px (forgiving). The gold bar sits ~8px from the edge so
+          it reads as the boundary while staying clear of the full-height seam
+          hover strip (12px) centered on the junction. */}
       <div
         className={`absolute inset-y-1 w-[2px] rounded-sm bg-accent-gold/70 shadow-[0_0_6px_rgba(255,200,80,0.45)] ${
-          side === "left" ? "left-[4px]" : "right-[4px]"
+          side === "left" ? "left-[8px]" : "right-[8px]"
         }`}
       />
     </div>
@@ -182,11 +183,13 @@ function TimelineSeam({
       <div
         onMouseEnter={handleEnter}
         onMouseLeave={handleLeave}
-        className="absolute left-1/2 -translate-x-1/2"
+        className="absolute left-1/2 top-0 h-full -translate-x-1/2"
         style={{
-          top: 0,
-          width: open ? SEAM_GAP_PX : 28,
-          height: open ? "100%" : 30,
+          // Full-height hover strip centered on the seam. Kept thin when
+          // collapsed (12px) so it sits on the junction line and clears the
+          // trim handles' grab zone on each side; widens to fill the whole gap
+          // once open so moving toward the (+) keeps it from collapsing.
+          width: open ? SEAM_GAP_PX : 12,
         }}
       />
       <div
@@ -1283,7 +1286,7 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
             </div>
           ))}
           {!hasEditNode && (
-            <div className={edgeGap}>
+            <div className={`${edgeGap} self-center`}>
               <InsertMenu
                 position="end"
                 insertIndex={scenes.length}
@@ -1293,7 +1296,7 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
           )}
           {hasEditNode && onExport && (
             <>
-              <div className={edgeGap}>
+              <div className={`${edgeGap} self-center`}>
                 <InsertMenu
                   position="end"
                   insertIndex={scenes.length}

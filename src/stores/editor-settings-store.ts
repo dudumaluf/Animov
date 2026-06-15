@@ -20,6 +20,19 @@ export type PreviewPlacement = "inspector" | "headline" | "theater";
 export type InspectorDensity = "full" | "railed" | "hidden";
 export type LayoutPreset = "edicao" | "revisao" | "foco" | "livre";
 
+/**
+ * Free position + size of the "Revisao" floating preview (headline). `x`/`y`
+ * are the top-left corner in pixels within the canvas area; `null` means "use
+ * the centered playhead-axis anchor" (the default that also tracks layout
+ * changes). Once the user drags it, x/y pin to a free spot. `height` drives the
+ * card size — width follows the project aspect ratio. Persisted globally.
+ */
+export type HeadlinePreviewLayout = {
+  x: number | null;
+  y: number | null;
+  height: number;
+};
+
 export type LayoutSettings = {
   preset: LayoutPreset;
   previewPlacement: PreviewPlacement;
@@ -33,11 +46,22 @@ export type LayoutSettings = {
    * Persisted so the choice survives reloads.
    */
   theaterStripHeight: number;
+  /** Free position/size of the Revisao floating preview. */
+  headlinePreview: HeadlinePreviewLayout;
 };
 
 export const THEATER_STRIP_MIN = 72;
 export const THEATER_STRIP_MAX = 360;
 export const THEATER_STRIP_DEFAULT = 112;
+
+export const HEADLINE_MIN_HEIGHT = 110;
+export const HEADLINE_MAX_HEIGHT = 600;
+export const HEADLINE_DEFAULT_HEIGHT = 180;
+export const HEADLINE_PREVIEW_DEFAULT: HeadlinePreviewLayout = {
+  x: null,
+  y: null,
+  height: HEADLINE_DEFAULT_HEIGHT,
+};
 
 export type EditorSettings = {
   playheadLine: {
@@ -78,7 +102,10 @@ export type EditorSettings = {
  */
 export const LAYOUT_PRESETS: Record<
   Exclude<LayoutPreset, "livre">,
-  Omit<LayoutSettings, "preset" | "showLayoutBar" | "theaterStripHeight">
+  Omit<
+    LayoutSettings,
+    "preset" | "showLayoutBar" | "theaterStripHeight" | "headlinePreview"
+  >
 > = {
   edicao: {
     previewPlacement: "inspector",
@@ -118,6 +145,7 @@ export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
     ...LAYOUT_PRESETS.edicao,
     showLayoutBar: true,
     theaterStripHeight: THEATER_STRIP_DEFAULT,
+    headlinePreview: { ...HEADLINE_PREVIEW_DEFAULT },
   },
   frameOverlay: {
     enabled: true,
@@ -145,6 +173,8 @@ type EditorSettingsStore = EditorSettings & {
   setTimelineRibbon: (v: boolean) => void;
   setShowLayoutBar: (v: boolean) => void;
   setTheaterStripHeight: (px: number) => void;
+  setHeadlinePreviewRect: (rect: Partial<HeadlinePreviewLayout>) => void;
+  resetHeadlinePreview: () => void;
 
   setFrameOverlayEnabled: (v: boolean) => void;
   setFrameOverlayMode: (m: FrameOverlayMode) => void;
@@ -244,6 +274,20 @@ export const useEditorSettingsStore = create<EditorSettingsStore>()(
             ),
           },
         })),
+      setHeadlinePreviewRect: (rect) =>
+        set((s) => ({
+          layout: {
+            ...s.layout,
+            headlinePreview: { ...s.layout.headlinePreview, ...rect },
+          },
+        })),
+      resetHeadlinePreview: () =>
+        set((s) => ({
+          layout: {
+            ...s.layout,
+            headlinePreview: { ...HEADLINE_PREVIEW_DEFAULT },
+          },
+        })),
 
       setFrameOverlayEnabled: (v) =>
         set((s) => ({ frameOverlay: { ...s.frameOverlay, enabled: v } })),
@@ -259,7 +303,7 @@ export const useEditorSettingsStore = create<EditorSettingsStore>()(
     }),
     {
       name: "animov-editor-settings-v1",
-      version: 4,
+      version: 5,
       migrate: (persisted: unknown, version) => {
         if (!persisted || typeof persisted !== "object") {
           return DEFAULT_EDITOR_SETTINGS;
@@ -296,6 +340,22 @@ export const useEditorSettingsStore = create<EditorSettingsStore>()(
             ...(prev as EditorSettings),
             frameOverlay:
               prev.frameOverlay ?? DEFAULT_EDITOR_SETTINGS.frameOverlay,
+          };
+        }
+        // v4 didn't have `layout.headlinePreview`; backfill the centered
+        // default so the Revisao preview keeps its prior behavior until the
+        // user drags/resizes it.
+        if (version < 5) {
+          const prev = persisted as EditorSettings;
+          return {
+            ...prev,
+            layout: {
+              ...prev.layout,
+              headlinePreview:
+                prev.layout?.headlinePreview ?? {
+                  ...HEADLINE_PREVIEW_DEFAULT,
+                },
+            },
           };
         }
         return persisted as EditorSettings;

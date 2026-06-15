@@ -1010,7 +1010,10 @@ export default function EditorPage({
                   <Maximize size={14} />
                 </button>
               </div>
-              {!isTheater && <ViewModeToggle />}
+              {/* Kept visible in Foco too: entering theater defaults to
+                  timeline, but the user can still flip to canvas nodes (the
+                  big theater preview stays on top, the strip becomes canvas). */}
+              <ViewModeToggle />
             </div>
 
             {/* Aspect ratio chip — bottom-right of the canvas viewport, where

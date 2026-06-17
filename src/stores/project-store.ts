@@ -6,7 +6,7 @@ import {
   parsePortableProjectJson,
   portableToScene,
 } from "@/lib/project-portable";
-import { DEFAULT_MODEL_ID } from "@/lib/adapters";
+import { DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
 import { extractVideoThumbnail } from "@/lib/utils/video-thumbnail";
 import {
   type AudioMixSettings,
@@ -1790,7 +1790,7 @@ export const useProjectStore = create<ProjectStore>()(
             {
               targetId: transitionId,
               label: `Transição · ${duration}s`,
-              estimatedCost: duration,
+              estimatedCost: creditCostFor(state.modelId, duration),
               type: "video.transition" as const,
               payload: {
                 transitionId,
@@ -2517,7 +2517,7 @@ export const useProjectStore = create<ProjectStore>()(
           return {
             targetId: scene.id,
             label: `Cena ${idx + 1} · ${scene.presetId.replace(/_/g, " ")} · ${targetDuration}s`,
-            estimatedCost: targetDuration,
+            estimatedCost: creditCostFor(state.modelId, targetDuration),
             type: "video.scene" as const,
             payload: {
               sceneId: scene.id,
@@ -2551,7 +2551,7 @@ export const useProjectStore = create<ProjectStore>()(
             {
               targetId: sceneId,
               label: `Cena ${sceneIdx + 1} · ${scene.presetId.replace(/_/g, " ")} · ${targetDuration}s`,
-              estimatedCost: targetDuration,
+              estimatedCost: creditCostFor(state.modelId, targetDuration),
               type: "video.scene" as const,
               payload: {
                 sceneId,

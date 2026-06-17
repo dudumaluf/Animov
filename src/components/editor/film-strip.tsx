@@ -34,6 +34,7 @@ import {
   timeToSegment,
 } from "@/lib/timeline/segments";
 import { extractFrameFile, sourceTimeForEdge } from "@/lib/video/extract-frame";
+import { creditCostFor, curatedDurationsFor, usdEstimateFor } from "@/lib/adapters";
 import type { Scene } from "@/stores/project-store";
 
 // Kept small on purpose: a larger min-width would clamp short/trimmed clips to
@@ -56,11 +57,6 @@ function canHoverPlay(): boolean {
   if (!hoverEnabled) return false;
   return !(ts.isPlaying || ts.isScrubbing);
 }
-
-const CURATED_DURATIONS: Record<string, number[]> = {
-  "kling-v3-pro": [3, 5, 7, 10, 12, 15],
-  "kling-o1-pro": [5, 10],
-};
 
 const ACCEPTED = ".jpg,.jpeg,.png,.webp";
 
@@ -737,7 +733,7 @@ function InsertMenu({
   const menuRef = useRef<HTMLDivElement>(null);
   const btnRef = useRef<HTMLButtonElement>(null);
 
-  const transitionDurations = CURATED_DURATIONS[modelId] ?? [5, 10];
+  const transitionDurations = curatedDurationsFor(modelId);
 
   const hasTransition = fromSceneId && toSceneId
     ? transitions.some((t) => t.id === `t-${fromSceneId}-${toSceneId}` && t.status !== "idle")
@@ -917,16 +913,19 @@ function InsertMenu({
                 <div className="px-3 pb-1 pt-2">
                   <span className="font-mono text-[9px] uppercase tracking-widest text-text-secondary">Duração</span>
                 </div>
-                {transitionDurations.map((d) => (
+                {transitionDurations.map((d) => {
+                  const cr = creditCostFor(modelId, d);
+                  return (
                   <button
                     key={d}
                     onClick={() => handleGenerateTransition(d)}
                     className="flex w-full items-center justify-between px-3 py-2.5 font-mono text-[11px] text-[var(--text)] transition-colors hover:bg-white/5"
                   >
-                    <span>{d}s · {d} cr.</span>
-                    <span className="text-[9px] text-text-secondary">~${(d * 0.112).toFixed(2)}</span>
+                    <span>{d}s · {cr} cr.</span>
+                    <span className="text-[9px] text-text-secondary">~${usdEstimateFor(modelId, d).toFixed(2)}</span>
                   </button>
-                ))}
+                  );
+                })}
               </div>
             ) : showFramePicker ? (
               <div>

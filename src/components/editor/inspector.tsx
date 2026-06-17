@@ -25,7 +25,7 @@ import {
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
-import { listAdapters } from "@/lib/adapters";
+import { listAdapters, curatedDurationsFor } from "@/lib/adapters";
 import { type AudioMixSettings } from "@/lib/composition/compose";
 import { InspectorPreviewVideo } from "@/components/editor/video-mirror";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
@@ -44,7 +44,11 @@ const CURATED_DURATIONS: Record<string, number[]> = {
 };
 
 function getDurations(modelId: string): number[] {
-  return CURATED_DURATIONS[modelId] ?? [5, 10];
+  try {
+    return curatedDurationsFor(modelId);
+  } catch {
+    return CURATED_DURATIONS[modelId] ?? [5, 10];
+  }
 }
 
 function DragValue({
@@ -114,6 +118,7 @@ function DragValue({
 }
 
 function getModelShortName(displayName: string): string {
+  if (displayName.includes("Seedance")) return "Seedance 2";
   if (displayName.includes("V3")) return "V3 Pro";
   if (displayName.includes("O1")) return "O1 Pro";
   return displayName.split(" ").slice(0, 2).join(" ");
@@ -244,7 +249,7 @@ function ModelChip({ modelId, onChange }: { modelId: string; onChange: (id: stri
       {open && (
         <>
           <div className="fixed inset-0 z-50" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-full z-50 mt-1 w-40 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
+          <div className="absolute right-0 top-full z-50 mt-1 w-48 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
             {adapters.map((a) => (
               <button
                 key={a.id}
@@ -253,8 +258,10 @@ function ModelChip({ modelId, onChange }: { modelId: string; onChange: (id: stri
                   a.id === modelId ? "text-accent-gold" : "text-text-secondary hover:bg-white/5 hover:text-[var(--text)]"
                 }`}
               >
-                {getModelShortName(a.displayName)}
-                {a.id === modelId && <span className="text-accent-gold">✓</span>}
+                <span>{getModelShortName(a.displayName)}</span>
+                <span className="text-[9px] text-text-secondary/70">
+                  {a.creditsPerSecond} cr/s
+                </span>
               </button>
             ))}
           </div>

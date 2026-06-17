@@ -29,10 +29,12 @@ export const klingV3Adapter: VideoModelAdapter = {
   id: "kling-v3-pro",
   displayName: "Kling V3 Pro",
   costPerSecond: 0.112,
+  creditsPerSecond: 1,
   supportsStartEndFrame: true,
   supportsNegativePrompt: true,
   maxDuration: 15,
   minDuration: 3,
+  curatedDurations: [3, 5, 7, 10, 12, 15],
 
   async generateScene(input: SceneInput): Promise<ClipResult> {
     const d = clampV3Duration(input.duration);

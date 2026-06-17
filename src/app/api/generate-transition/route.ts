@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAdapter, DEFAULT_MODEL_ID } from "@/lib/adapters";
+import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest) {
   }
 
   const adapter = getAdapter(modelId);
-  const creditCost = duration;
+  const creditCost = creditCostFor(modelId, duration);
 
   const admin = createAdminClient();
 

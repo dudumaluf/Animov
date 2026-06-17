@@ -33,10 +33,12 @@ export const klingO1Adapter: VideoModelAdapter = {
   id: "kling-o1-pro",
   displayName: "Kling O1 Pro (First-Last Frame)",
   costPerSecond: 0.112,
+  creditsPerSecond: 1,
   supportsStartEndFrame: true,
   supportsNegativePrompt: false,
   maxDuration: 10,
   minDuration: 5,
+  curatedDurations: [5, 10],
 
   async generateScene(input: SceneInput): Promise<ClipResult> {
     const d = normalizeKlingO1DurationSeconds(input.duration);

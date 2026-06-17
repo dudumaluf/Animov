@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAdapter, DEFAULT_MODEL_ID } from "@/lib/adapters";
+import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 import { ensureFalUrl } from "@/lib/fal-helpers";
 
@@ -72,7 +72,7 @@ export async function POST(req: NextRequest) {
   }
 
   const adapter = getAdapter(modelId);
-  const creditCost = duration;
+  const creditCost = creditCostFor(modelId, duration);
 
   const admin = createAdminClient();
 

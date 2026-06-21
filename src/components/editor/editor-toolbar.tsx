@@ -3,6 +3,7 @@
 import { useRef, useState, useEffect, useCallback } from "react";
 import { useRouter } from "next/navigation";
 import { useProjectStore } from "@/stores/project-store";
+import { beginPhotoImport } from "@/components/editor/import-choice-modal";
 import { useHasActiveJobs } from "@/stores/jobs-store";
 import { createClient } from "@/lib/supabase/client";
 import { PresenceBadge } from "@/components/editor/presence-badge";
@@ -364,7 +365,7 @@ export function EditorToolbar({
         };
         reader.readAsText(file);
       } else {
-        useProjectStore.getState().addPhotos([file]);
+        beginPhotoImport([file]);
       }
 
       e.target.value = "";
@@ -481,7 +482,7 @@ export function EditorToolbar({
             input.multiple = true;
             input.onchange = () => {
               if (input.files && input.files.length > 0) {
-                useProjectStore.getState().addPhotos(Array.from(input.files));
+                beginPhotoImport(Array.from(input.files));
               }
             };
             input.click();

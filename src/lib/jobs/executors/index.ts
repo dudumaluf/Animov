@@ -10,6 +10,7 @@
 
 import "./video-scene";
 import "./video-transition";
+import "./video-reference";
 import "./music";
 import "./image-edit";
 

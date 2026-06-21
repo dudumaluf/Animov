@@ -3,10 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { TransformedImage } from "@/components/editor/transformed-image";
 import { createPortal } from "react-dom";
-import { useProjectStore } from "@/stores/project-store";
+import { useProjectStore, activeVersionSprite } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { videoRegistry } from "@/lib/timeline/video-registry";
-import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame, Pencil, ImageIcon, Film, CopyPlus, Copy, ClipboardPaste } from "lucide-react";
+import { X, GripVertical, Plus, ImagePlus, Blend, Sparkles, Clapperboard, ArrowDownToLine, Loader2, Type, Frame, Pencil, ImageIcon, Film, CopyPlus, Copy, ClipboardPaste, Layers } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -36,6 +36,8 @@ import {
 import { extractFrameFile, sourceTimeForEdge } from "@/lib/video/extract-frame";
 import { creditCostFor, curatedDurationsFor, usdEstimateFor } from "@/lib/adapters";
 import type { Scene } from "@/stores/project-store";
+import { beginPhotoImport } from "@/components/editor/import-choice-modal";
+import { useReferenceAssetsStore } from "@/components/editor/reference-assets-modal";
 
 // Kept small on purpose: a larger min-width would clamp short/trimmed clips to
 // a visual width wider than their actual timeline slot (duration * pps), which
@@ -47,9 +49,20 @@ const MIN_TIMELINE_CARD_WIDTH = 8;
 const TIMELINE_CARD_HEIGHT = 120;
 const TIMELINE_RIBBON_HEIGHT = 80;
 const MIN_RIBBON_CARD_WIDTH = 4;
-// Width the timeline parts to on hover so the insert (+) gets breathing room,
-// mirroring the persistent spacing canvas mode has between nodes (~6+32+6px).
+// Total breathing room opened between two clips on hover. The seam itself stays
+// ZERO width (never reflows the timeline / playhead); instead the two
+// neighbouring cards each slide out by half this, so the gap grows symmetrically
+// around the junction — both neighbours move, not just the one on the right.
 const SEAM_GAP_PX = 44;
+const SEAM_HALF_GAP = SEAM_GAP_PX / 2;
+// Hover trigger strip, centered on the junction. Idle it's a thin tab (clear of
+// the trim bars, which sit ~10px inside each edge); open it widens symmetrically
+// to blanket the gap so a cursor moving toward the (+) is never dropped. Because
+// it's centered on a fixed point and only grows, the region under the cursor
+// never shifts — and the (+) lives INSIDE it, so reaching the (+) can't trigger
+// a mouseleave. Together these kill the open/close flicker.
+const SEAM_ZONE_CLOSED = 16;
+const SEAM_ZONE_OPEN = SEAM_GAP_PX + 28;
 
 function canHoverPlay(): boolean {
   const ts = useTimelineStore.getState();
@@ -65,6 +78,58 @@ function NodeProcessingOverlay({ label }: { label?: string }) {
     <div className="absolute inset-0 z-10 flex flex-col items-center justify-center gap-1 bg-black/50">
       <Loader2 size={16} className="animate-spin text-accent-gold" />
       {label && <span className="font-mono text-[9px] text-accent-gold">{label}</span>}
+    </div>
+  );
+}
+
+/**
+ * Thumbnail for a reference-group node: a small mosaic of the first few
+ * reference images so the card reads as a "stack" rather than a single photo.
+ */
+function ReferenceGroupThumb({
+  images,
+}: {
+  images: { id: string; url: string }[];
+}) {
+  const shown = images.slice(0, 4);
+  const extra = images.length - shown.length;
+
+  if (shown.length === 0) {
+    return <div className="h-full w-full bg-white/[0.03]" />;
+  }
+  if (shown.length === 1) {
+    return (
+      // eslint-disable-next-line @next/next/no-img-element
+      <img
+        src={shown[0]!.url}
+        alt=""
+        className="h-full w-full object-cover"
+        draggable={false}
+      />
+    );
+  }
+  return (
+    <div
+      className={`grid h-full w-full gap-px ${
+        shown.length === 2 ? "grid-cols-2" : "grid-cols-2 grid-rows-2"
+      }`}
+    >
+      {shown.map((im, i) => (
+        <div key={im.id} className="relative overflow-hidden bg-black/40">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img
+            src={im.url}
+            alt=""
+            className="h-full w-full object-cover"
+            draggable={false}
+          />
+          {i === 3 && extra > 0 && (
+            <div className="absolute inset-0 flex items-center justify-center bg-black/65 font-mono text-xs text-white">
+              +{extra}
+            </div>
+          )}
+        </div>
+      ))}
     </div>
   );
 }
@@ -99,17 +164,18 @@ function TrimHandle({
       onDoubleClick={(e) => e.stopPropagation()}
       onContextMenu={(e) => e.stopPropagation()}
       title={hint}
-      className={`absolute top-0 bottom-0 z-30 w-[14px] cursor-ew-resize select-none opacity-0 transition-opacity group-hover:opacity-100 ${
+      className={`absolute top-0 bottom-0 z-30 w-[22px] cursor-ew-resize select-none opacity-0 transition-opacity group-hover:opacity-100 ${
         side === "left" ? "left-0" : "right-0"
       }`}
       style={{ touchAction: "none" }}
     >
-      {/* Hit area is 14px (forgiving). The gold bar sits ~8px from the edge so
-          it reads as the boundary while staying clear of the full-height seam
-          hover strip (12px) centered on the junction. */}
+      {/* Hit area is 22px and extends INWARD from the edge, so the grab zone
+          mostly lives inside the card — you can catch it without aiming right
+          at the junction between two clips. The gold bar sits ~10px in so it
+          stays clear of the seam hover strip centered on the junction. */}
       <div
         className={`absolute inset-y-1 w-[2px] rounded-sm bg-accent-gold/70 shadow-[0_0_6px_rgba(255,200,80,0.45)] ${
-          side === "left" ? "left-[8px]" : "right-[8px]"
+          side === "left" ? "left-[10px]" : "right-[10px]"
         }`}
       />
     </div>
@@ -117,23 +183,27 @@ function TrimHandle({
 }
 
 /**
- * Hover-to-insert affordance between two timeline clips. Collapsed it's a
- * zero-width seam (so clip widths / playhead math stay untouched); on hover it
- * eases open a small gap and fades the insert (+) in, giving it canvas-like
- * breathing room. A persistent absolute hover-catcher (independent of the
- * animating layout width) avoids open/close flicker, and the catcher is a small
- * tab at the TOP of the seam so the full-height trim handles below stay easy to
- * grab. The gap is suppressed during playback/scrub because the playhead is
- * positioned from live clip DOM offsets when auto-follow is off.
+ * Hover-to-insert affordance between two timeline clips. The seam stays a
+ * ZERO-width flex item, so it never reflows the timeline (playhead math, built
+ * from live clip DOM offsets, stays exact). When hovered it tells `FilmStrip`
+ * to slide the two neighbouring cards symmetrically apart and fades the insert
+ * (+) into the opened gap.
+ *
+ * Flicker-proofing: the hover strip is centered on the (fixed) junction and
+ * only grows symmetrically — the area under the cursor never shifts — and the
+ * (+) button lives INSIDE the same hover element, so moving onto it can't fire
+ * a mouseleave. Disabled during playback/scrub.
  */
 function TimelineSeam({
   insertIndex,
   fromSceneId,
   toSceneId,
+  onActiveChange,
 }: {
   insertIndex: number;
   fromSceneId?: string;
   toSceneId?: string;
+  onActiveChange: (index: number, active: boolean) => void;
 }) {
   const [hovering, setHovering] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -150,6 +220,11 @@ function TimelineSeam({
     [],
   );
 
+  // Drive the symmetric neighbour-slide in FilmStrip.
+  useEffect(() => {
+    onActiveChange(insertIndex, open);
+  }, [open, insertIndex, onActiveChange]);
+
   const cancelClose = () => {
     if (closeTimer.current) {
       clearTimeout(closeTimer.current);
@@ -163,51 +238,47 @@ function TimelineSeam({
   const handleLeave = () => {
     cancelClose();
     // Small grace period so a quick hop toward the (+) doesn't flicker it shut.
-    closeTimer.current = setTimeout(() => setHovering(false), 120);
+    closeTimer.current = setTimeout(() => setHovering(false), 140);
   };
   const handleMenuOpenChange = useCallback((o: boolean) => setMenuOpen(o), []);
 
+  const zoneWidth = open ? SEAM_ZONE_OPEN : SEAM_ZONE_CLOSED;
+
   return (
-    <div
-      className="relative shrink-0 self-stretch"
-      style={{
-        width: open ? SEAM_GAP_PX : 0,
-        transition: "width 200ms cubic-bezier(0.22, 1, 0.36, 1)",
-        zIndex: open ? 45 : 40,
-      }}
-    >
+    <div className="relative shrink-0 self-stretch" style={{ width: 0, zIndex: open ? 45 : 40 }}>
+      {/* Hover/insert lives in the TOP band only. The two clips' trim handles
+          meet exactly at the junction (each owns ~22px inward), so a full-height
+          seam would always sit on top of one of them — leaving the lower portion
+          seam-free lets either side's edge be grabbed for trimming. */}
       <div
         onMouseEnter={handleEnter}
         onMouseLeave={handleLeave}
-        className="absolute left-1/2 top-0 h-full -translate-x-1/2"
+        className="absolute top-0 flex items-end justify-center pb-1"
         style={{
-          // Full-height hover strip centered on the seam. Kept thin when
-          // collapsed (12px) so it sits on the junction line and clears the
-          // trim handles' grab zone on each side; widens to fill the whole gap
-          // once open so moving toward the (+) keeps it from collapsing.
-          width: open ? SEAM_GAP_PX : 12,
-        }}
-      />
-      <div
-        className="absolute left-1/2 top-1/2 flex items-center justify-center"
-        style={{
-          opacity: open ? 1 : 0,
-          transform: open
-            ? "translate(-50%, -50%) scale(1)"
-            : "translate(-50%, -50%) scale(0.7)",
-          transition:
-            "opacity 140ms ease-out, transform 200ms cubic-bezier(0.22, 1, 0.36, 1)",
-          pointerEvents: open ? "auto" : "none",
+          left: -zoneWidth / 2,
+          width: zoneWidth,
+          height: "54%",
+          transition: "width 200ms cubic-bezier(0.22, 1, 0.36, 1)",
         }}
       >
-        <InsertMenu
-          position="between"
-          insertIndex={insertIndex}
-          hasScenesOnBothSides={true}
-          fromSceneId={fromSceneId}
-          toSceneId={toSceneId}
-          onOpenChange={handleMenuOpenChange}
-        />
+        <div
+          style={{
+            opacity: open ? 1 : 0,
+            transform: open ? "scale(1)" : "scale(0.7)",
+            transition:
+              "opacity 140ms ease-out, transform 200ms cubic-bezier(0.22, 1, 0.36, 1)",
+            pointerEvents: open ? "auto" : "none",
+          }}
+        >
+          <InsertMenu
+            position="between"
+            insertIndex={insertIndex}
+            hasScenesOnBothSides={true}
+            fromSceneId={fromSceneId}
+            toSceneId={toSceneId}
+            onOpenChange={handleMenuOpenChange}
+          />
+        </div>
       </div>
     </div>
   );
@@ -217,10 +288,13 @@ function SortableSceneCard({
   sceneId,
   onPreviewVideo,
   onEditImage,
+  seamShift = 0,
 }: {
   sceneId: string;
   onPreviewVideo?: (url: string) => void;
   onEditImage?: (sceneId: string) => void;
+  /** -1 = neighbour left of an open seam (slide left), +1 = right (slide right). */
+  seamShift?: number;
 }) {
   const { attributes, listeners, setNodeRef, transform, transition, isDragging } =
     useSortable({ id: sceneId });
@@ -240,6 +314,19 @@ function SortableSceneCard({
   const segmentLocalOffset = useTimelineStore((s) => s.segmentLocalOffset);
   const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
+
+  // Disambiguates a single click (select → open sidebar) from a double click
+  // (fullscreen preview). Selection is deferred so a double-click can cancel it
+  // before the sidebar slides in — otherwise the canvas reflows and the node
+  // shifts out from under the cursor, so the 2nd click can land on the delete
+  // (X) button. See `handleCardClick` / `handleCardDoubleClick`.
+  const clickTimerRef = useRef<number | null>(null);
+  useEffect(
+    () => () => {
+      if (clickTimerRef.current !== null) clearTimeout(clickTimerRef.current);
+    },
+    [],
+  );
 
   const videoRegister = useCallback(
     (el: HTMLVideoElement | null) => {
@@ -342,10 +429,17 @@ function SortableSceneCard({
 
   if (!scene) return null;
   const isSelected = selectedSceneId === sceneId;
+  // Scrub sheet always follows the ACTIVE version, so switching versions (or a
+  // batch sibling finishing) never previews a stale/other version's frames.
+  const activeSprite = activeVersionSprite(scene);
   const hasVideo = scene.status === "ready" && !!scene.videoUrl;
   const isProcessing = scene.status === "processing";
   const isGenerating = scene.status === "generating";
   const isUploadedVideo = scene.sourceType === "video-upload";
+  const isReferenceGroup = scene.sourceType === "reference-group";
+  const refImages = scene.referenceConfig?.images ?? [];
+  const isUploadingRefs = isReferenceGroup && refImages.some((im) => im.url.startsWith("blob:"));
+  const isAnalyzingRefs = isReferenceGroup && scene.referenceConfig?.analysisStatus === "analyzing";
   const cardHeight = timelineRibbon ? TIMELINE_RIBBON_HEIGHT : TIMELINE_CARD_HEIGHT;
   const minCardWidth = timelineRibbon ? MIN_RIBBON_CARD_WIDTH : MIN_TIMELINE_CARD_WIDTH;
 
@@ -357,6 +451,40 @@ function SortableSceneCard({
 
   const closeContext = () => setContextMenu(null);
 
+  // Non-toggling select: clicking a node always shows the sidebar; re-clicking
+  // the same node keeps it open. Closing is via a canvas click or the drawer X.
+  const selectIfNeeded = () => {
+    if (useProjectStore.getState().selectedSceneId !== sceneId) selectScene(sceneId);
+  };
+
+  const handleCardClick = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    // Only nodes with a fullscreen action (ready video) need the single/double
+    // disambiguation. Everything else selects instantly (no perceptible delay).
+    const canFullscreen = scene.status === "ready" && !!scene.videoUrl && !!onPreviewVideo;
+    if (!canFullscreen) {
+      selectIfNeeded();
+      return;
+    }
+    // Defer selection so a double-click can cancel it before the sidebar slides
+    // in (which would reflow the canvas and shift the node under the cursor).
+    if (clickTimerRef.current !== null) clearTimeout(clickTimerRef.current);
+    clickTimerRef.current = window.setTimeout(() => {
+      clickTimerRef.current = null;
+      selectIfNeeded();
+    }, 200);
+  };
+
+  const handleCardDoubleClick = () => {
+    if (clickTimerRef.current !== null) {
+      clearTimeout(clickTimerRef.current);
+      clickTimerRef.current = null;
+    }
+    if (scene.status === "ready" && scene.videoUrl && onPreviewVideo) {
+      onPreviewVideo(scene.videoUrl);
+    }
+  };
+
   const handleExtractFrame = async (edge: FrameEdge) => {
     closeContext();
     // Insert "first" before the scene, "last"/"current" after it.
@@ -364,9 +492,20 @@ function SortableSceneCard({
     await extractSceneFrame(scene, edge, insertAt);
   };
 
+  // Compose the dnd-kit transform with the hover seam-slide. Keep a baseline
+  // `translateX(0px)` ALWAYS present (even at rest) — CSS won't transition from
+  // an absent transform to a value, which is what made the slide snap. The
+  // slide is suppressed while dragging (dnd owns the transform then). The
+  // truthiness fallback handles dnd returning "" / null for an idle item.
+  const sortableTransform = CSS.Transform.toString(transform);
+  const slidePx = isDragging ? 0 : seamShift * SEAM_HALF_GAP;
+  const slide = `translateX(${slidePx}px)`;
+  const composedTransform = sortableTransform ? `${sortableTransform} ${slide}` : slide;
   const baseStyle: React.CSSProperties = {
-    transform: CSS.Transform.toString(transform),
-    transition,
+    transform: composedTransform,
+    transition: isDragging
+      ? transition
+      : transition || "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
     opacity: isDragging ? 0.5 : 1,
     zIndex: isDragging ? 50 : undefined,
   };
@@ -385,13 +524,9 @@ function SortableSceneCard({
       data-timeline-id={sceneId}
       data-duration={scene.duration}
       style={style}
-      onClick={(e) => { e.stopPropagation(); selectScene(sceneId); }}
+      onClick={handleCardClick}
       onContextMenu={handleContextMenu}
-      onDoubleClick={() => {
-        if (scene.status === "ready" && scene.videoUrl && onPreviewVideo) {
-          onPreviewVideo(scene.videoUrl);
-        }
-      }}
+      onDoubleClick={handleCardDoubleClick}
       className={`group relative flex shrink-0 cursor-pointer overflow-hidden rounded-xl border transition-colors ${
         viewMode === "canvas" ? "w-48" : ""
       } ${
@@ -448,10 +583,10 @@ function SortableSceneCard({
                 this card is not the active segment, revealing the real video. */}
             {viewMode === "timeline" &&
               isScrubbing &&
-              scene.sprite &&
+              activeSprite &&
               activeSegmentId === sceneId && (
                 <SpriteFrame
-                  sprite={scene.sprite}
+                  sprite={activeSprite}
                   progress={spriteProgressForScene(
                     segmentLocalOffset,
                     scene.trimStart,
@@ -464,6 +599,8 @@ function SortableSceneCard({
           </>
         ) : isProcessing ? (
           <div className="flex h-full w-full items-center justify-center bg-white/[0.03]" />
+        ) : isReferenceGroup ? (
+          <ReferenceGroupThumb images={refImages} />
         ) : (
           <TransformedImage
             src={scene.photoDataUrl ?? scene.photoUrl}
@@ -476,18 +613,45 @@ function SortableSceneCard({
         )}
         {isGenerating && <NodeProcessingOverlay label="Gerando..." />}
         {isProcessing && <NodeProcessingOverlay label="Extraindo..." />}
-        {!isGenerating && !isProcessing && (
-          <div className="absolute left-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded bg-black/50">
-            {isUploadedVideo ? (
-              <Film size={9} className="text-blue-400" />
-            ) : hasVideo ? (
-              <Film size={9} className="text-accent-gold" />
-            ) : (
-              <ImageIcon size={9} className="text-white/50" />
-            )}
-          </div>
+        {isUploadingRefs && <NodeProcessingOverlay label="Enviando..." />}
+        {!isUploadingRefs && isAnalyzingRefs && (
+          <NodeProcessingOverlay label="Analisando..." />
         )}
-        <div className="absolute right-1.5 top-1.5 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
+        {isReferenceGroup && !isUploadingRefs && !isAnalyzingRefs && (
+          <button
+            onClick={(e) => {
+              e.stopPropagation();
+              useReferenceAssetsStore.getState().open(sceneId);
+            }}
+            className="absolute left-1/2 top-1/2 z-10 -translate-x-1/2 -translate-y-1/2 rounded-full border border-white/15 bg-black/60 px-3 py-1.5 font-mono text-[10px] text-white/80 opacity-0 backdrop-blur-sm transition-opacity hover:border-accent-gold/40 hover:text-accent-gold group-hover:opacity-100"
+          >
+            Assets · {refImages.length}
+          </button>
+        )}
+        {!isGenerating && !isProcessing && (
+          isReferenceGroup && !hasVideo ? (
+            <div className="absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-accent-gold/20 px-1.5 py-0.5">
+              <Layers size={9} className="text-accent-gold" />
+              <span className="font-mono text-[8px] font-medium uppercase tracking-wide text-accent-gold">
+                Ref
+              </span>
+            </div>
+          ) : (
+            <div className="absolute left-1.5 top-1.5 flex h-4 w-4 items-center justify-center rounded bg-black/50">
+              {isUploadedVideo ? (
+                <Film size={9} className="text-blue-400" />
+              ) : hasVideo ? (
+                <Film size={9} className="text-accent-gold" />
+              ) : (
+                <ImageIcon size={9} className="text-white/50" />
+              )}
+            </div>
+          )
+        )}
+        {/* z-40 lifts these controls above the z-30 trim handles, whose enlarged
+            22px hit-area otherwise sits on top of the close (X) button and
+            swallows the click. */}
+        <div className="absolute right-1.5 top-1.5 z-40 flex items-center gap-1 opacity-0 transition-opacity group-hover:opacity-100">
           {scene.status === "ready" && scene.videoUrl && (
             <button
               onClick={async (e) => {
@@ -516,11 +680,19 @@ function SortableSceneCard({
             <X size={10} />
           </button>
         </div>
-        <div className="absolute inset-x-0 bottom-0 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
+        {/* Bar sits ABOVE the trim handles (z-40) so the grip + version arrows
+            are clickable, but is itself pointer-events-none so the trim edges
+            stay fully grabbable underneath (incl. the left edge). Only the
+            interactive controls cluster re-enables pointer events. */}
+        <div className="pointer-events-none absolute inset-x-0 bottom-0 z-40 flex items-center justify-between bg-gradient-to-t from-black/80 to-transparent px-2.5 pb-2 pt-6 translate-y-full transition-transform group-hover:translate-y-0">
           <span className="truncate font-mono text-[10px] text-white/80">
-            {isUploadedVideo ? "Upload" : getPresetLabel(scene.presetId)}
+            {isReferenceGroup
+              ? `Referência · ${refImages.length}`
+              : isUploadedVideo
+                ? "Upload"
+                : getPresetLabel(scene.presetId)}
           </span>
-          <div className="flex items-center gap-2">
+          <div className="pointer-events-auto flex items-center gap-2">
             {(scene.videoVersions ?? []).length > 1 && (
               <div className="flex items-center gap-1">
                 <button
@@ -594,12 +766,17 @@ function SortableSceneCard({
             <button onClick={() => { closeContext(); selectScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
               Propriedades
             </button>
-            {onEditImage && !isUploadedVideo && (
+            {isReferenceGroup && (
+              <button onClick={() => { closeContext(); useReferenceAssetsStore.getState().open(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
+                <Layers size={12} className="text-text-secondary" /> Assets
+              </button>
+            )}
+            {onEditImage && !isUploadedVideo && !isReferenceGroup && (
               <button onClick={() => { closeContext(); onEditImage(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-[var(--text)] hover:bg-white/5">
                 <Pencil size={12} className="text-text-secondary" /> Editar imagem
               </button>
             )}
-            {!isUploadedVideo && (
+            {!isUploadedVideo && !isReferenceGroup && (
               <button onClick={() => { closeContext(); useProjectStore.getState().generateScene(sceneId); }} className="flex w-full items-center gap-2 px-3 py-2 text-left font-mono text-[11px] text-accent-gold hover:bg-white/5">
                 {hasVideo ? "Regenerar" : "Gerar vídeo"}
               </button>
@@ -721,7 +898,6 @@ function InsertMenu({
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
   const insertVideoAt = useProjectStore((s) => s.insertVideoAt);
-  const addPhotos = useProjectStore((s) => s.addPhotos);
   const addVideoUploads = useProjectStore((s) => s.addVideoUploads);
   const setHasEditNode = useProjectStore((s) => s.setHasEditNode);
   const hasEditNode = useProjectStore((s) => s.hasEditNode);
@@ -790,7 +966,7 @@ function InsertMenu({
     if (images.length === 0) return;
 
     if (position === "end") {
-      addPhotos(images);
+      beginPhotoImport(images);
     } else {
       images.forEach((file, i) => {
         insertPhotoAt(insertIndex + i, file);
@@ -986,10 +1162,13 @@ function TransitionNode({
   fromSceneId,
   toSceneId,
   onPreviewVideo,
+  shiftPx = 0,
 }: {
   fromSceneId: string;
   toSceneId: string;
   onPreviewVideo?: (url: string) => void;
+  /** Slide with its block when a neighbouring insert seam opens. */
+  shiftPx?: number;
 }) {
   const transitionId = `t-${fromSceneId}-${toSceneId}`;
   const transition = useProjectStore((s) => s.transitions.find((t) => t.id === transitionId));
@@ -1021,6 +1200,8 @@ function TransitionNode({
       ? {
           width: `${Math.max(transMinWidth, transDuration * pixelsPerSecond)}px`,
           height: transCardHeight,
+          transform: `translateX(${shiftPx}px)`,
+          transition: "transform 220ms cubic-bezier(0.22, 1, 0.36, 1)",
         }
       : undefined;
 
@@ -1208,9 +1389,19 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
   const viewMode = useTimelineStore((s) => s.viewMode);
   const timelineRibbon = useEditorSettingsStore((s) => s.layout.timelineRibbon);
 
+  // Which insert seam is open, so the two clips flanking it slide apart
+  // symmetrically. The conditional clear avoids a race where leaving seam A
+  // (debounced) would wipe seam B the cursor already entered.
+  const [activeSeam, setActiveSeam] = useState<number | null>(null);
+  const handleSeamActive = useCallback((index: number, active: boolean) => {
+    setActiveSeam((prev) => (active ? index : prev === index ? null : prev));
+  }, []);
+
   useEffect(() => {
     if (viewMode !== "timeline") return;
-    const urls = scenes.map((s) => s.sprite?.url).filter(Boolean) as string[];
+    const urls = scenes
+      .map((s) => activeVersionSprite(s)?.url)
+      .filter(Boolean) as string[];
     spritePreloader.preloadMany(urls);
   }, [viewMode, scenes]);
 
@@ -1237,12 +1428,24 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
   const verticalPadding = isRibbon ? "py-2" : "py-4";
 
   return (
-    <DndContext sensors={sensors} collisionDetection={closestCenter} onDragEnd={handleDragEnd}>
+    <DndContext
+      sensors={sensors}
+      collisionDetection={closestCenter}
+      onDragStart={() => setActiveSeam(null)}
+      onDragEnd={handleDragEnd}
+    >
       <SortableContext items={sceneIds} strategy={horizontalListSortingStrategy}>
         <div className={`flex items-start ${outerGap} ${verticalPadding}`}>
           {scenes.map((scene, i) => (
             <div key={scene.id} className={`flex items-start ${innerGap}`}>
-              <SortableSceneCard sceneId={scene.id} onPreviewVideo={onPreviewVideo} onEditImage={onEditImage} />
+              <SortableSceneCard
+                sceneId={scene.id}
+                onPreviewVideo={onPreviewVideo}
+                onEditImage={onEditImage}
+                seamShift={
+                  isTimeline && activeSeam !== null ? (i < activeSeam ? -1 : 1) : 0
+                }
+              />
               {i < scenes.length - 1 && (() => {
                 const transId = `t-${scene.id}-${scenes[i + 1]!.id}`;
                 const trans = transitions.find((t) => t.id === transId);
@@ -1263,12 +1466,22 @@ export function FilmStrip({ onPreviewVideo, onExport, onEditImage }: { onPreview
                         insertIndex={i + 1}
                         fromSceneId={scene.id}
                         toSceneId={scenes[i + 1]?.id}
+                        onActiveChange={handleSeamActive}
                       />
                     )}
                     <TransitionNode
                       fromSceneId={scene.id}
                       toSceneId={scenes[i + 1]!.id}
                       onPreviewVideo={onPreviewVideo}
+                      shiftPx={
+                        isTimeline && activeSeam !== null
+                          ? i + 1 < activeSeam
+                            ? -SEAM_HALF_GAP
+                            : i >= activeSeam
+                              ? SEAM_HALF_GAP
+                              : 0
+                          : 0
+                      }
                     />
                     {transVisible && !isTimeline && (
                       <InsertMenu

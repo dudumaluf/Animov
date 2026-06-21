@@ -1,5 +1,6 @@
 "use client";
 
+import { useProjectStore } from "@/stores/project-store";
 import { DrawerChassis } from "./drawer-chassis";
 import { Inspector } from "./inspector";
 
@@ -30,11 +31,30 @@ export function PropertiesDrawer({
   resizable = true,
   ...inspectorProps
 }: PropertiesDrawerProps) {
+  // Contextual title so the header reflects what's selected instead of a
+  // generic "Properties" — and so per-type panels don't need to repeat their
+  // own title row inside the body.
+  const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
+  const sourceType = useProjectStore((s) =>
+    s.selectedSceneId
+      ? s.scenes.find((sc) => sc.id === s.selectedSceneId)?.sourceType ?? "image"
+      : null,
+  );
+  const title = editNodeSelected
+    ? "Edição"
+    : sourceType === "reference-group"
+      ? "Referência"
+      : sourceType === "video-upload"
+        ? "Vídeo"
+        : sourceType
+          ? "Cena"
+          : "Propriedades";
+
   // Properties is bound to selection (see useDockBehavior) — pin would
   // contradict that lifecycle, so it's hidden here. Activity keeps pin.
   return (
     <DrawerChassis
-      title="Properties"
+      title={title}
       panelId="properties"
       resizable={resizable}
       hidePin

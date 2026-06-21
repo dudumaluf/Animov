@@ -8,6 +8,8 @@ import { FilmStrip } from "@/components/editor/film-strip";
 import { DropZone } from "@/components/editor/drop-zone";
 import { VideoPreviewModal } from "@/components/editor/video-preview-modal";
 import { ImageEditModal } from "@/components/editor/image-edit-modal";
+import { ImportChoiceModal } from "@/components/editor/import-choice-modal";
+import { ReferenceAssetsModal } from "@/components/editor/reference-assets-modal";
 import { Playhead } from "@/components/editor/playhead";
 import { TransportBar } from "@/components/editor/transport-bar";
 import { TimelineRuler } from "@/components/editor/timeline-ruler";
@@ -948,6 +950,7 @@ export default function EditorPage({
               <HeadlinePreview
                 viewportRef={viewportRef}
                 mainFlexRef={mainFlexRef}
+                onPreviewVideo={setPreviewVideoUrl}
               />
             )}
 
@@ -1132,6 +1135,12 @@ export default function EditorPage({
         open={versionHistoryOpen}
         onClose={() => setVersionHistoryOpen(false)}
       />
+
+      {/* Global reference-group surfaces: the import-choice prompt (2+ images)
+          and the Assets panel opened from a reference node. Mounted once so any
+          import entry point and any node can drive them without prop drilling. */}
+      <ImportChoiceModal />
+      <ReferenceAssetsModal />
     </div>
   );
 }

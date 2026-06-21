@@ -8,6 +8,11 @@ import { ensureFalUrl } from "@/lib/fal-helpers";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
+// Video synthesis waits for fal before responding; longer clips exceed the 60s
+// serverless default. Pin the Pro-plan ceiling so the request isn't 504'd.
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 type JsonBody = {
   photoUrl?: string;
   presetId?: string;

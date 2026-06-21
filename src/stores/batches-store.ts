@@ -345,6 +345,29 @@ export function useHasActiveJobForTarget(targetId: string, type?: JobType): bool
 }
 
 /**
+ * Message of the most recent *failed* job for a target (e.g. "Créditos
+ * insuficientes"). Lets a per-scene UI surface why a generation failed instead
+ * of leaving the error only in the network console. Returns null when the
+ * latest job for the target didn't fail (or there is none).
+ */
+export function useLastJobErrorForTarget(
+  targetId: string,
+  type?: JobType,
+): string | null {
+  return useJobsStore((s) => {
+    let latest: Job | undefined;
+    for (const j of s.jobs) {
+      if (j.targetId !== targetId) continue;
+      if (type && j.type !== type) continue;
+      const t = j.finishedAt ?? j.createdAt;
+      const lt = latest ? (latest.finishedAt ?? latest.createdAt) : -1;
+      if (!latest || t >= lt) latest = j;
+    }
+    return latest?.status === "failed" ? (latest.error?.message ?? "Falha na geração") : null;
+  });
+}
+
+/**
  * True when *any* music job is currently in-flight project-wide. Used by the
  * "Generate music" UI for dedupe so a second click while one is running
  * shows a hint instead of firing a duplicate request.

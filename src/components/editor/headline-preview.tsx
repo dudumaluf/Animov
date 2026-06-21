@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useMemo, useRef, useState } from "react";
-import { useProjectStore, type ExportAspectRatio } from "@/stores/project-store";
+import { useProjectStore, activeVersionSprite, type ExportAspectRatio } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
 import {
   useEditorSettingsStore,
@@ -14,7 +14,8 @@ import { TransformedImage } from "@/components/editor/transformed-image";
 import { FrameOverlay } from "@/components/editor/frame-overlay";
 import { useStableCenterX } from "@/hooks/use-stable-center";
 import { spriteProgressForScene } from "@/lib/timeline/segments";
-import { RotateCcw } from "lucide-react";
+import { downloadVideoBlob } from "@/lib/utils/download";
+import { ArrowDownToLine, Maximize2, RotateCcw } from "lucide-react";
 
 // Default vertical offset of the centered (un-dragged) card from the top of the
 // canvas area, so it sits just under the top chrome (layout bar / pills).
@@ -44,9 +45,12 @@ type Rect = { x: number; y: number; height: number };
 export function HeadlinePreview({
   viewportRef,
   mainFlexRef,
+  onPreviewVideo,
 }: {
   viewportRef: React.RefObject<HTMLDivElement | null>;
   mainFlexRef: React.RefObject<HTMLDivElement | null>;
+  /** Opens the fullscreen player for the resolved clip. */
+  onPreviewVideo?: (url: string) => void;
 }) {
   const viewMode = useTimelineStore((s) => s.viewMode);
   const activeSegmentId = useTimelineStore((s) => s.activeSegmentId);
@@ -84,7 +88,7 @@ export function HeadlinePreview({
         videoUrl: scene.videoUrl ?? null,
         poster: scene.photoDataUrl ?? scene.photoUrl ?? null,
         imageTransform: scene.imageTransform ?? null,
-        sprite: scene.sprite ?? null,
+        sprite: activeVersionSprite(scene) ?? null,
         duration: scene.duration,
         trimStart: scene.trimStart,
         nativeDuration: scene.videoVersions?.[scene.activeVersion]?.duration,
@@ -276,6 +280,41 @@ export function HeadlinePreview({
           />
         ) : null}
       </FrameOverlay>
+
+      {/* Clip actions — fullscreen + download, hover-revealed. Pointer-down is
+          stopped so grabbing a button never starts a drag of the card. */}
+      {resolved?.videoUrl && (
+        <div className="absolute left-1.5 top-1.5 z-10 flex items-center gap-1 opacity-0 transition-opacity group-hover/headline:opacity-100">
+          {onPreviewVideo && (
+            <button
+              type="button"
+              onPointerDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                e.stopPropagation();
+                onPreviewVideo(resolved.videoUrl!);
+              }}
+              className="flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white/70 backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white"
+              title="Tela cheia"
+              aria-label="Tela cheia"
+            >
+              <Maximize2 size={12} />
+            </button>
+          )}
+          <button
+            type="button"
+            onPointerDown={(e) => e.stopPropagation()}
+            onClick={(e) => {
+              e.stopPropagation();
+              downloadVideoBlob(resolved.videoUrl!, "cena.mp4");
+            }}
+            className="flex h-6 w-6 items-center justify-center rounded-full bg-black/55 text-white/70 backdrop-blur-sm transition-colors hover:bg-black/80 hover:text-white"
+            title="Baixar cena"
+            aria-label="Baixar cena"
+          >
+            <ArrowDownToLine size={12} />
+          </button>
+        </div>
+      )}
 
       {/* Reset chip — only when the user has moved/resized it. */}
       {isCustomized && (

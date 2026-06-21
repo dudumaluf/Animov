@@ -46,6 +46,7 @@ type ScenePayload = {
   generation_target_seconds?: number | null;
   image_transform?: unknown;
   guidance_prompt?: string | null;
+  reference_config?: unknown;
 };
 
 type TransitionPayload = {
@@ -251,6 +252,7 @@ export async function PATCH(
         typeof s.guidance_prompt === "string" && s.guidance_prompt.trim()
           ? s.guidance_prompt
           : null,
+      reference_config: s.reference_config ?? null,
     }));
 
     const { error } = await supabase.from("scenes").upsert(scenesToUpsert, {

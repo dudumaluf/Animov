@@ -7,6 +7,15 @@ import {
   portableToScene,
 } from "@/lib/project-portable";
 import { DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
+import {
+  referenceCreditCost,
+  clampReferenceDuration,
+  clampResolutionForTier,
+  REFERENCE_MAX_IMAGES,
+  type ReferenceTier,
+  type ReferenceResolution,
+  type ReferenceAspectRatio,
+} from "@/lib/adapters/seedance-reference";
 import { extractVideoThumbnail } from "@/lib/utils/video-thumbnail";
 import {
   type AudioMixSettings,
@@ -17,7 +26,18 @@ import { stageVideoForTimeline } from "@/lib/staging/video-staging";
 import { useBatchesStore } from "@/stores/batches-store";
 import { useJobsStore } from "@/stores/jobs-store";
 
-export type VideoVersion = { url: string; duration: number };
+export type VideoVersion = {
+  url: string;
+  duration: number;
+  /**
+   * Sprite-sheet for THIS version's scrub preview. Each generated version owns
+   * its own sheet so switching `activeVersion` (or a sibling finishing in a
+   * batch) shows frames from the right video instead of a stale neighbour.
+   * `undefined` = not staged yet; the active version re-stages on demand.
+   */
+  sprite?: SceneSprite;
+  stagingStatus?: SceneStagingStatus;
+};
 
 export type SceneStagingStatus = "pending" | "ready" | "failed";
 
@@ -109,6 +129,103 @@ export type ProjectSnapshotEntry = {
   sceneCount: number;
 };
 
+/**
+ * Role of a single image inside a reference group, inferred by the vision LLM
+ * and correctable by the user. Drives how the "director" composer references
+ * the image and how the Assets panel groups it.
+ *   - environment: a room / exterior of the property
+ *   - person:      a human (realtor, resident, model) to keep consistent
+ *   - detail:      a close-up of a finish / material / object
+ *   - product:     a sellable / staged item (furniture, appliance, amenity)
+ */
+export type ReferenceRole = "environment" | "person" | "detail" | "product";
+
+/** Lifecycle of the automatic multi-image analysis for a reference group. */
+export type ReferenceAnalysisStatus = "idle" | "analyzing" | "ready" | "failed";
+
+/**
+ * One reference image inside a reference group. `url` starts as a local
+ * `blob:` while uploading then becomes the Supabase Storage https URL. `label`
+ * is the stable `@ImageN` token used by the composed prompt; `description` is
+ * AI-written and user-editable.
+ */
+export type ReferenceImage = {
+  id: string;
+  url: string;
+  role: ReferenceRole;
+  label: string;
+  description: string;
+};
+
+/**
+ * Reference-group payload stored on a scene whose `sourceType` is
+ * "reference-group". Persisted verbatim into `scenes.reference_config` (JSONB).
+ */
+export type ReferenceConfig = {
+  analysisStatus: ReferenceAnalysisStatus;
+  images: ReferenceImage[];
+  /** Selected reference preset (recipe slug/id, scope `video_reference`). */
+  presetId?: string;
+  /** Free-text creative guidance appended to the composer. */
+  guidance?: string;
+  /** Whether Seedance should also generate audio (default off). */
+  generateAudio?: boolean;
+  /** Quality/speed tier sent to Seedance (default "standard"). */
+  modelTier?: ReferenceTier;
+  /** Output resolution (default "720p"). */
+  resolution?: ReferenceResolution;
+  /**
+   * Aspect-ratio preference. `"project"` follows the canvas/export ratio and is
+   * resolved to a concrete Seedance value before submit; `"auto"` lets the model
+   * decide; otherwise a concrete enum. Unset = "auto" (legacy behavior).
+   */
+  aspectRatio?: ReferenceAspectPref;
+  /** The final, editable `@Image1..N` prompt sent to Seedance (active preset). */
+  composedPrompt?: string;
+  /**
+   * Per-preset composed prompts, keyed by recipe id. Seeded in one shot by the
+   * analysis step (so switching presets is instant) and updated when the user
+   * regenerates or edits a specific preset's prompt. The active preset's entry
+   * mirrors `composedPrompt`.
+   */
+  presetPrompts?: Record<string, string>;
+  /**
+   * fal queue `request_id` of an in-flight generation. Persisted so a reload
+   * mid-render can resume polling (see `resumePendingReferenceJobs`) instead of
+   * stranding the scene in "generating" with debited-but-unrefunded credits.
+   * Cleared once the job settles.
+   */
+  pendingRequestId?: string;
+};
+
+/** Aspect preference: concrete Seedance value, model-decided, or "follow canvas". */
+export type ReferenceAspectPref = ReferenceAspectRatio | "project";
+
+/**
+ * Resolve a reference aspect preference to the concrete value Seedance accepts.
+ * `"project"` maps the canvas/export ratio onto the closest supported enum
+ * (4:5 → 3:4, the nearest portrait); unset/"auto" → "auto".
+ */
+export function resolveReferenceAspect(
+  pref: ReferenceAspectPref | undefined,
+  canvas: ExportAspectRatio,
+): ReferenceAspectRatio {
+  if (!pref || pref === "auto") return "auto";
+  if (pref !== "project") return pref;
+  switch (canvas) {
+    case "16:9":
+      return "16:9";
+    case "9:16":
+      return "9:16";
+    case "1:1":
+      return "1:1";
+    case "4:5":
+      return "3:4";
+    default:
+      return "auto";
+  }
+}
+
 export type Scene = {
   id: string;
   photoUrl: string;
@@ -120,7 +237,7 @@ export type Scene = {
   videoVersions: VideoVersion[];
   activeVersion: number;
   costCredits: number;
-  sourceType?: "image" | "video-upload";
+  sourceType?: "image" | "video-upload" | "reference-group";
   audioVolume?: number;
   stagingStatus?: SceneStagingStatus;
   sprite?: SceneSprite;
@@ -153,7 +270,29 @@ export type Scene = {
    * still provides the structure. Empty/undefined = preset only.
    */
   guidancePrompt?: string;
+  /**
+   * Present only when `sourceType === "reference-group"`. Holds the reference
+   * images (roles + descriptions), the selected preset, creative guidance and
+   * the composed `@Image1..N` prompt. Persisted to `scenes.reference_config`.
+   */
+  referenceConfig?: ReferenceConfig;
 };
+
+/**
+ * Sprite-sheet to use for a scene's scrub preview / poster: ALWAYS the active
+ * version's own sheet. Multi-version scenes never fall back to the scene-level
+ * `sprite` (it may belong to a different version — that's the stale-scrub bug);
+ * single-version / legacy scenes keep using it as before.
+ */
+export function activeVersionSprite(
+  scene: Pick<Scene, "videoVersions" | "activeVersion" | "sprite">,
+): SceneSprite | undefined {
+  const versions = scene.videoVersions ?? [];
+  const active = versions[scene.activeVersion ?? 0];
+  if (active?.sprite) return active.sprite;
+  if (versions.length > 1) return undefined;
+  return scene.sprite;
+}
 
 export type Transition = {
   id: string;
@@ -221,6 +360,14 @@ export type ProjectStore = {
   _photoFiles: Record<string, File>;
 
   /**
+   * Pending reference-image uploads, keyed by ReferenceImage id (NOT scene id,
+   * since a reference group holds N files for one scene). Cleared per-image as
+   * each upload resolves. Consulted by `hasPendingPhotoUploads` so a save never
+   * ships a reference group still on `blob:` URLs.
+   */
+  _referenceFiles: Record<string, File>;
+
+  /**
    * In-memory clip clipboard for copy/paste. Holds a snapshot of the scene at
    * copy time plus its pending photo File (if it hadn't uploaded yet) so paste
    * can re-upload. Deliberately NOT persisted — copy/paste is session-scoped.
@@ -234,6 +381,116 @@ export type ProjectStore = {
 
   addPhotos: (files: File[]) => void;
   addVideoUploads: (files: File[]) => void;
+
+  /**
+   * Create a single "reference-group" scene/node from 2+ images. Uploads each
+   * image, then auto-triggers `analyzeReferenceGroup` once all are on storage.
+   * Returns the new scene id (or null when given no files).
+   */
+  createReferenceGroup: (files: File[]) => string | null;
+  /**
+   * Create several "reference-group" nodes at once from pre-bucketed files —
+   * one node per chunk (each chunk should hold ≤9 images, the Seedance limit).
+   * Returns the created scene ids (chunks with no images are skipped).
+   */
+  createReferenceGroups: (chunks: File[][]) => string[];
+  /** Correct the inferred role of one image inside a reference group. */
+  setReferenceImageRole: (sceneId: string, imageId: string, role: ReferenceRole) => void;
+  /** Edit (and persist) the description of one image inside a reference group. */
+  setReferenceImageDescription: (sceneId: string, imageId: string, description: string) => void;
+  /**
+   * Append more images to an existing reference group (e.g. another environment
+   * or a person). Uploads each, keeps `@ImageN` labels sequential, and re-runs
+   * analysis (regenerating the preset prompts) once all are on storage. Clamps
+   * the group to the Seedance 9-image limit.
+   */
+  addReferenceImages: (sceneId: string, files: File[]) => void;
+  /**
+   * Remove one image from a reference group, re-label the rest `@Image1..N`, and
+   * regenerate the preset prompts (the `@ImageN` mapping shifted). Re-analyzes
+   * when images remain; clears the prompts when the group becomes empty.
+   */
+  removeReferenceImage: (sceneId: string, imageId: string) => void;
+  /**
+   * Run the vision LLM over the group's images; fills roles + descriptions and
+   * seeds a prompt per active preset. Pass `{ regenerate: true }` after a
+   * structural change (add/remove) so the freshly-seeded prompts replace the
+   * now-stale cached ones instead of being preserved.
+   */
+  analyzeReferenceGroup: (sceneId: string, opts?: { regenerate?: boolean }) => Promise<void>;
+  /**
+   * Re-describe ONE image (fresh vision read) without touching the others or the
+   * composed preset prompts. Updates that image's role + description in place.
+   * No-op while its upload is pending (blob: URL). Resolves when done.
+   */
+  reanalyzeReferenceImage: (sceneId: string, imageId: string) => Promise<void>;
+  /**
+   * Reorder the images of a reference group to match `orderedIds`, then re-label
+   * `@Image1..N` so the sequence sent to Seedance (and the `@ImageN` tokens) tracks
+   * the new order. Persisted; prompts are left intact (regenerate to apply order).
+   */
+  reorderReferenceImages: (sceneId: string, orderedIds: string[]) => void;
+  /**
+   * Duplicate one image (shares its storage URL, role and description), inserting
+   * the copy right after the original and re-labeling the group. Clamped to the
+   * Seedance image limit.
+   */
+  duplicateReferenceImage: (sceneId: string, imageId: string) => void;
+  /**
+   * Swap one image's URL for an edited result (from the asset editor), keeping its
+   * role/label. Optionally re-runs the per-image analysis so the description matches
+   * the new pixels.
+   */
+  replaceReferenceImageUrl: (
+    sceneId: string,
+    imageId: string,
+    url: string,
+    opts?: { reanalyze?: boolean },
+  ) => void;
+  /** Pick the reference preset (video_reference recipe) for a group. */
+  setReferencePreset: (sceneId: string, presetId: string) => void;
+  /** Edit the free-text creative guidance for a reference group. */
+  setReferenceGuidance: (sceneId: string, guidance: string) => void;
+  /** Edit (manually) the composed @Image1..N prompt of a reference group. */
+  setReferenceComposedPrompt: (sceneId: string, prompt: string) => void;
+  /** Set the Seedance model tier (standard | fast) for a reference group. */
+  setReferenceModelTier: (sceneId: string, tier: ReferenceTier) => void;
+  /** Set the output resolution (480p | 720p) for a reference group. */
+  setReferenceResolution: (sceneId: string, resolution: ReferenceResolution) => void;
+  /** Set the aspect-ratio preference ("project"/"auto"/concrete) for a group. */
+  setReferenceAspectRatio: (sceneId: string, aspect: ReferenceAspectPref) => void;
+  /** Toggle whether Seedance also synthesizes audio for a reference group. */
+  setReferenceGenerateAudio: (sceneId: string, generateAudio: boolean) => void;
+  /**
+   * Compose (or recompose) the @Image1..N prompt via /api/reference/compose
+   * using the selected preset + image descriptions. Stores the result in
+   * `referenceConfig.composedPrompt` and persists it.
+   */
+  composeReferencePrompt: (sceneId: string) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Polish the current composed prompt via /api/reference/enhance-prompt —
+   * richer language while preserving @ImageN tokens and reference faithfulness.
+   */
+  enhanceReferencePrompt: (sceneId: string) => Promise<{ ok: boolean; error?: string }>;
+  /**
+   * Dispatch a Seedance reference-to-video generation for a reference-group
+   * scene. Builds a single-item batch (so it shows in the activity drawer) with
+   * the composed `@Image1..N` prompt + reference image URLs, then dispatches.
+   * Returns `{ ok }`; on validation failure returns `{ ok: false, error }`.
+   */
+  generateReferenceVideo: (sceneId: string) => { ok: boolean; error?: string };
+  /**
+   * Persist (or clear) the fal queue request id of an in-flight reference
+   * generation on a scene, so a reload can resume polling. Called by the
+   * executor right after submit and once the job settles.
+   */
+  setReferencePendingRequest: (sceneId: string, requestId: string | null) => void;
+  /**
+   * After a project loads, re-dispatch poll-only jobs for any reference scene
+   * left mid-render (`referenceConfig.pendingRequestId` set). Orphaned
+   * "generating" scenes without a pending id are reset to idle.
+   */
+  resumePendingReferenceJobs: () => void;
   insertPhotoAt: (index: number, file: File) => void;
   insertVideoAt: (index: number, file: File) => void;
   insertPlaceholder: (index: number) => string;
@@ -451,6 +708,99 @@ function parseTransformFromDb(raw: unknown): ImageTransform | undefined {
   };
 }
 
+const VALID_REFERENCE_ROLES = new Set<ReferenceRole>([
+  "environment",
+  "person",
+  "detail",
+  "product",
+]);
+
+/** Accepted aspect-ratio preference tokens (Seedance enum + "project" + "auto"). */
+const VALID_REFERENCE_ASPECTS = new Set<ReferenceAspectPref>([
+  "auto",
+  "project",
+  "21:9",
+  "16:9",
+  "4:3",
+  "1:1",
+  "3:4",
+  "9:16",
+]);
+
+/**
+ * Defensive parse for the `reference_config` JSONB column. Returns undefined
+ * for anything that isn't a structurally valid reference group, so the UI
+ * never has to guard against malformed payloads. Re-labels images by order so
+ * `@ImageN` tokens stay consistent even if a stored label drifted.
+ */
+function parseReferenceConfigFromDb(raw: unknown): ReferenceConfig | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const c = raw as Record<string, unknown>;
+  if (!Array.isArray(c.images)) return undefined;
+
+  const images: ReferenceImage[] = [];
+  c.images.forEach((item, i) => {
+    if (!item || typeof item !== "object") return;
+    const o = item as Record<string, unknown>;
+    const url = typeof o.url === "string" ? o.url : "";
+    if (!url) return;
+    const role =
+      typeof o.role === "string" && VALID_REFERENCE_ROLES.has(o.role as ReferenceRole)
+        ? (o.role as ReferenceRole)
+        : "environment";
+    images.push({
+      id: typeof o.id === "string" ? o.id : uuid(),
+      url,
+      role,
+      label: `@Image${i + 1}`,
+      description: typeof o.description === "string" ? o.description : "",
+    });
+  });
+
+  if (images.length === 0) return undefined;
+
+  const status = c.analysisStatus;
+  const analysisStatus: ReferenceAnalysisStatus =
+    status === "analyzing" || status === "ready" || status === "failed"
+      ? status
+      : "idle";
+
+  let presetPrompts: Record<string, string> | undefined;
+  if (c.presetPrompts && typeof c.presetPrompts === "object") {
+    const entries = Object.entries(c.presetPrompts as Record<string, unknown>).filter(
+      (e): e is [string, string] => typeof e[1] === "string",
+    );
+    if (entries.length > 0) presetPrompts = Object.fromEntries(entries);
+  }
+
+  const modelTier: ReferenceTier | undefined =
+    c.modelTier === "standard" || c.modelTier === "fast" ? c.modelTier : undefined;
+  const resolution: ReferenceResolution | undefined =
+    c.resolution === "480p" || c.resolution === "720p" || c.resolution === "1080p"
+      ? c.resolution
+      : undefined;
+  const aspectRatio: ReferenceAspectPref | undefined = VALID_REFERENCE_ASPECTS.has(
+    c.aspectRatio as ReferenceAspectPref,
+  )
+    ? (c.aspectRatio as ReferenceAspectPref)
+    : undefined;
+
+  return {
+    analysisStatus,
+    images,
+    presetId: typeof c.presetId === "string" ? c.presetId : undefined,
+    guidance: typeof c.guidance === "string" ? c.guidance : undefined,
+    generateAudio: typeof c.generateAudio === "boolean" ? c.generateAudio : undefined,
+    composedPrompt: typeof c.composedPrompt === "string" ? c.composedPrompt : undefined,
+    presetPrompts,
+    modelTier,
+    resolution,
+    aspectRatio,
+    pendingRequestId:
+      typeof c.pendingRequestId === "string" ? c.pendingRequestId : undefined,
+  };
+}
+
 async function dataUrlToFile(dataUrl: string, name: string): Promise<File> {
   const res = await fetch(dataUrl);
   const blob = await res.blob();
@@ -537,9 +887,47 @@ async function persistMusicFileToStorage(
 }
 
 /**
+ * Applies a staging patch (sprite and/or status) to the scene version whose
+ * url matches `videoUrl`, mirroring it onto the scene-level `sprite`/
+ * `stagingStatus` only when that version is the ACTIVE one. Pinning the
+ * scene-level fields to the active version is what stops a late-finishing
+ * batch sibling from clobbering the visible scrub sheet. Scenes that predate
+ * per-version sprites (no url match) fall back to the scene-level fields.
+ */
+function patchVersionStaging(
+  scene: Scene,
+  videoUrl: string,
+  patch: { sprite?: SceneSprite; stagingStatus: SceneStagingStatus },
+): Scene {
+  const versions = scene.videoVersions ?? [];
+  const idx = versions.findIndex((v) => v.url === videoUrl);
+  const isActive =
+    idx >= 0 ? idx === scene.activeVersion : scene.videoUrl === videoUrl;
+  const nextVersions =
+    idx >= 0
+      ? versions.map((v, i) =>
+          i === idx
+            ? {
+                ...v,
+                stagingStatus: patch.stagingStatus,
+                ...(patch.sprite !== undefined ? { sprite: patch.sprite } : {}),
+              }
+            : v,
+        )
+      : versions;
+  const next: Scene = { ...scene, videoVersions: nextVersions };
+  if (isActive) {
+    next.stagingStatus = patch.stagingStatus;
+    if (patch.sprite !== undefined) next.sprite = patch.sprite;
+  }
+  return next;
+}
+
+/**
  * Kicks off background staging for a scene after its video is in Supabase
- * storage. Extracts a sprite-sheet of thumbnails and stores the metadata on
- * the scene. Non-blocking; progressive via stagingStatus transitions:
+ * storage. Extracts a sprite-sheet of thumbnails and stores it on the matching
+ * `videoVersions[]` entry (and on the scene when it's the active version).
+ * Non-blocking; progressive via per-version stagingStatus transitions:
  * undefined -> "pending" -> "ready" | "failed".
  *
  * Defined at module scope using a function declaration (hoisted) so the store
@@ -556,16 +944,25 @@ export async function kickoffStaging(
   const state = useProjectStore.getState();
   const scene = state.scenes.find((s) => s.id === sceneId);
   if (!scene) return;
-  // Skip if we already have a sprite for THIS exact videoUrl. If the user
-  // regenerates the scene, the new videoUrl will differ and we'll re-stage.
-  if (scene.sprite && scene.videoUrl === videoUrl && scene.stagingStatus === "ready") return;
-  if (scene.stagingStatus === "pending") return;
+
+  const versions = scene.videoVersions ?? [];
+  const targetVer = versions.find((v) => v.url === videoUrl);
+  // Per-version dedupe so a batch of N generations each stage independently
+  // (the old scene-level "pending" guard silently dropped every sibling but
+  // the first). Legacy scenes with no url match keep the scene-level guard.
+  if (targetVer) {
+    if (targetVer.sprite && targetVer.stagingStatus === "ready") return;
+    if (targetVer.stagingStatus === "pending") return;
+  } else {
+    if (scene.sprite && scene.videoUrl === videoUrl && scene.stagingStatus === "ready") return;
+    if (scene.stagingStatus === "pending") return;
+  }
 
   const projectId = state.supabaseProjectId ?? state.projectId;
 
   useProjectStore.setState((st) => ({
     scenes: st.scenes.map((s) =>
-      s.id === sceneId ? { ...s, stagingStatus: "pending" as const } : s,
+      s.id === sceneId ? patchVersionStaging(s, videoUrl, { stagingStatus: "pending" }) : s,
     ),
   }));
 
@@ -580,7 +977,7 @@ export async function kickoffStaging(
       useProjectStore.setState((st) => ({
         scenes: st.scenes.map((s) =>
           s.id === sceneId
-            ? { ...s, stagingStatus: "ready" as const, sprite }
+            ? patchVersionStaging(s, videoUrl, { sprite, stagingStatus: "ready" })
             : s,
         ),
         isDirty: true,
@@ -592,7 +989,7 @@ export async function kickoffStaging(
     } else {
       useProjectStore.setState((st) => ({
         scenes: st.scenes.map((s) =>
-          s.id === sceneId ? { ...s, stagingStatus: "failed" as const } : s,
+          s.id === sceneId ? patchVersionStaging(s, videoUrl, { stagingStatus: "failed" }) : s,
         ),
       }));
     }
@@ -600,7 +997,7 @@ export async function kickoffStaging(
     console.error("[kickoff-staging]", err);
     useProjectStore.setState((st) => ({
       scenes: st.scenes.map((s) =>
-        s.id === sceneId ? { ...s, stagingStatus: "failed" as const } : s,
+        s.id === sceneId ? patchVersionStaging(s, videoUrl, { stagingStatus: "failed" }) : s,
       ),
     }));
   }
@@ -1049,15 +1446,27 @@ export async function resolveSceneHttpsUrl(
  * persisted, so the save would just leave stale data. Waiting is correct.
  */
 export function hasPendingPhotoUploads(
-  state: Pick<ProjectStore, "scenes" | "_photoFiles">,
+  state: Pick<ProjectStore, "scenes" | "_photoFiles" | "_referenceFiles">,
 ): boolean {
   if (Object.keys(state._photoFiles).length > 0) return true;
-  return state.scenes.some(
-    (s) =>
+  if (Object.keys(state._referenceFiles ?? {}).length > 0) return true;
+  return state.scenes.some((s) => {
+    if (
       s.photoUrl &&
       (s.photoUrl.startsWith("blob:") || s.photoUrl.startsWith("data:")) &&
-      s.photoUrl !== PLACEHOLDER_IMG,
-  );
+      s.photoUrl !== PLACEHOLDER_IMG
+    ) {
+      return true;
+    }
+    // A reference group is still mid-upload while any of its images is on a
+    // local blob:/data: URL — saving now would persist unreachable URLs.
+    if (s.referenceConfig) {
+      return s.referenceConfig.images.some(
+        (im) => im.url.startsWith("blob:") || im.url.startsWith("data:"),
+      );
+    }
+    return false;
+  });
 }
 
 export const useProjectStore = create<ProjectStore>()(
@@ -1082,6 +1491,7 @@ export const useProjectStore = create<ProjectStore>()(
       lastKnownUpdatedAt: null,
       conflict: null,
       _photoFiles: {},
+      _referenceFiles: {},
       _clipboardScene: null,
       _clipboardFile: null,
 
@@ -1285,6 +1695,899 @@ export const useProjectStore = create<ProjectStore>()(
         }
       },
 
+      createReferenceGroup: (files) => {
+        const imageFiles = files.filter((f) => f.type.startsWith("image/"));
+        if (imageFiles.length === 0) return null;
+
+        const sceneId = uuid();
+        const images: ReferenceImage[] = imageFiles.map((file, i) => ({
+          id: uuid(),
+          url: URL.createObjectURL(file),
+          role: "environment",
+          label: `@Image${i + 1}`,
+          description: "",
+        }));
+
+        const fileMap: Record<string, File> = {};
+        images.forEach((img, i) => {
+          fileMap[img.id] = imageFiles[i]!;
+        });
+
+        const newScene: Scene = {
+          id: sceneId,
+          photoUrl: images[0]!.url,
+          presetId: "",
+          duration: 8,
+          status: "idle",
+          videoVersions: [],
+          activeVersion: 0,
+          costCredits: 0,
+          sourceType: "reference-group",
+          referenceConfig: {
+            analysisStatus: "idle",
+            images,
+            generateAudio: false,
+            modelTier: "standard",
+            resolution: "720p",
+            // New groups follow the canvas ratio by default; user can override.
+            aspectRatio: "project",
+          },
+        };
+
+        set((state) => {
+          const scenes = [...state.scenes, newScene];
+          return {
+            scenes,
+            transitions: rebuildTransitions(scenes, state.transitions),
+            selectedSceneId: sceneId,
+            editNodeSelected: false,
+            isDirty: true,
+            _referenceFiles: { ...state._referenceFiles, ...fileMap },
+          };
+        });
+
+        const projectId = get().supabaseProjectId ?? get().projectId;
+        const uploads = images.map((img, i) =>
+          uploadPhoto(imageFiles[i]!, projectId)
+            .then((url) => {
+              set((state) => {
+                const next = { ...state._referenceFiles };
+                delete next[img.id];
+                return {
+                  scenes: state.scenes.map((s) => {
+                    if (s.id !== sceneId || !s.referenceConfig) return s;
+                    const updatedImages = s.referenceConfig.images.map((im) =>
+                      im.id === img.id ? { ...im, url } : im,
+                    );
+                    return {
+                      ...s,
+                      photoUrl: updatedImages[0]?.url ?? s.photoUrl,
+                      referenceConfig: { ...s.referenceConfig, images: updatedImages },
+                    };
+                  }),
+                  _referenceFiles: next,
+                  isDirty: true,
+                };
+              });
+              return url as string | null;
+            })
+            .catch((err) => {
+              console.error("[createReferenceGroup] upload failed:", err);
+              return null;
+            }),
+        );
+
+        // Auto-analyze once every image is on storage (any failure aborts the
+        // auto step — the user can still edit roles/descriptions manually).
+        Promise.all(uploads).then((urls) => {
+          if (urls.every((u) => typeof u === "string")) {
+            void get().analyzeReferenceGroup(sceneId);
+          }
+        });
+
+        return sceneId;
+      },
+
+      createReferenceGroups: (chunks) => {
+        const ids: string[] = [];
+        for (const chunk of chunks) {
+          const id = get().createReferenceGroup(chunk);
+          if (id) ids.push(id);
+        }
+        return ids;
+      },
+
+      setReferenceImageRole: (sceneId, imageId, role) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? {
+                  ...s,
+                  referenceConfig: {
+                    ...s.referenceConfig,
+                    images: s.referenceConfig.images.map((im) =>
+                      im.id === imageId ? { ...im, role } : im,
+                    ),
+                  },
+                }
+              : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      setReferenceImageDescription: (sceneId, imageId, description) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? {
+                  ...s,
+                  referenceConfig: {
+                    ...s.referenceConfig,
+                    images: s.referenceConfig.images.map((im) =>
+                      im.id === imageId ? { ...im, description } : im,
+                    ),
+                  },
+                }
+              : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      addReferenceImages: (sceneId, files) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config || files.length === 0) return;
+
+        const existing = config.images.length;
+        const room = REFERENCE_MAX_IMAGES - existing;
+        if (room <= 0) return;
+        const accepted = files.slice(0, room);
+
+        // Append with sequential @ImageN labels continuing from the current set.
+        const newImages: ReferenceImage[] = accepted.map((file, i) => ({
+          id: uuid(),
+          url: URL.createObjectURL(file),
+          role: "environment",
+          label: `@Image${existing + i + 1}`,
+          description: "",
+        }));
+
+        const fileMap: Record<string, File> = {};
+        newImages.forEach((img, i) => {
+          fileMap[img.id] = accepted[i]!;
+        });
+
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? {
+                  ...s,
+                  referenceConfig: {
+                    ...s.referenceConfig,
+                    images: [...s.referenceConfig.images, ...newImages],
+                  },
+                }
+              : s,
+          ),
+          _referenceFiles: { ...state._referenceFiles, ...fileMap },
+          isDirty: true,
+        }));
+
+        const projectId = get().supabaseProjectId ?? get().projectId;
+        const uploads = newImages.map((img, i) =>
+          uploadPhoto(accepted[i]!, projectId)
+            .then((url) => {
+              set((state) => {
+                const next = { ...state._referenceFiles };
+                delete next[img.id];
+                return {
+                  scenes: state.scenes.map((s) => {
+                    if (s.id !== sceneId || !s.referenceConfig) return s;
+                    const updatedImages = s.referenceConfig.images.map((im) =>
+                      im.id === img.id ? { ...im, url } : im,
+                    );
+                    return {
+                      ...s,
+                      photoUrl: updatedImages[0]?.url ?? s.photoUrl,
+                      referenceConfig: { ...s.referenceConfig, images: updatedImages },
+                    };
+                  }),
+                  _referenceFiles: next,
+                  isDirty: true,
+                };
+              });
+              return url as string | null;
+            })
+            .catch((err) => {
+              console.error("[addReferenceImages] upload failed:", err);
+              return null;
+            }),
+        );
+
+        // Re-analyze once everything is on storage — regenerate so the new asset
+        // is reflected in every preset prompt (the stale cached ones are dropped).
+        Promise.all(uploads).then((urls) => {
+          if (urls.every((u) => typeof u === "string")) {
+            void get().analyzeReferenceGroup(sceneId, { regenerate: true });
+          }
+        });
+      },
+
+      removeReferenceImage: (sceneId, imageId) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return;
+
+        const remaining = config.images.filter((im) => im.id !== imageId);
+        if (remaining.length === config.images.length) return; // nothing removed
+
+        // Re-label sequentially so `@ImageN` keeps matching the array order sent
+        // to Seedance. The cached prompts referenced the OLD indices, so drop
+        // them — re-analysis (or the panel's auto-compose) will rebuild fresh.
+        const relabeled = remaining.map((im, i) => ({ ...im, label: `@Image${i + 1}` }));
+
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId || !s.referenceConfig) return s;
+            return {
+              ...s,
+              photoUrl: relabeled[0]?.url ?? PLACEHOLDER_IMG,
+              referenceConfig: {
+                ...s.referenceConfig,
+                images: relabeled,
+                composedPrompt: "",
+                presetPrompts: {},
+                analysisStatus: relabeled.length === 0 ? "idle" : s.referenceConfig.analysisStatus,
+              },
+            };
+          }),
+          _referenceFiles: (() => {
+            const next = { ...state._referenceFiles };
+            delete next[imageId];
+            return next;
+          })(),
+          isDirty: true,
+        }));
+
+        if (relabeled.length > 0 && relabeled.every((im) => im.url.startsWith("http"))) {
+          void get().analyzeReferenceGroup(sceneId, { regenerate: true });
+        } else {
+          void get().saveToSupabase({ system: true });
+        }
+      },
+
+      analyzeReferenceGroup: async (sceneId, opts) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return;
+        if (config.analysisStatus === "analyzing") return;
+        const regenerate = opts?.regenerate === true;
+
+        const urls = config.images.map((im) => im.url);
+        // Defer until every image has a storage URL — blob: URLs aren't
+        // reachable by the vision API. The upload completion path retries.
+        if (urls.some((u) => !u.startsWith("http"))) return;
+
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? { ...s, referenceConfig: { ...s.referenceConfig, analysisStatus: "analyzing" as const } }
+              : s,
+          ),
+        }));
+
+        try {
+          const res = await fetch("/api/reference/analyze", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageUrls: urls }),
+          });
+          if (!res.ok) throw new Error(`analyze failed: ${res.status}`);
+          const data = (await res.json()) as {
+            images: { index: number; role: ReferenceRole; description: string }[];
+            prompts?: { recipeId: string; slug: string; prompt: string }[];
+          };
+          const byIndex = new Map(data.images.map((d) => [d.index, d]));
+          const seededPrompts: Record<string, string> = {};
+          for (const p of data.prompts ?? []) {
+            if (p.recipeId && p.prompt) seededPrompts[p.recipeId] = p.prompt;
+          }
+
+          set((state) => ({
+            scenes: state.scenes.map((s) => {
+              if (s.id !== sceneId || !s.referenceConfig) return s;
+              const updatedImages = s.referenceConfig.images.map((im, i) => {
+                const a = byIndex.get(i);
+                if (!a) return im;
+                return {
+                  ...im,
+                  role: a.role ?? im.role,
+                  description: a.description ?? im.description,
+                };
+              });
+              // Merge seeded prompts. Normally we don't clobber prompts the user
+              // already edited; after a structural change (add/remove image) the
+              // `@ImageN` mapping shifted, so `regenerate` lets the fresh seeds win.
+              const mergedPrompts = regenerate
+                ? { ...seededPrompts }
+                : { ...seededPrompts, ...(s.referenceConfig.presetPrompts ?? {}) };
+              const activeId = s.referenceConfig.presetId;
+              const activePrompt =
+                activeId && mergedPrompts[activeId]
+                  ? mergedPrompts[activeId]
+                  : regenerate
+                    ? ""
+                    : s.referenceConfig.composedPrompt;
+              return {
+                ...s,
+                referenceConfig: {
+                  ...s.referenceConfig,
+                  images: updatedImages,
+                  analysisStatus: "ready" as const,
+                  presetPrompts: mergedPrompts,
+                  composedPrompt: activePrompt,
+                },
+              };
+            }),
+            isDirty: true,
+          }));
+
+          // Persist the analysis so descriptions survive reload / other device.
+          // System save: bypass concurrency + skip snapshot noise.
+          void get().saveToSupabase({ system: true });
+        } catch (err) {
+          console.error("[analyzeReferenceGroup]", err);
+          set((state) => ({
+            scenes: state.scenes.map((s) =>
+              s.id === sceneId && s.referenceConfig
+                ? { ...s, referenceConfig: { ...s.referenceConfig, analysisStatus: "failed" as const } }
+                : s,
+            ),
+          }));
+        }
+      },
+
+      reanalyzeReferenceImage: async (sceneId, imageId) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return;
+        const image = config.images.find((im) => im.id === imageId);
+        if (!image) return;
+        // Defer while the upload is pending — a blob: URL isn't reachable by the
+        // vision API (the modal keeps a per-row spinner; the user can retry).
+        if (!image.url.startsWith("http")) return;
+
+        try {
+          const res = await fetch("/api/reference/describe-one", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ imageUrl: image.url }),
+          });
+          if (!res.ok) throw new Error(`describe-one failed: ${res.status}`);
+          const data = (await res.json()) as { role?: unknown; description?: unknown };
+          const role =
+            typeof data.role === "string" && VALID_REFERENCE_ROLES.has(data.role as ReferenceRole)
+              ? (data.role as ReferenceRole)
+              : "environment";
+          const description = typeof data.description === "string" ? data.description.trim() : "";
+
+          set((state) => ({
+            scenes: state.scenes.map((s) => {
+              if (s.id !== sceneId || !s.referenceConfig) return s;
+              return {
+                ...s,
+                referenceConfig: {
+                  ...s.referenceConfig,
+                  images: s.referenceConfig.images.map((im) =>
+                    im.id === imageId ? { ...im, role, description } : im,
+                  ),
+                },
+              };
+            }),
+            isDirty: true,
+          }));
+
+          // Per-image edit: persist quietly without touching group analysisStatus.
+          void get().saveToSupabase({ system: true });
+        } catch (err) {
+          console.error("[reanalyzeReferenceImage]", err);
+        }
+      },
+
+      reorderReferenceImages: (sceneId, orderedIds) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return;
+
+        const byId = new Map(config.images.map((im) => [im.id, im]));
+        const seen = new Set<string>();
+        const reordered: ReferenceImage[] = [];
+        for (const id of orderedIds) {
+          const im = byId.get(id);
+          if (im && !seen.has(id)) {
+            reordered.push(im);
+            seen.add(id);
+          }
+        }
+        // Append any images absent from orderedIds, preserving prior order.
+        for (const im of config.images) {
+          if (!seen.has(im.id)) reordered.push(im);
+        }
+
+        const unchanged =
+          reordered.length === config.images.length &&
+          reordered.every((im, i) => im.id === config.images[i]!.id);
+        if (unchanged) return;
+
+        // Re-label so `@ImageN` tracks the new array order (= the Seedance
+        // image_urls sequence). Prompts are left intact — the user regenerates
+        // the prompt to apply the new ordering.
+        const relabeled = reordered.map((im, i) => ({ ...im, label: `@Image${i + 1}` }));
+
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId || !s.referenceConfig) return s;
+            return {
+              ...s,
+              photoUrl: relabeled[0]?.url ?? s.photoUrl,
+              referenceConfig: { ...s.referenceConfig, images: relabeled },
+            };
+          }),
+          isDirty: true,
+        }));
+
+        void get().saveToSupabase({ system: true });
+      },
+
+      duplicateReferenceImage: (sceneId, imageId) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return;
+        if (config.images.length >= REFERENCE_MAX_IMAGES) return;
+
+        const index = config.images.findIndex((im) => im.id === imageId);
+        if (index === -1) return;
+        const original = config.images[index]!;
+        // Shares the storage URL — no re-upload. Inserted right after the source.
+        const clone: ReferenceImage = {
+          id: uuid(),
+          url: original.url,
+          role: original.role,
+          label: original.label,
+          description: original.description,
+        };
+        const relabeled = [
+          ...config.images.slice(0, index + 1),
+          clone,
+          ...config.images.slice(index + 1),
+        ].map((im, i) => ({ ...im, label: `@Image${i + 1}` }));
+
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId || !s.referenceConfig) return s;
+            return {
+              ...s,
+              photoUrl: relabeled[0]?.url ?? s.photoUrl,
+              referenceConfig: { ...s.referenceConfig, images: relabeled },
+            };
+          }),
+          isDirty: true,
+        }));
+
+        void get().saveToSupabase({ system: true });
+      },
+
+      replaceReferenceImageUrl: (sceneId, imageId, url, opts) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return;
+        const index = config.images.findIndex((im) => im.id === imageId);
+        if (index === -1) return;
+
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId || !s.referenceConfig) return s;
+            const updatedImages = s.referenceConfig.images.map((im) =>
+              im.id === imageId ? { ...im, url } : im,
+            );
+            return {
+              ...s,
+              photoUrl: index === 0 ? url : s.photoUrl,
+              referenceConfig: { ...s.referenceConfig, images: updatedImages },
+            };
+          }),
+          isDirty: true,
+        }));
+
+        void get().saveToSupabase({ system: true });
+
+        if (opts?.reanalyze) {
+          void get().reanalyzeReferenceImage(sceneId, imageId);
+        }
+      },
+
+      setReferencePreset: (sceneId, presetId) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId || !s.referenceConfig) return s;
+            // Instant switch: show this preset's already-composed prompt (seeded
+            // at analysis time or edited earlier). Empty when not yet generated
+            // — the panel will compose it on demand.
+            const cached = s.referenceConfig.presetPrompts?.[presetId];
+            return {
+              ...s,
+              referenceConfig: {
+                ...s.referenceConfig,
+                presetId,
+                composedPrompt: cached ?? "",
+              },
+            };
+          }),
+          isDirty: true,
+        }));
+      },
+
+      setReferenceGuidance: (sceneId, guidance) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? { ...s, referenceConfig: { ...s.referenceConfig, guidance } }
+              : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      setReferenceComposedPrompt: (sceneId, prompt) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId || !s.referenceConfig) return s;
+            // Keep the per-preset cache in sync so switching presets and coming
+            // back preserves the user's manual edits.
+            const activeId = s.referenceConfig.presetId;
+            const presetPrompts = activeId
+              ? { ...(s.referenceConfig.presetPrompts ?? {}), [activeId]: prompt }
+              : s.referenceConfig.presetPrompts;
+            return {
+              ...s,
+              referenceConfig: {
+                ...s.referenceConfig,
+                composedPrompt: prompt,
+                presetPrompts,
+              },
+            };
+          }),
+          isDirty: true,
+        }));
+      },
+
+      setReferenceModelTier: (sceneId, tier) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId || !s.referenceConfig) return s;
+            // fast can't render 1080p — downshift to 720p when switching tiers.
+            const resolution = clampResolutionForTier(
+              tier,
+              s.referenceConfig.resolution ?? "720p",
+            );
+            return {
+              ...s,
+              referenceConfig: { ...s.referenceConfig, modelTier: tier, resolution },
+            };
+          }),
+          isDirty: true,
+        }));
+      },
+
+      setReferenceResolution: (sceneId, resolution) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? { ...s, referenceConfig: { ...s.referenceConfig, resolution } }
+              : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      setReferenceAspectRatio: (sceneId, aspect) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? { ...s, referenceConfig: { ...s.referenceConfig, aspectRatio: aspect } }
+              : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      setReferenceGenerateAudio: (sceneId, generateAudio) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? { ...s, referenceConfig: { ...s.referenceConfig, generateAudio } }
+              : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      composeReferencePrompt: async (sceneId) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return { ok: false, error: "Grupo de referência não encontrado" };
+        if (!config.presetId) return { ok: false, error: "Escolha um preset primeiro" };
+
+        const images = config.images
+          .filter((im) => im.url.startsWith("http"))
+          .map((im) => ({
+            label: im.label,
+            role: im.role,
+            description: im.description,
+            url: im.url,
+          }));
+
+        if (images.length === 0) {
+          return { ok: false, error: "Aguarde o upload das imagens" };
+        }
+
+        try {
+          const res = await fetch("/api/reference/compose", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              recipeId: config.presetId,
+              images,
+              guidance: config.guidance ?? "",
+            }),
+          });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(body?.error ?? `compose failed: ${res.status}`);
+          }
+          const data = (await res.json()) as { prompt?: string };
+          const prompt = typeof data.prompt === "string" ? data.prompt.trim() : "";
+          if (!prompt) throw new Error("Prompt vazio retornado pela composição");
+
+          set((state) => ({
+            scenes: state.scenes.map((s) => {
+              if (s.id !== sceneId || !s.referenceConfig) return s;
+              const activeId = s.referenceConfig.presetId;
+              const presetPrompts = activeId
+                ? { ...(s.referenceConfig.presetPrompts ?? {}), [activeId]: prompt }
+                : s.referenceConfig.presetPrompts;
+              return {
+                ...s,
+                referenceConfig: { ...s.referenceConfig, composedPrompt: prompt, presetPrompts },
+              };
+            }),
+            isDirty: true,
+          }));
+
+          // System save so the composed prompt survives reload / other device.
+          void get().saveToSupabase({ system: true });
+          return { ok: true };
+        } catch (err) {
+          console.error("[composeReferencePrompt]", err);
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "Falha ao compor o prompt",
+          };
+        }
+      },
+
+      enhanceReferencePrompt: async (sceneId) => {
+        const scene = get().scenes.find((s) => s.id === sceneId);
+        const config = scene?.referenceConfig;
+        if (!config) return { ok: false, error: "Grupo de referência não encontrado" };
+
+        const draft = config.composedPrompt?.trim() ?? "";
+        if (!draft) {
+          return { ok: false, error: "Escreva ou componha um prompt primeiro" };
+        }
+
+        const images = config.images
+          .filter((im) => im.url.startsWith("http"))
+          .map((im) => ({
+            label: im.label,
+            role: im.role,
+            description: im.description,
+            url: im.url,
+          }));
+
+        if (images.length === 0) {
+          return { ok: false, error: "Aguarde o upload das imagens" };
+        }
+
+        try {
+          const res = await fetch("/api/reference/enhance-prompt", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ prompt: draft, images }),
+          });
+          if (!res.ok) {
+            const body = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(body?.error ?? `enhance failed: ${res.status}`);
+          }
+          const data = (await res.json()) as { prompt?: string };
+          const prompt = typeof data.prompt === "string" ? data.prompt.trim() : "";
+          if (!prompt) throw new Error("Prompt vazio retornado pelo enhance");
+
+          set((state) => ({
+            scenes: state.scenes.map((s) => {
+              if (s.id !== sceneId || !s.referenceConfig) return s;
+              const activeId = s.referenceConfig.presetId;
+              const presetPrompts = activeId
+                ? { ...(s.referenceConfig.presetPrompts ?? {}), [activeId]: prompt }
+                : s.referenceConfig.presetPrompts;
+              return {
+                ...s,
+                referenceConfig: { ...s.referenceConfig, composedPrompt: prompt, presetPrompts },
+              };
+            }),
+            isDirty: true,
+          }));
+
+          void get().saveToSupabase({ system: true });
+          return { ok: true };
+        } catch (err) {
+          console.error("[enhanceReferencePrompt]", err);
+          return {
+            ok: false,
+            error: err instanceof Error ? err.message : "Falha ao melhorar o prompt",
+          };
+        }
+      },
+
+      generateReferenceVideo: (sceneId) => {
+        const state = get();
+        const scene = state.scenes.find((s) => s.id === sceneId);
+        if (!scene || scene.sourceType !== "reference-group" || !scene.referenceConfig) {
+          return { ok: false, error: "Grupo de referência não encontrado" };
+        }
+        const config = scene.referenceConfig;
+
+        const prompt = config.composedPrompt?.trim() ?? "";
+        if (!prompt) {
+          return { ok: false, error: "Componha ou escreva um prompt primeiro" };
+        }
+
+        const imageUrls = config.images
+          .filter((im) => im.url.startsWith("http"))
+          .map((im) => im.url)
+          .slice(0, REFERENCE_MAX_IMAGES);
+        if (imageUrls.length === 0) {
+          return { ok: false, error: "Aguarde o upload das imagens de referência" };
+        }
+
+        const pid = state.supabaseProjectId ?? state.projectId;
+        const targetDuration = clampReferenceDuration(
+          scene.generationTargetSeconds ?? scene.duration,
+        );
+        const tier = config.modelTier ?? "standard";
+        const resolution = clampResolutionForTier(tier, config.resolution ?? "720p");
+        const aspectRatio = resolveReferenceAspect(config.aspectRatio, state.exportAspectRatio);
+        const sceneIdx = state.scenes.findIndex((s) => s.id === sceneId);
+
+        const batchId = useBatchesStore.getState().createPreview(
+          [
+            {
+              targetId: sceneId,
+              label: `Referência ${sceneIdx + 1} · ${imageUrls.length} img · ${targetDuration}s`,
+              estimatedCost: referenceCreditCost(targetDuration, tier, resolution),
+              type: "video.reference" as const,
+              payload: {
+                sceneId,
+                projectId: pid,
+                prompt,
+                imageUrls,
+                duration: targetDuration,
+                tier,
+                resolution,
+                aspectRatio,
+                generateAudio: config.generateAudio ?? false,
+                presetId: config.presetId,
+              },
+            },
+          ],
+          { title: "1 vídeo de referência", projectId: pid },
+        );
+        useBatchesStore.getState().dispatch(batchId);
+        return { ok: true };
+      },
+
+      setReferencePendingRequest: (sceneId, requestId) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId && s.referenceConfig
+              ? {
+                  ...s,
+                  referenceConfig: {
+                    ...s.referenceConfig,
+                    pendingRequestId: requestId ?? undefined,
+                  },
+                }
+              : s,
+          ),
+          isDirty: true,
+        }));
+        // Persist so a reload can resume (or know it's done). System save.
+        void get().saveToSupabase({ system: true });
+      },
+
+      resumePendingReferenceJobs: () => {
+        const state = get();
+        const activeJobs = useJobsStore.getState().jobs;
+        const pid = state.supabaseProjectId ?? state.projectId;
+
+        for (const scene of state.scenes) {
+          if (scene.sourceType !== "reference-group") continue;
+          const cfg = scene.referenceConfig;
+          if (!cfg) continue;
+
+          const reqId = cfg.pendingRequestId;
+          const hasActive = activeJobs.some(
+            (j) =>
+              j.targetId === scene.id &&
+              j.type === "video.reference" &&
+              (j.status === "queued" || j.status === "running"),
+          );
+          if (hasActive) continue;
+
+          // No pending request but stuck showing "generating" → recover to idle
+          // so the node isn't frozen and the user can regenerate.
+          if (!reqId) {
+            if (scene.status === "generating") {
+              get().updateSceneStatus(scene.id, "idle");
+            }
+            continue;
+          }
+
+          // Resume: poll-only job (requestId set → executor skips submit, no
+          // re-debit). Cost already charged at the original submit.
+          const prompt = cfg.composedPrompt?.trim() ?? "";
+          const imageUrls = cfg.images
+            .filter((im) => im.url.startsWith("http"))
+            .map((im) => im.url)
+            .slice(0, REFERENCE_MAX_IMAGES);
+          const targetDuration = clampReferenceDuration(
+            scene.generationTargetSeconds ?? scene.duration,
+          );
+          const sceneIdx = state.scenes.findIndex((s) => s.id === scene.id);
+
+          const batchId = useBatchesStore.getState().createPreview(
+            [
+              {
+                targetId: scene.id,
+                label: `Referência ${sceneIdx + 1} · retomando…`,
+                estimatedCost: 0,
+                type: "video.reference" as const,
+                payload: {
+                  sceneId: scene.id,
+                  projectId: pid,
+                  prompt,
+                  imageUrls,
+                  duration: targetDuration,
+                  tier: cfg.modelTier ?? "standard",
+                  resolution: clampResolutionForTier(
+                    cfg.modelTier ?? "standard",
+                    cfg.resolution ?? "720p",
+                  ),
+                  aspectRatio: resolveReferenceAspect(cfg.aspectRatio, state.exportAspectRatio),
+                  generateAudio: cfg.generateAudio ?? false,
+                  presetId: cfg.presetId,
+                  requestId: reqId,
+                },
+              },
+            ],
+            { title: "Retomando vídeo de referência", projectId: pid },
+          );
+          useBatchesStore.getState().dispatch(batchId);
+        }
+      },
+
       insertVideoAt: (index, file) => {
         const id = uuid();
         const projectId = get().supabaseProjectId ?? get().projectId;
@@ -1423,6 +2726,13 @@ export const useProjectStore = create<ProjectStore>()(
           const files = { ...state._photoFiles };
           delete files[id];
 
+          // Drop any pending reference-image uploads for the removed group.
+          const removed = state.scenes.find((s) => s.id === id);
+          const refFiles = { ...state._referenceFiles };
+          if (removed?.referenceConfig) {
+            for (const im of removed.referenceConfig.images) delete refFiles[im.id];
+          }
+
           return {
             scenes,
             transitions: rebuildTransitions(scenes, state.transitions),
@@ -1432,6 +2742,7 @@ export const useProjectStore = create<ProjectStore>()(
                 : state.selectedSceneId,
             isDirty: true,
             _photoFiles: files,
+            _referenceFiles: refFiles,
           };
         });
 
@@ -1692,15 +3003,37 @@ export const useProjectStore = create<ProjectStore>()(
             const versions = s.videoVersions ?? [];
             const clamped = Math.max(0, Math.min(version, versions.length - 1));
             const ver = versions[clamped];
+            // Pin the scene-level sprite/status to the chosen version so the
+            // scrub preview, inspector and theater views reflect the switch.
+            // When the target has no cached sheet yet (legacy multi-version
+            // data or a still-staging sibling) we clear it rather than show
+            // the previous version's frames — the re-stage below fills it in.
+            const nextSprite =
+              ver?.sprite ?? (versions.length > 1 ? undefined : s.sprite);
+            const nextStagingStatus = ver?.sprite
+              ? ("ready" as const)
+              : versions.length > 1
+                ? undefined
+                : s.stagingStatus;
             return {
               ...s,
               activeVersion: clamped,
               videoUrl: ver?.url ?? s.videoUrl,
               duration: ver?.duration ?? s.duration,
+              sprite: nextSprite,
+              stagingStatus: nextStagingStatus,
             };
           }),
           isDirty: true,
         }));
+        // Build the sheet for the freshly-selected version if it has none
+        // cached. kickoffStaging dedupes per version, so flipping back to an
+        // already-staged version is instant and never re-stages.
+        const s = get().scenes.find((sc) => sc.id === sceneId);
+        const ver = s?.videoVersions?.[s.activeVersion];
+        if (s && ver && !ver.sprite && ver.url.startsWith("http")) {
+          void kickoffStaging(sceneId, ver.url, ver.duration);
+        }
       },
 
       updateSceneImage: (sceneId, newImageUrl) => {
@@ -2063,7 +3396,7 @@ export const useProjectStore = create<ProjectStore>()(
           if (!res.ok) { set({ isLoading: false }); return; }
           const data = await res.json();
 
-          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null; crop?: unknown; image_transform?: unknown; guidance_prompt?: string | null }) => {
+          const scenes: Scene[] = (data.scenes ?? []).map((s: { id: string; photo_url: string; prompt_generated: string; duration: number; status: string; video_url: string; cost_credits: number; video_versions?: VideoVersion[]; active_version?: number; source_type?: string; audio_volume?: number; trim_start?: number | null; trim_end?: number | null; generation_target_seconds?: number | null; crop?: unknown; image_transform?: unknown; guidance_prompt?: string | null; reference_config?: unknown }) => {
             const dur = Number(s.duration) || 5;
             const dbVersions: VideoVersion[] = Array.isArray(s.video_versions) && s.video_versions.length > 0
               ? s.video_versions
@@ -2082,6 +3415,16 @@ export const useProjectStore = create<ProjectStore>()(
             // inspector. Old `crop` payloads are silently dropped: scenes
             // re-default to cover-centered (no best-effort migration).
             const imageTransform = parseTransformFromDb(s.image_transform);
+            const referenceConfig =
+              s.source_type === "reference-group"
+                ? parseReferenceConfigFromDb(s.reference_config)
+                : undefined;
+            const sourceType: Scene["sourceType"] =
+              s.source_type === "reference-group"
+                ? "reference-group"
+                : s.source_type === "video-upload"
+                  ? "video-upload"
+                  : undefined;
             return {
               id: s.id,
               photoUrl: s.photo_url,
@@ -2093,7 +3436,8 @@ export const useProjectStore = create<ProjectStore>()(
               videoVersions: dbVersions,
               activeVersion: clampedVer,
               costCredits: s.cost_credits,
-              sourceType: s.source_type === "video-upload" ? "video-upload" : undefined,
+              sourceType,
+              referenceConfig,
               audioVolume: typeof s.audio_volume === "number" ? s.audio_volume : undefined,
               trimStart,
               trimEnd,
@@ -2201,13 +3545,22 @@ export const useProjectStore = create<ProjectStore>()(
           // before their staging completed). Runs sequentially with a small
           // delay so we don't saturate the network on project open.
           if (typeof window !== "undefined") {
-            const toStage = scenes.filter(
-              (s) =>
-                s.status === "ready" &&
-                s.videoUrl &&
-                s.videoUrl.startsWith("http") &&
-                !s.sprite,
-            );
+            const toStage = scenes.filter((s) => {
+              if (
+                s.status !== "ready" ||
+                !s.videoUrl ||
+                !s.videoUrl.startsWith("http")
+              ) {
+                return false;
+              }
+              const versions = s.videoVersions ?? [];
+              const activeVer = versions[s.activeVersion];
+              if (activeVer?.sprite) return false;
+              // Multi-version scenes need the ACTIVE version's own sheet (the
+              // scene-level sprite may belong to a different version). Single /
+              // legacy scenes only need staging when they have no sheet at all.
+              return versions.length > 1 ? true : !s.sprite;
+            });
             const transitionsToStage = get().transitions.filter(
               (t) =>
                 t.status === "ready" &&
@@ -2220,8 +3573,10 @@ export const useProjectStore = create<ProjectStore>()(
                 void (async () => {
                   for (const s of toStage) {
                     if (!s.videoUrl) continue;
+                    const dur =
+                      s.videoVersions?.[s.activeVersion]?.duration ?? s.duration;
                     try {
-                      await kickoffStaging(s.id, s.videoUrl, s.duration);
+                      await kickoffStaging(s.id, s.videoUrl, dur);
                     } catch {
                       /* continue to next scene */
                     }
@@ -2238,6 +3593,19 @@ export const useProjectStore = create<ProjectStore>()(
                 })();
               }, 1500);
             }
+          }
+
+          // Resume any reference render that a previous session left in-flight
+          // (tab closed mid-generation). Deferred a tick so job executors are
+          // registered and the load `set()` above has flushed.
+          if (typeof window !== "undefined") {
+            setTimeout(() => {
+              try {
+                get().resumePendingReferenceJobs();
+              } catch (e) {
+                console.error("[resumePendingReferenceJobs]", e);
+              }
+            }, 0);
           }
         } catch (err) {
           console.error("[loadFromSupabase]", err);
@@ -2355,6 +3723,7 @@ export const useProjectStore = create<ProjectStore>()(
                   : null,
               image_transform: s.imageTransform ?? null,
               guidance_prompt: s.guidancePrompt ?? null,
+              reference_config: s.referenceConfig ?? null,
             });
           }
 
@@ -2509,7 +3878,9 @@ export const useProjectStore = create<ProjectStore>()(
         if (state.scenes.length === 0) return;
 
         const pid = state.supabaseProjectId ?? state.projectId;
-        const pending = state.scenes.filter((s) => s.status !== "ready");
+        const pending = state.scenes.filter(
+          (s) => s.status !== "ready" && s.sourceType !== "reference-group",
+        );
         if (pending.length === 0) return;
 
         const items = pending.map((scene, idx) => {
@@ -2592,6 +3963,7 @@ export const useProjectStore = create<ProjectStore>()(
           lastKnownUpdatedAt: null,
           conflict: null,
           _photoFiles: {},
+          _referenceFiles: {},
         }),
     }),
     {

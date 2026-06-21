@@ -11,7 +11,7 @@ const COLOR_TOKENS: RecipeColorToken[] = [
   "material",
   "asset",
 ];
-const SCOPES: RecipeScope[] = ["target", "asset", "any"];
+const SCOPES: RecipeScope[] = ["target", "asset", "any", "video_reference"];
 const MODES: RecipeProcessingMode[] = ["vision", "template"];
 
 export function slugify(input: string): string {

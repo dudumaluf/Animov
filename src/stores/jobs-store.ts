@@ -21,7 +21,12 @@ import { create } from "zustand";
  * jobs may leave the queue.
  */
 
-export type JobType = "video.scene" | "video.transition" | "music" | "image.edit";
+export type JobType =
+  | "video.scene"
+  | "video.transition"
+  | "video.reference"
+  | "music"
+  | "image.edit";
 
 export type JobStatus = "queued" | "running" | "succeeded" | "failed" | "canceled";
 

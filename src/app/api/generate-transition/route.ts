@@ -6,6 +6,11 @@ import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
 
 fal.config({ credentials: process.env.FAL_KEY! });
 
+// Video synthesis waits for fal before responding; longer clips exceed the 60s
+// serverless default. Pin the Pro-plan ceiling so the request isn't 504'd.
+export const runtime = "nodejs";
+export const maxDuration = 300;
+
 async function fetchAndUploadToFal(url: string): Promise<string> {
   const res = await fetch(url);
   if (!res.ok) throw new Error(`Failed to fetch image: ${res.status} ${url}`);

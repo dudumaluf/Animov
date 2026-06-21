@@ -24,12 +24,16 @@ export async function GET(req: NextRequest) {
   const scopeParam = url.searchParams.get("scope");
   const includeInactive = isAdmin && url.searchParams.get("admin") === "1";
 
-  const allowedScopes: RecipeScope[] = ["target", "asset", "any"];
+  const allowedScopes: RecipeScope[] = ["target", "asset", "any", "video_reference"];
   const scopes: RecipeScope[] | null =
     scopeParam && allowedScopes.includes(scopeParam as RecipeScope)
       ? scopeParam === "any"
         ? ["target", "asset", "any"]
-        : [scopeParam as RecipeScope, "any"]
+        : scopeParam === "video_reference"
+          ? // Reference presets are their own domain — never mix in the generic
+            // image-edit recipes ('any') so the picker only shows directors.
+            ["video_reference"]
+          : [scopeParam as RecipeScope, "any"]
       : null;
 
   // RLS already filters by active+user_visible for non-admins; admins see everything.

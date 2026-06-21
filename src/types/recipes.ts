@@ -5,7 +5,7 @@ export type RecipeColorToken =
   | "material"
   | "asset";
 
-export type RecipeScope = "target" | "asset" | "any";
+export type RecipeScope = "target" | "asset" | "any" | "video_reference";
 export type RecipeProcessingMode = "vision" | "template";
 
 export type RecipeCategory = {

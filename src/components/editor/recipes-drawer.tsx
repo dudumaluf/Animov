@@ -24,7 +24,7 @@ import type {
 } from "@/types/recipes";
 import { RecipeForm, type RecipeFormValue } from "@/components/admin/recipe-form";
 
-type DrawerMode = "target" | "asset";
+type DrawerMode = "target" | "asset" | "reference";
 
 function colorStyles(token: RecipeCategory["color_token"]) {
   return {
@@ -264,13 +264,32 @@ export function RecipesDrawer({
   }, [open, categories]);
 
   const scopes: RecipeScope[] = useMemo(
-    () => (mode === "asset" ? ["asset", "any"] : ["target", "any"]),
+    () =>
+      mode === "asset"
+        ? ["asset", "any"]
+        : mode === "reference"
+          ? ["video_reference"]
+          : ["target", "any"],
     [mode],
   );
 
+  // In reference mode, only surface categories that actually hold a
+  // video_reference recipe (avoids showing every image-edit category empty).
+  const referenceCategoryIds = useMemo(() => {
+    if (mode !== "reference") return null;
+    const ids = new Set<string>();
+    recipes.forEach((r) => {
+      if (r.scope === "video_reference") ids.add(r.category_id);
+    });
+    return ids;
+  }, [mode, recipes]);
+
   const visibleCategories = useMemo(() => {
-    return categories.filter((c) => (adminMode && isAdmin) || c.active);
-  }, [categories, adminMode, isAdmin]);
+    return categories.filter((c) => {
+      if (referenceCategoryIds && !referenceCategoryIds.has(c.id)) return false;
+      return (adminMode && isAdmin) || c.active;
+    });
+  }, [categories, adminMode, isAdmin, referenceCategoryIds]);
 
   const filteredRecipes = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -436,10 +455,15 @@ export function RecipesDrawer({
           <div className="flex items-center justify-between border-b border-white/5 px-4 py-3">
             <div>
               <p className="font-mono text-[9px] uppercase tracking-widest text-accent-gold">
-                Receitas
+                {mode === "reference" ? "Presets de vídeo" : "Receitas"}
               </p>
               <p className="font-mono text-[10px] text-text-secondary">
-                {totalVisible} disponíveis · {mode === "asset" ? "asset" : "cena"}
+                {totalVisible} disponíveis ·{" "}
+                {mode === "asset"
+                  ? "asset"
+                  : mode === "reference"
+                    ? "referência"
+                    : "cena"}
               </p>
             </div>
             <button
@@ -630,6 +654,11 @@ export function RecipesDrawer({
                               recipe={null}
                               categories={visibleCategories}
                               defaultCategoryId={category.id}
+                              defaultScope={
+                                mode === "reference"
+                                  ? "video_reference"
+                                  : undefined
+                              }
                               onSubmit={(v) => handleSaveRecipe(null, v)}
                               onCancel={() => setCreatingCategoryId(null)}
                               saving={savingId === "new"}

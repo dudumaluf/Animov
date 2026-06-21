@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useProjectStore } from "@/stores/project-store";
+import { useProjectStore, activeVersionSprite } from "@/stores/project-store";
 import { useTimelineStore } from "@/stores/timeline-store";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { TransformedImage } from "@/components/editor/transformed-image";
@@ -39,7 +39,7 @@ export function TheaterView() {
         videoUrl: scene.videoUrl ?? null,
         poster: scene.photoDataUrl ?? scene.photoUrl ?? null,
         imageTransform: scene.imageTransform ?? null,
-        sprite: scene.sprite ?? null,
+        sprite: activeVersionSprite(scene) ?? null,
         duration: scene.duration,
         trimStart: scene.trimStart,
         nativeDuration: scene.videoVersions?.[scene.activeVersion]?.duration,

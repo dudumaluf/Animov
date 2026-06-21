@@ -27,6 +27,7 @@ export type RecipeFormValue = {
 function toForm(
   recipe: Recipe | null,
   fallbackCategoryId: string | undefined,
+  fallbackScope: RecipeScope | undefined,
 ): RecipeFormValue {
   return {
     category_id: recipe?.category_id ?? fallbackCategoryId ?? "",
@@ -35,7 +36,7 @@ function toForm(
     short_label: recipe?.short_label ?? "",
     description: recipe?.description ?? "",
     icon: recipe?.icon ?? "",
-    scope: recipe?.scope ?? "target",
+    scope: recipe?.scope ?? fallbackScope ?? "target",
     processing_mode: recipe?.processing_mode ?? "vision",
     vision_system_prompt: recipe?.vision_system_prompt ?? "",
     prompt_template: recipe?.prompt_template ?? "",
@@ -49,6 +50,7 @@ type Props = {
   recipe: Recipe | null;
   categories: RecipeCategory[];
   defaultCategoryId?: string;
+  defaultScope?: RecipeScope;
   onSubmit: (value: RecipeFormValue) => Promise<void>;
   onCancel: () => void;
   saving?: boolean;
@@ -60,6 +62,7 @@ export function RecipeForm({
   recipe,
   categories,
   defaultCategoryId,
+  defaultScope,
   onSubmit,
   onCancel,
   saving,
@@ -67,12 +70,12 @@ export function RecipeForm({
   compact,
 }: Props) {
   const [value, setValue] = useState<RecipeFormValue>(() =>
-    toForm(recipe, defaultCategoryId),
+    toForm(recipe, defaultCategoryId, defaultScope),
   );
 
   useEffect(() => {
-    setValue(toForm(recipe, defaultCategoryId));
-  }, [recipe, defaultCategoryId]);
+    setValue(toForm(recipe, defaultCategoryId, defaultScope));
+  }, [recipe, defaultCategoryId, defaultScope]);
 
   const requiresVision = value.processing_mode === "vision";
   const visionMissing =
@@ -162,6 +165,7 @@ export function RecipeForm({
             <option value="target">Target (cena)</option>
             <option value="asset">Asset (referência)</option>
             <option value="any">Qualquer</option>
+            <option value="video_reference">Vídeo de referência</option>
           </select>
         </div>
         <div>

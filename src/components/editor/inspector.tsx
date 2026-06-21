@@ -5,6 +5,7 @@ import { FrameOverlay, aspectRatioClass } from "@/components/editor/frame-overla
 import { useState, useRef, useEffect, useCallback } from "react";
 import {
   useProjectStore,
+  activeVersionSprite,
   type ExportAspectRatio,
 } from "@/stores/project-store";
 import { useHasActiveMusicJob } from "@/stores/batches-store";
@@ -29,6 +30,7 @@ import { listAdapters, curatedDurationsFor } from "@/lib/adapters";
 import { type AudioMixSettings } from "@/lib/composition/compose";
 import { InspectorPreviewVideo } from "@/components/editor/video-mirror";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
+import { ReferenceGroupInspectorPanel } from "@/components/editor/reference-group-inspector-panel";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
@@ -865,7 +867,7 @@ export function Inspector({
                   sceneId={scene.id}
                   videoUrl={scene.videoUrl}
                   poster={scene.photoDataUrl ?? scene.photoUrl}
-                  sprite={scene.sprite}
+                  sprite={activeVersionSprite(scene)}
                   duration={scene.duration}
                   trimStart={scene.trimStart}
                   nativeDuration={scene.videoVersions?.[scene.activeVersion]?.duration}
@@ -903,9 +905,10 @@ export function Inspector({
                 </button>
               )}
             </FrameOverlay>
-          ) : (
-            // Preview lives elsewhere (headline/theater) — show only a compact
-            // chrome row so the close button + download stay reachable.
+          ) : previewPlacement === "theater" ? (
+            // Theater has no floating preview card, so keep a compact chrome row
+            // for download + fullscreen. In headline mode these live on the
+            // floating preview itself, so the inspector starts clean.
             <div className="flex shrink-0 items-center justify-between gap-1 border-b border-white/5 px-3 py-2">
               <span className="font-mono text-[10px] uppercase tracking-widest text-text-secondary">
                 Cena
@@ -934,7 +937,7 @@ export function Inspector({
                 )}
               </div>
             </div>
-          )}
+          ) : null}
 
           <div className="flex min-h-0 flex-1 flex-col overflow-y-auto px-3 py-3">
             {scene.sourceType === "video-upload" ? (
@@ -979,6 +982,8 @@ export function Inspector({
                   </div>
                 </div>
               </>
+            ) : scene.sourceType === "reference-group" ? (
+              <ReferenceGroupInspectorPanel scene={scene} />
             ) : (
               <>
                 <div>

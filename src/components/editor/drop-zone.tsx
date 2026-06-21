@@ -2,12 +2,12 @@
 
 import { useCallback, useRef } from "react";
 import { useProjectStore } from "@/stores/project-store";
+import { beginPhotoImport } from "@/components/editor/import-choice-modal";
 import { ImagePlus, Upload } from "lucide-react";
 
 const ACCEPTED = ".jpg,.jpeg,.png,.webp,.mp4,.webm,.mov";
 
 export function DropZone({ compact = false }: { compact?: boolean }) {
-  const addPhotos = useProjectStore((s) => s.addPhotos);
   const addVideoUploads = useProjectStore((s) => s.addVideoUploads);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -17,10 +17,10 @@ export function DropZone({ compact = false }: { compact?: boolean }) {
       const all = Array.from(files);
       const images = all.filter((f) => f.type.startsWith("image/"));
       const videos = all.filter((f) => f.type.startsWith("video/"));
-      if (images.length > 0) addPhotos(images);
+      if (images.length > 0) beginPhotoImport(images);
       if (videos.length > 0) addVideoUploads(videos);
     },
-    [addPhotos, addVideoUploads],
+    [addVideoUploads],
   );
 
   const handleDrop = useCallback(

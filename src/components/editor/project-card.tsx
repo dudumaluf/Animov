@@ -12,6 +12,18 @@ type Project = {
   updated_at: string;
 };
 
+// Pin locale + timezone so the formatted date is byte-identical whether it is
+// produced during SSR (UTC on Vercel) or re-rendered on the client (viewer's
+// local zone). A bare toLocaleDateString picks up each host's timezone, so a
+// timestamp near midnight formats to a different day on server vs client and
+// trips a React hydration mismatch (#425/#418/#423).
+const DATE_FORMAT = new Intl.DateTimeFormat("pt-BR", {
+  timeZone: "America/Sao_Paulo",
+  day: "2-digit",
+  month: "2-digit",
+  year: "numeric",
+});
+
 export function ProjectCard({ project }: { project: Project }) {
   const router = useRouter();
   const [deleting, setDeleting] = useState(false);
@@ -51,7 +63,7 @@ export function ProjectCard({ project }: { project: Project }) {
           {project.status === "failed" && "Erro"}
         </span>
         <span className="font-mono text-[10px] text-text-secondary">
-          {new Date(project.updated_at).toLocaleDateString("pt-BR")}
+          {DATE_FORMAT.format(new Date(project.updated_at))}
         </span>
       </div>
       <button

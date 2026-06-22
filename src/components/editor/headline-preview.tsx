@@ -7,6 +7,7 @@ import {
   useEditorSettingsStore,
   HEADLINE_MIN_HEIGHT,
   HEADLINE_MAX_HEIGHT,
+  HEADLINE_PREVIEW_DEFAULT,
 } from "@/stores/editor-settings-store";
 import { VideoMirror } from "@/components/editor/video-mirror";
 import { SpriteFrame } from "@/components/editor/sprite-frame";
@@ -61,7 +62,15 @@ export function HeadlinePreview({
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const exportAspectRatio = useProjectStore((s) => s.exportAspectRatio);
   const frameOverlay = useEditorSettingsStore((s) => s.frameOverlay);
-  const headlinePreview = useEditorSettingsStore((s) => s.layout.headlinePreview);
+  // Fall back to the centered default when `headlinePreview` is missing.
+  // Persisted settings written at store versions 2–3 never got this field
+  // backfilled (the `migrate` chain returns early), so `s.layout.headlinePreview`
+  // can be `undefined` for those users — reading `.height` off it later then
+  // crashes the whole editor. The default is a stable module constant, so this
+  // selector stays referentially stable and won't churn renders.
+  const headlinePreview =
+    useEditorSettingsStore((s) => s.layout.headlinePreview) ??
+    HEADLINE_PREVIEW_DEFAULT;
   const setHeadlinePreviewRect = useEditorSettingsStore(
     (s) => s.setHeadlinePreviewRect,
   );

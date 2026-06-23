@@ -228,7 +228,7 @@ function CreditsChip({ balance }: { balance: number | null }) {
               <button
                 onClick={() => {
                   setOpen(false);
-                  router.push("/planos");
+                  router.push("/conta");
                 }}
                 className="w-full rounded-lg bg-accent-gold py-1.5 font-mono text-[11px] uppercase tracking-widest text-[#0D0D0B] transition-opacity hover:opacity-80"
               >
@@ -237,7 +237,7 @@ function CreditsChip({ balance }: { balance: number | null }) {
               <button
                 onClick={() => {
                   setOpen(false);
-                  router.push("/planos");
+                  router.push("/conta");
                 }}
                 className="w-full rounded-lg border border-white/10 py-1.5 font-mono text-[11px] uppercase tracking-widest text-text-secondary transition-colors hover:border-white/20 hover:text-[var(--text)]"
               >

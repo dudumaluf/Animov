@@ -1,5 +1,10 @@
+import { Suspense } from "react";
 import { createClient } from "@/lib/supabase/server";
 import { redirect } from "next/navigation";
+import { listActiveCatalog } from "@/lib/billing/catalog";
+import { BillingActions } from "./billing-actions";
+
+const ACTIVE_SUB_STATUSES = new Set(["active", "trialing", "past_due"]);
 
 export default async function AccountPage() {
   const supabase = createClient();
@@ -18,12 +23,32 @@ export default async function AccountPage() {
     .eq("user_id", user.id)
     .single();
 
+  const { data: subscription } = await supabase
+    .from("subscriptions")
+    .select("plan, status, current_period_end, cancel_at_period_end")
+    .eq("user_id", user.id)
+    .maybeSingle();
+
   const { data: transactions } = await supabase
     .from("credit_transactions")
     .select("id, delta, reason, created_at")
     .eq("user_id", user.id)
     .order("created_at", { ascending: false })
     .limit(20);
+
+  const catalog = await listActiveCatalog();
+  const subscriptionEntries = catalog.filter((c) => c.kind === "subscription");
+  const packEntries = catalog.filter((c) => c.kind === "pack");
+
+  const hasActiveSub = !!subscription && ACTIVE_SUB_STATUSES.has(subscription.status);
+  const planLabel = hasActiveSub
+    ? subscriptionEntries.find((e) => e.plan === subscription!.plan)?.label ??
+      subscription!.plan ??
+      "Assinante"
+    : "Free";
+  const periodEnd = subscription?.current_period_end
+    ? new Date(subscription.current_period_end).toLocaleDateString("pt-BR")
+    : null;
 
   return (
     <main className="p-8">
@@ -36,7 +61,12 @@ export default async function AccountPage() {
         </div>
         <div className="rounded-xl border border-white/5 p-5">
           <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">Plano</p>
-          <p className="mt-2 font-display text-xl">Free</p>
+          <p className="mt-2 font-display text-xl">{planLabel}</p>
+          {hasActiveSub && periodEnd && (
+            <p className="mt-1 font-mono text-[10px] text-text-secondary">
+              {subscription!.cancel_at_period_end ? "Encerra em" : "Renova em"} {periodEnd}
+            </p>
+          )}
         </div>
         <div className="rounded-xl border border-white/5 p-5">
           <p className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">Membro desde</p>
@@ -45,6 +75,33 @@ export default async function AccountPage() {
           </p>
         </div>
       </div>
+
+      {catalog.length > 0 && (
+        <div className="mt-10">
+          <Suspense fallback={null}>
+            <BillingActions
+              subscriptions={subscriptionEntries.map((e) => ({
+                stripePriceId: e.stripePriceId,
+                kind: e.kind,
+                plan: e.plan,
+                credits: e.credits,
+                label: e.label,
+                displayPrice: e.displayPrice,
+              }))}
+              packs={packEntries.map((e) => ({
+                stripePriceId: e.stripePriceId,
+                kind: e.kind,
+                plan: e.plan,
+                credits: e.credits,
+                label: e.label,
+                displayPrice: e.displayPrice,
+              }))}
+              hasSubscription={hasActiveSub}
+              currentPlan={subscription?.plan ?? null}
+            />
+          </Suspense>
+        </div>
+      )}
 
       <div className="mt-8">
         <h2 className="font-display text-xl">Perfil</h2>

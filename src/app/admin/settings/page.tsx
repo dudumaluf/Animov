@@ -1,5 +1,6 @@
 import { createClient } from "@/lib/supabase/server";
 import { ModelToggle } from "./model-toggle";
+import { SettingRow, CatalogRow } from "./settings-editors";
 
 export default async function AdminSettingsPage() {
   const supabase = createClient();
@@ -8,6 +9,11 @@ export default async function AdminSettingsPage() {
     .from("system_settings")
     .select("key, value, updated_at")
     .order("key");
+
+  const { data: catalog } = await supabase
+    .from("billing_catalog")
+    .select("stripe_price_id, kind, plan, credits, label, display_price, active, sort_order")
+    .order("sort_order");
 
   const { data: models } = await supabase
     .from("models")
@@ -20,6 +26,11 @@ export default async function AdminSettingsPage() {
 
       <div className="mt-8">
         <h2 className="font-display text-xl">System Settings</h2>
+        <p className="mt-1 font-body text-sm text-text-secondary">
+          Inteiros como <code className="text-accent-gold">free_credits</code> e{" "}
+          <code className="text-accent-gold">fal_max_concurrent</code> são
+          editáveis ao vivo (≥ 0, sem deploy).
+        </p>
         <div className="mt-4 overflow-hidden rounded-xl border border-white/5">
           <table className="w-full">
             <thead>
@@ -32,17 +43,61 @@ export default async function AdminSettingsPage() {
             <tbody>
               {settings?.map((s) => (
                 <tr key={s.key} className="border-b border-white/5">
-                  <td className="px-4 py-3 font-mono text-label-sm text-accent-gold">{s.key}</td>
-                  <td className="px-4 py-3 font-mono text-label-sm text-text-secondary">
-                    {JSON.stringify(s.value)}
+                  <td className="px-4 py-3 align-middle font-mono text-label-sm text-accent-gold">{s.key}</td>
+                  <td className="px-4 py-3">
+                    <SettingRow
+                      settingKey={s.key}
+                      initialValue={
+                        typeof s.value === "number" || typeof s.value === "string"
+                          ? s.value
+                          : JSON.stringify(s.value)
+                      }
+                      type={typeof s.value === "number" ? "integer" : "string"}
+                    />
                   </td>
-                  <td className="px-4 py-3 text-right font-mono text-[10px] text-text-secondary">
+                  <td className="px-4 py-3 text-right align-middle font-mono text-[10px] text-text-secondary">
                     {new Date(s.updated_at).toLocaleDateString("pt-BR")}
                   </td>
                 </tr>
               ))}
               {(!settings || settings.length === 0) && (
                 <tr><td colSpan={3} className="px-4 py-6 text-center font-mono text-label-sm text-text-secondary">Nenhuma configuração</td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="mt-8">
+        <h2 className="font-display text-xl">Catálogo de Preços</h2>
+        <p className="mt-1 font-body text-sm text-text-secondary">
+          Créditos concedidos e rótulos são editáveis sem deploy. O valor cobrado
+          (preço) é imutável no Stripe — para alterá-lo, crie um novo preço.
+        </p>
+        <div className="mt-4 overflow-hidden rounded-xl border border-white/5">
+          <table className="w-full">
+            <thead>
+              <tr className="border-b border-white/5 bg-white/[0.02]">
+                <th className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-widest text-text-secondary">Plano / Preço</th>
+                <th className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-widest text-text-secondary">Créditos</th>
+                <th className="px-4 py-3 text-left font-mono text-[10px] uppercase tracking-widest text-text-secondary">Label</th>
+                <th className="px-4 py-3 text-right font-mono text-[10px] uppercase tracking-widest text-text-secondary"></th>
+              </tr>
+            </thead>
+            <tbody>
+              {catalog?.map((c) => (
+                <CatalogRow
+                  key={c.stripe_price_id}
+                  stripePriceId={c.stripe_price_id}
+                  kind={c.kind}
+                  plan={c.plan}
+                  displayPrice={c.display_price}
+                  initialCredits={c.credits}
+                  initialLabel={c.label}
+                />
+              ))}
+              {(!catalog || catalog.length === 0) && (
+                <tr><td colSpan={4} className="px-4 py-6 text-center font-mono text-label-sm text-text-secondary">Catálogo vazio — rode o script de setup do Stripe</td></tr>
               )}
             </tbody>
           </table>

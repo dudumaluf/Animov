@@ -9,6 +9,7 @@ import {
   type ExportAspectRatio,
 } from "@/stores/project-store";
 import { useHasActiveMusicJob } from "@/stores/batches-store";
+import Link from "next/link";
 import {
   Maximize2,
   ChevronDown,
@@ -22,15 +23,19 @@ import {
   Loader2,
   Volume2,
   SlidersHorizontal,
+  AlertCircle,
+  CreditCard,
 } from "lucide-react";
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
-import { listAdapters, curatedDurationsFor } from "@/lib/adapters";
+import { listAdapters, curatedDurationsFor, creditCostFor } from "@/lib/adapters";
+import { useCreditsBalance } from "@/hooks/use-credits-balance";
 import { type AudioMixSettings } from "@/lib/composition/compose";
 import { InspectorPreviewVideo } from "@/components/editor/video-mirror";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { ReferenceGroupInspectorPanel } from "@/components/editor/reference-group-inspector-panel";
+import { KenBurnsPreview } from "@/components/editor/ken-burns-preview";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
@@ -50,6 +55,15 @@ function getDurations(modelId: string): number[] {
     return curatedDurationsFor(modelId);
   } catch {
     return CURATED_DURATIONS[modelId] ?? [5, 10];
+  }
+}
+
+/** Credit estimate for a scene generation; 0 if the model id can't be resolved. */
+function safeSceneCreditCost(modelId: string, duration: number): number {
+  try {
+    return creditCostFor(modelId, duration);
+  } catch {
+    return 0;
   }
 }
 
@@ -815,6 +829,20 @@ export function Inspector({
   const durations = getDurations(modelId);
   const showModelPicker = listAdapters().length > 1;
 
+  // Pre-flight credit check for the (image→video) scene branch. `available`
+  // already nets out other in-flight jobs; null balance = still loading (don't
+  // block). Used to surface a "Comprar créditos" CTA before a guaranteed 402.
+  const { balance: creditBalance, available: creditAvailable } = useCreditsBalance();
+  const sceneTarget = scene
+    ? scene.generationTargetSeconds ?? scene.duration
+    : 0;
+  const sceneEstimate =
+    scene && scene.sourceType !== "video-upload" && scene.sourceType !== "reference-group"
+      ? safeSceneCreditCost(modelId, sceneTarget)
+      : 0;
+  const sceneInsufficient =
+    creditBalance !== null && sceneEstimate > 0 && sceneEstimate > creditAvailable;
+
   const musicPrompt = useProjectStore((s) => s.musicPrompt);
   const musicUrl = useProjectStore((s) => s.musicUrl);
   const isMusicGenerating = useHasActiveMusicJob();
@@ -871,6 +899,15 @@ export function Inspector({
                   duration={scene.duration}
                   trimStart={scene.trimStart}
                   nativeDuration={scene.videoVersions?.[scene.activeVersion]?.duration}
+                />
+              ) : scene.sourceType !== "video-upload" &&
+                scene.sourceType !== "reference-group" ? (
+                // Zero-cost motion teaser over the user's photo (mapped from the
+                // selected preset) — shown before any paid render.
+                <KenBurnsPreview
+                  src={scene.photoDataUrl ?? scene.photoUrl}
+                  presetId={scene.presetId}
+                  className="absolute inset-0 h-full w-full"
                 />
               ) : (
                 <TransformedImage
@@ -1063,10 +1100,29 @@ export function Inspector({
                 <div className="min-h-4 flex-1" aria-hidden />
 
                 <div className="mt-auto shrink-0 space-y-2 pt-2">
+                  {sceneInsufficient && scene.status !== "generating" && (
+                    <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5">
+                      <p className="flex items-center gap-1.5 font-mono text-[10px] text-amber-400">
+                        <AlertCircle size={11} className="shrink-0" />
+                        Faltam créditos ({sceneEstimate} / {creditAvailable})
+                      </p>
+                      <Link
+                        href="/conta"
+                        className="flex shrink-0 items-center gap-1 rounded-full bg-accent-gold px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[#0D0D0B] transition-opacity hover:opacity-90"
+                      >
+                        <CreditCard size={10} /> Comprar
+                      </Link>
+                    </div>
+                  )}
                   <button
                     type="button"
-                    disabled={scene.status === "generating"}
+                    disabled={scene.status === "generating" || sceneInsufficient}
                     onClick={() => generateScene(selectedSceneId)}
+                    title={
+                      sceneInsufficient
+                        ? `Créditos insuficientes — precisa de ${sceneEstimate}, você tem ${creditAvailable}`
+                        : undefined
+                    }
                     className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
                   >
                     {scene.status === "ready"

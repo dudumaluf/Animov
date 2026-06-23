@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import Link from "next/link";
 import {
   RotateCw,
   Loader2,
@@ -19,6 +20,7 @@ import {
   Volume2,
   VolumeX,
   RectangleHorizontal,
+  CreditCard,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -632,10 +634,18 @@ export function ReferenceGroupInspectorPanel({ scene }: { scene: Scene }) {
             <AlertCircle size={11} /> {generateError}
           </p>
         ) : insufficientCredits && !isGenerating ? (
-          <p className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] text-amber-400">
-            <AlertCircle size={11} className="shrink-0" /> Créditos insuficientes —
-            precisa de {estimate}, você tem {available}.
-          </p>
+          <div className="mb-1.5 flex items-center justify-between gap-2">
+            <p className="flex items-center gap-1.5 font-mono text-[10px] text-amber-400">
+              <AlertCircle size={11} className="shrink-0" /> Créditos insuficientes —
+              precisa de {estimate}, você tem {available}.
+            </p>
+            <Link
+              href="/conta"
+              className="flex shrink-0 items-center gap-1 rounded-full bg-accent-gold px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[#0D0D0B] transition-opacity hover:opacity-90"
+            >
+              <CreditCard size={10} /> Comprar
+            </Link>
+          </div>
         ) : jobError && scene.status === "failed" && !isGenerating ? (
           <p className="mb-1.5 flex items-center gap-1.5 font-mono text-[10px] text-red-400">
             <AlertCircle size={11} className="shrink-0" /> {jobError}

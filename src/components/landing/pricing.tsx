@@ -13,8 +13,12 @@ const plans = [
   {
     name: "Free",
     price: "R$ 0",
-    credits: "3 créditos",
-    features: ["3 vídeos de teste", "Marca d'água Animov", "Presets básicos"],
+    credits: "Pré-visualização grátis",
+    features: [
+      "Movimento na sua foto (grátis)",
+      "Galeria de exemplos reais",
+      "Presets básicos",
+    ],
     featured: false,
   },
   {

@@ -68,11 +68,25 @@ export type Job = {
   abortController?: AbortController;
   result?: unknown;
   progress?: number;
+  /**
+   * Server-side queue position (#N) while the global concurrency gate holds
+   * this job back on fal. Distinct from the client `status` ("running" = the
+   * executor is alive and polling). Set by async executors; surfaced as
+   * "na fila (#N)" in the activity drawer. Undefined once it leaves the fila.
+   */
+  queuePosition?: number;
 };
 
 export type EnqueueInput = Omit<
   Job,
-  "id" | "status" | "createdAt" | "abortController" | "result" | "actualCost" | "progress"
+  | "id"
+  | "status"
+  | "createdAt"
+  | "abortController"
+  | "result"
+  | "actualCost"
+  | "progress"
+  | "queuePosition"
 >;
 
 type JobsStore = {
@@ -84,6 +98,8 @@ type JobsStore = {
   retry: (id: string) => void;
   /** Remove a terminal job from the list. Does nothing for running/queued. */
   remove: (id: string) => void;
+  /** Set the server-side fila position (#N) for a job; null clears it. */
+  setQueuePosition: (id: string, position: number | null) => void;
   setMaxConcurrent: (n: number) => void;
   /** Abort every in-flight job and mark them canceled (editor unmount). */
   abortAll: () => void;
@@ -120,7 +136,10 @@ const autoRetryCounts = new Map<string, number>();
 
 /* ── Store ──────────────────────────────────────────────────────── */
 
-const DEFAULT_MAX_CONCURRENT = 4;
+// Per-tab client cap. Kept at/below the server-side `fal_max_concurrent` gate
+// so a single tab can't outrun fal's account limit; the global queue is the
+// real ceiling. Lowered 4 → 2 for the global-queue rollout.
+const DEFAULT_MAX_CONCURRENT = 2;
 
 export const useJobsStore = create<JobsStore>((set, get) => {
   /**
@@ -326,6 +345,14 @@ export const useJobsStore = create<JobsStore>((set, get) => {
       if (job.status === "running" || job.status === "queued") return;
       set((state) => ({ jobs: state.jobs.filter((j) => j.id !== id) }));
       autoRetryCounts.delete(id);
+    },
+
+    setQueuePosition: (id, position) => {
+      set((state) => ({
+        jobs: state.jobs.map((j) =>
+          j.id === id ? { ...j, queuePosition: position ?? undefined } : j,
+        ),
+      }));
     },
 
     setMaxConcurrent: (n) => {

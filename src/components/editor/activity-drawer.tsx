@@ -876,6 +876,14 @@ function JobList({
               <span className="truncate font-mono text-[10px] text-[var(--text)]">
                 {item.label}
               </span>
+              {isActive && job?.queuePosition ? (
+                <span
+                  className="shrink-0 rounded-full bg-white/5 px-1.5 py-0.5 font-mono text-[9px] text-text-secondary"
+                  title="Posição na fila global de geração"
+                >
+                  na fila #{job.queuePosition}
+                </span>
+              ) : null}
             </div>
             <div className="flex shrink-0 items-center gap-1 font-mono text-[9px] tabular-nums text-text-secondary">
               <span>

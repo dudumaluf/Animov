@@ -11,6 +11,15 @@ import {
   type Scene,
 } from "@/stores/project-store";
 import { extractFrameFile, sourceTimeForEdge } from "@/lib/video/extract-frame";
+import { runQueuedJob } from "@/lib/jobs/queue-client";
+
+/**
+ * Global-queue rollout switch. `false` keeps the proven synchronous
+ * /api/generate-transition path (the fallback). Flip to `true` (after verifying
+ * the queue on a preview deploy) to route transitions through the submit+poll
+ * global concurrency queue — same ExecutorFn contract, different transport.
+ */
+const USE_ASYNC_QUEUE = false;
 
 /**
  * video.transition executor
@@ -122,31 +131,59 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
   }));
 
   try {
-    const res = await fetch("/api/generate-transition", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        startImageUrl: startUrl,
-        endImageUrl: endUrl,
-        duration: p.duration,
-        modelId: p.modelId,
-        guidancePrompt: p.guidancePrompt,
-      }),
-      signal,
-    });
+    let videoUrl: string;
+    let realDuration: number;
+    let realCost: number;
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(err.error ?? `HTTP ${res.status}`);
+    if (USE_ASYNC_QUEUE) {
+      // Global queue: submit-only + poll (fila position surfaced via jobs-store).
+      const r = await runQueuedJob({
+        submitUrl: "/api/generate-transition/submit",
+        submitBody: {
+          startImageUrl: startUrl,
+          endImageUrl: endUrl,
+          duration: p.duration,
+          modelId: p.modelId,
+          guidancePrompt: p.guidancePrompt,
+          transitionId: p.transitionId,
+          projectId: p.projectId,
+        },
+        signal,
+        targetId: p.transitionId,
+        jobType: "video.transition",
+        fallbackDuration: p.duration,
+      });
+      videoUrl = r.videoUrl;
+      realCost = r.creditsCost;
+      realDuration = r.duration > 0 ? r.duration : p.duration;
+    } else {
+      // Synchronous fallback (default): one request that holds until fal returns.
+      const res = await fetch("/api/generate-transition", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          startImageUrl: startUrl,
+          endImageUrl: endUrl,
+          duration: p.duration,
+          modelId: p.modelId,
+          guidancePrompt: p.guidancePrompt,
+        }),
+        signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      realCost = typeof data.creditsCost === "number" ? data.creditsCost : p.duration;
+      realDuration =
+        typeof data.duration === "number" && data.duration > 0
+          ? data.duration
+          : p.duration;
+      videoUrl = data.videoUrl as string;
     }
-
-    const data = await res.json();
-    const realCost =
-      typeof data.creditsCost === "number" ? data.creditsCost : p.duration;
-    const realDuration =
-      typeof data.duration === "number" && data.duration > 0
-        ? data.duration
-        : p.duration;
 
     store.setState((st) => ({
       transitions: st.transitions.map((t) =>
@@ -154,7 +191,7 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
           ? {
               ...t,
               status: "ready" as const,
-              videoUrl: data.videoUrl,
+              videoUrl,
               costCredits: realCost,
               duration: realDuration,
             }
@@ -163,7 +200,7 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
       isDirty: true,
     }));
 
-    const falVideoUrl = data.videoUrl as string;
+    const falVideoUrl = videoUrl;
     void persistVideoToStorage(falVideoUrl, p.projectId, p.transitionId).then((permUrl) => {
       if (!permUrl) return;
       store.setState((st) => ({
@@ -177,7 +214,7 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
 
     return {
       actualCost: realCost,
-      data: { videoUrl: data.videoUrl, duration: realDuration },
+      data: { videoUrl, duration: realDuration },
     };
   } catch (err) {
     const isAbort =

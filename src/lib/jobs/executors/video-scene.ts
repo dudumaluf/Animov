@@ -8,6 +8,15 @@ import {
   persistVideoToStorage,
   kickoffStaging,
 } from "@/stores/project-store";
+import { runQueuedJob } from "@/lib/jobs/queue-client";
+
+/**
+ * Global-queue rollout switch. `false` keeps the proven synchronous
+ * /api/generate-scene path (the fallback). Flip to `true` (after verifying the
+ * queue on a preview deploy) to route scenes through the submit+poll global
+ * concurrency queue — same ExecutorFn contract, just a different transport.
+ */
+const USE_ASYNC_QUEUE = false;
 
 /**
  * video.scene executor
@@ -65,31 +74,58 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
   store.getState().updateSceneStatus(p.sceneId, "generating");
 
   try {
-    const res = await fetch("/api/generate-scene", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        photoUrl: httpsUrl,
-        presetId: p.presetId,
-        duration: p.duration,
-        modelId: p.modelId,
-        guidancePrompt: p.guidancePrompt,
-      }),
-      signal,
-    });
+    let videoUrl: string;
+    let realDuration: number;
+    let realCost: number;
 
-    if (!res.ok) {
-      const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
-      throw new Error(err.error ?? `HTTP ${res.status}`);
+    if (USE_ASYNC_QUEUE) {
+      // Global queue: submit-only + poll (fila position surfaced via jobs-store).
+      const r = await runQueuedJob({
+        submitUrl: "/api/generate-scene/submit",
+        submitBody: {
+          photoUrl: httpsUrl,
+          presetId: p.presetId,
+          duration: p.duration,
+          modelId: p.modelId,
+          guidancePrompt: p.guidancePrompt,
+          sceneId: p.sceneId,
+          projectId: p.projectId,
+        },
+        signal,
+        targetId: p.sceneId,
+        jobType: "video.scene",
+        fallbackDuration: p.duration,
+      });
+      videoUrl = r.videoUrl;
+      realDuration = r.duration;
+      realCost = r.creditsCost;
+    } else {
+      // Synchronous fallback (default): one request that holds until fal returns.
+      const res = await fetch("/api/generate-scene", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          photoUrl: httpsUrl,
+          presetId: p.presetId,
+          duration: p.duration,
+          modelId: p.modelId,
+          guidancePrompt: p.guidancePrompt,
+        }),
+        signal,
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+
+      const data = await res.json();
+      realCost = typeof data.creditsCost === "number" ? data.creditsCost : p.duration;
+      realDuration = typeof data.duration === "number" ? data.duration : p.duration;
+      videoUrl = data.videoUrl as string;
     }
 
-    const data = await res.json();
-    const realCost =
-      typeof data.creditsCost === "number" ? data.creditsCost : p.duration;
-    const realDuration =
-      typeof data.duration === "number" ? data.duration : p.duration;
-
-    store.getState().updateSceneStatus(p.sceneId, "ready", data.videoUrl, realCost, realDuration);
+    store.getState().updateSceneStatus(p.sceneId, "ready", videoUrl, realCost, realDuration);
 
     // Clear generation target so future inspector edits don't reuse stale intent.
     store.setState((st) => ({
@@ -100,7 +136,7 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
 
     // Mirror to Supabase and kick off sprite staging in the background.
     // Non-blocking so the user can interact immediately with the Fal URL.
-    const falVideoUrl = data.videoUrl as string;
+    const falVideoUrl = videoUrl;
     void persistVideoToStorage(falVideoUrl, p.projectId, p.sceneId).then((permUrl) => {
       if (!permUrl) return;
       store.setState((st) => ({
@@ -128,7 +164,7 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
 
     return {
       actualCost: realCost,
-      data: { videoUrl: data.videoUrl, duration: realDuration },
+      data: { videoUrl, duration: realDuration },
     };
   } catch (err) {
     // If the user aborted, jobs-store will mark status="canceled" — we leave

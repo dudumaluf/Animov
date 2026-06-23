@@ -4,6 +4,7 @@ import type {
   SceneInput,
   TransitionInput,
   ClipResult,
+  QueueState,
 } from "./types";
 
 fal.config({ credentials: process.env.FAL_KEY! });
@@ -25,6 +26,27 @@ function clampV3Duration(seconds: number): number {
   return Math.max(3, Math.min(15, s));
 }
 
+// Shared input builders so the sync (subscribe) and async (queue) paths submit
+// byte-identical payloads — only the transport differs.
+function sceneInputFor(input: SceneInput) {
+  return {
+    prompt: input.prompt,
+    start_image_url: input.photoUrl,
+    duration: String(clampV3Duration(input.duration)) as never,
+    generate_audio: false,
+  };
+}
+
+function transitionInputFor(input: TransitionInput) {
+  return {
+    prompt: input.prompt,
+    start_image_url: input.startFrameUrl,
+    end_image_url: input.endFrameUrl,
+    duration: String(clampV3Duration(input.duration)) as never,
+    generate_audio: false,
+  };
+}
+
 export const klingV3Adapter: VideoModelAdapter = {
   id: "kling-v3-pro",
   displayName: "Kling V3 Pro",
@@ -38,38 +60,47 @@ export const klingV3Adapter: VideoModelAdapter = {
 
   async generateScene(input: SceneInput): Promise<ClipResult> {
     const d = clampV3Duration(input.duration);
-    const result = await fal.subscribe(MODEL_ID, {
-      input: {
-        prompt: input.prompt,
-        start_image_url: input.photoUrl,
-        duration: String(d) as never,
-        generate_audio: false,
-      },
+    const result = (await fal.subscribe(MODEL_ID, {
+      input: sceneInputFor(input),
       logs: true,
-    }) as { data: KlingOutput };
+    })) as { data: KlingOutput };
 
-    return {
-      videoUrl: result.data.video.url,
-      durationSeconds: d,
-    };
+    return { videoUrl: result.data.video.url, durationSeconds: d };
   },
 
   async generateTransition(input: TransitionInput): Promise<ClipResult> {
     const d = clampV3Duration(input.duration);
-    const result = await fal.subscribe(MODEL_ID, {
-      input: {
-        prompt: input.prompt,
-        start_image_url: input.startFrameUrl,
-        end_image_url: input.endFrameUrl,
-        duration: String(d) as never,
-        generate_audio: false,
-      },
+    const result = (await fal.subscribe(MODEL_ID, {
+      input: transitionInputFor(input),
       logs: true,
-    }) as { data: KlingOutput };
+    })) as { data: KlingOutput };
 
-    return {
-      videoUrl: result.data.video.url,
-      durationSeconds: d,
+    return { videoUrl: result.data.video.url, durationSeconds: d };
+  },
+
+  async submitScene(input: SceneInput): Promise<string> {
+    const { request_id } = await fal.queue.submit(MODEL_ID, {
+      input: sceneInputFor(input),
+    });
+    return request_id;
+  },
+
+  async submitTransition(input: TransitionInput): Promise<string> {
+    const { request_id } = await fal.queue.submit(MODEL_ID, {
+      input: transitionInputFor(input),
+    });
+    return request_id;
+  },
+
+  async queueStatus(requestId: string): Promise<QueueState> {
+    const status = await fal.queue.status(MODEL_ID, { requestId });
+    return status.status;
+  },
+
+  async queueResult(requestId: string): Promise<{ videoUrl: string }> {
+    const result = (await fal.queue.result(MODEL_ID, { requestId })) as {
+      data: KlingOutput;
     };
+    return { videoUrl: result.data.video.url };
   },
 };

@@ -4,6 +4,7 @@ import type {
   SceneInput,
   TransitionInput,
   ClipResult,
+  QueueState,
 } from "./types";
 
 fal.config({ credentials: process.env.FAL_KEY! });
@@ -34,6 +35,32 @@ function durationParam(seconds: number): string {
   return String(clampSeedanceDuration(seconds));
 }
 
+// Shared builders so sync (subscribe) and async (queue) submit identical input.
+function sceneInputFor(input: SceneInput) {
+  return {
+    prompt: input.prompt,
+    image_url: input.photoUrl,
+    resolution: DEFAULT_RESOLUTION,
+    duration: durationParam(input.duration) as never,
+    aspect_ratio: "auto",
+    generate_audio: false,
+    bitrate_mode: "standard",
+  };
+}
+
+function transitionInputFor(input: TransitionInput) {
+  return {
+    prompt: input.prompt,
+    image_url: input.startFrameUrl,
+    end_image_url: input.endFrameUrl,
+    resolution: DEFAULT_RESOLUTION,
+    duration: durationParam(input.duration) as never,
+    aspect_ratio: "auto",
+    generate_audio: false,
+    bitrate_mode: "standard",
+  };
+}
+
 export const seedanceI2vAdapter: VideoModelAdapter = {
   id: "seedance-2-i2v",
   displayName: "Seedance 2",
@@ -48,43 +75,46 @@ export const seedanceI2vAdapter: VideoModelAdapter = {
   async generateScene(input: SceneInput): Promise<ClipResult> {
     const d = clampSeedanceDuration(input.duration);
     const result = (await fal.subscribe(MODEL_ID, {
-      input: {
-        prompt: input.prompt,
-        image_url: input.photoUrl,
-        resolution: DEFAULT_RESOLUTION,
-        duration: durationParam(d) as never,
-        aspect_ratio: "auto",
-        generate_audio: false,
-        bitrate_mode: "standard",
-      },
+      input: sceneInputFor(input),
       logs: true,
     })) as { data: SeedanceOutput };
 
-    return {
-      videoUrl: result.data.video.url,
-      durationSeconds: d,
-    };
+    return { videoUrl: result.data.video.url, durationSeconds: d };
   },
 
   async generateTransition(input: TransitionInput): Promise<ClipResult> {
     const d = clampSeedanceDuration(input.duration);
     const result = (await fal.subscribe(MODEL_ID, {
-      input: {
-        prompt: input.prompt,
-        image_url: input.startFrameUrl,
-        end_image_url: input.endFrameUrl,
-        resolution: DEFAULT_RESOLUTION,
-        duration: durationParam(d) as never,
-        aspect_ratio: "auto",
-        generate_audio: false,
-        bitrate_mode: "standard",
-      },
+      input: transitionInputFor(input),
       logs: true,
     })) as { data: SeedanceOutput };
 
-    return {
-      videoUrl: result.data.video.url,
-      durationSeconds: d,
+    return { videoUrl: result.data.video.url, durationSeconds: d };
+  },
+
+  async submitScene(input: SceneInput): Promise<string> {
+    const { request_id } = await fal.queue.submit(MODEL_ID, {
+      input: sceneInputFor(input),
+    });
+    return request_id;
+  },
+
+  async submitTransition(input: TransitionInput): Promise<string> {
+    const { request_id } = await fal.queue.submit(MODEL_ID, {
+      input: transitionInputFor(input),
+    });
+    return request_id;
+  },
+
+  async queueStatus(requestId: string): Promise<QueueState> {
+    const status = await fal.queue.status(MODEL_ID, { requestId });
+    return status.status;
+  },
+
+  async queueResult(requestId: string): Promise<{ videoUrl: string }> {
+    const result = (await fal.queue.result(MODEL_ID, { requestId })) as {
+      data: SeedanceOutput;
     };
+    return { videoUrl: result.data.video.url };
   },
 };

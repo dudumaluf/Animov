@@ -6,6 +6,7 @@ import { useTimelineStore } from "@/stores/timeline-store";
 import { EditorToolbar } from "@/components/editor/editor-toolbar";
 import { FilmStrip } from "@/components/editor/film-strip";
 import { DropZone } from "@/components/editor/drop-zone";
+import { ExampleGallery } from "@/components/marketing/example-gallery";
 import { VideoPreviewModal } from "@/components/editor/video-preview-modal";
 import { ImageEditModal } from "@/components/editor/image-edit-modal";
 import { ImportChoiceModal } from "@/components/editor/import-choice-modal";
@@ -842,8 +843,16 @@ export default function EditorPage({
       />
 
       {isEmpty ? (
-        <div className="flex flex-1 items-center justify-center p-8">
-          <DropZone />
+        <div className="flex flex-1 flex-col items-center overflow-y-auto p-8">
+          <div className="flex w-full max-w-4xl flex-1 flex-col items-center justify-center gap-12 py-6">
+            <DropZone />
+            <div className="w-full">
+              <p className="mb-4 text-center font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                Veja a qualidade real — sem gastar créditos
+              </p>
+              <ExampleGallery count={6} />
+            </div>
+          </div>
         </div>
       ) : (
         <div

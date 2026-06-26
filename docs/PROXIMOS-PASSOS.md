@@ -10,27 +10,34 @@
 
 ## 1. 📍 Onde você está agora
 
-Legenda: ✅ no ar · 🟡 pronto no PC, falta subir/testar · ⛔ não feito
+Legenda: ✅ no ar / feito · 🟡 em andamento · ⛔ não feito
 
-- ✅ **Hotfixes de produção** (editor não crasha mais com `height`; dashboard sem erro de hidratação #425/#418/#423) — **commitados, no `main`, deploy READY na Vercel**.
-- ✅ **Reference Studio** (vídeo a partir de várias imagens de referência) — **commitado, no `main`, deploy READY na Vercel**.
-- 🟡 **Billing (Stripe)** — código pronto **no seu PC (ainda não commitado)**. As tabelas e o catálogo **já estão no Supabase de produção**. Compra de **pacote** já testada e funcionando no modo TESTE. Falta: **testar assinatura**, commitar/subir, e virar a chave TEST→LIVE.
-- 🟡 **Fila global de geração (Fal)** — código pronto **no seu PC (ainda não commitado)**. A tabela `generation_jobs` e o limite `fal_max_concurrent = 2` **já estão no Supabase de produção**. Falta: commitar/subir, setar `CRON_SECRET` na Vercel, confirmar plano Pro e validar.
+- ✅ **Hotfixes de produção** (editor + dashboard) — no `main`, deploy READY.
+- ✅ **Reference Studio** — no `main`, deploy READY.
+- ✅ **Billing (Stripe) — validado no TESTE e JÁ NO AR em produção (modo teste).** Pacote **e** assinatura testados de ponta a ponta (assinatura Starter creditou +20cr, linha em `subscriptions`, Customer Portal OK). Código commitado (`c4036ca`), deploy READY, e a produção já tem as envs do Stripe (teste) + um webhook de teste registrado (`we_1TlJbS…`). **Falta:** validar uma compra no site real → depois **virar a chave TEST→LIVE** (FASE 2-B).
+- ✅ **Fila global de geração (Fal) — JÁ NO AR em produção.** Código commitado, `CRON_SECRET` setado, plano **Vercel Pro confirmado**, cron por minuto ativo. **Falta só:** validar disparando >2 gerações (FASE 3.1).
 
-> **👇 VOCÊ ESTÁ AQUI.** Próxima parada: **FASE 0** (5 minutos, só conferir que produção tá de pé).
+> **👇 VOCÊ ESTÁ AQUI.** Já passamos FASE 0 ✅, FASE 1 ✅ e o deploy da FASE 2-A ✅. Próxima parada: **uma compra de teste em produção** (`animov.vercel.app/conta`, cartão `4242…`). Depois: virar o LIVE (FASE 2-B) e validar a fila (FASE 3).
 
 ---
 
 ## 2. 👉 COMECE AQUI (a sua única próxima ação)
 
-**Abra https://animov.vercel.app, dê um hard refresh no dashboard e entre num projeto.**
-Quer ter certeza de que os dois hotfixes que já subiram estão de pé antes de mexer em qualquer coisa nova.
+**Entre em https://animov.vercel.app → login → /conta → faça uma compra de teste com o cartão `4242 4242 4242 4242`** (validade futura qualquer, CVC qualquer).
 
-Passo a passo na **FASE 0** logo abaixo. É rápido. Quando o console estiver limpo, siga pra FASE 1.
+A produção está **em modo TESTE do Stripe** agora — então **cartão real é recusado, só o de teste funciona**. É de propósito: validar o fluxo no site real antes de cobrar de verdade.
+
+**Deu certo quando:** o crédito cai (ou a assinatura aparece em /conta). Aí billing está validado em produção e seguimos pra **virar o LIVE (FASE 2-B)** e **validar a fila (FASE 3)**.
+
+⏱️ **Mantenha essa janela curta** — enquanto prod está em modo teste, ninguém paga de verdade.
+
+> _(FASE 0 e FASE 1 abaixo já estão concluídas — ficam aqui como registro.)_
 
 ---
 
-## 3. ✅ FASE 0 — Confirmar que a produção está estável
+## 3. ✅ FASE 0 — Confirmar que a produção está estável  ·  ✅ CONCLUÍDA
+
+> ✅ **Feito.** Você confirmou: dashboard sem os erros `#425/#418/#423` e projetos abrindo sem o crash de `height`. Hotfixes `ecad164` e `f076d1d` validados em produção. _(Passos abaixo ficam como registro.)_
 
 Só conferência. Nada pra programar aqui.
 
@@ -43,7 +50,9 @@ Só conferência. Nada pra programar aqui.
 
 ---
 
-## 4. 🟡 FASE 1 — Testar Billing (Stripe) no modo TESTE
+## 4. ✅ FASE 1 — Testar Billing (Stripe) no modo TESTE  ·  ✅ CONCLUÍDA
+
+> ✅ **Feito.** Assinatura Starter testada de ponta a ponta: `invoice.paid` creditou **+20cr** (saldo foi pra 31), linha criada em `subscriptions` (status `active`), e o **Customer Portal** abriu. Idempotência confirmada (3 eventos de pagamento, 1 crédito só). _(Passos abaixo ficam como registro.)_
 
 Objetivo: validar **a compra de ASSINATURA** (o pacote avulso você já testou e funcionou).
 Tudo isso roda **localmente** (`localhost:3000`) com chaves de **TESTE** — não mexe em produção.
@@ -81,6 +90,9 @@ node --env-file=.env.local scripts/setup-stripe-catalog.mjs
 ---
 
 ## 5. 🟡 FASE 2 — Subir o Billing pra produção + virar a chave LIVE
+
+> ✅ **(A) subir código + envs + webhook de teste: FEITO.** WIP commitado (`c4036ca`) e no ar; deploy READY. As 5 envs do Stripe/cron foram setadas na Vercel (modo **teste**), e um webhook **de teste** (`we_1TlJbS…`) foi registrado apontando pra `https://animov.vercel.app/api/webhooks/stripe`. Smoke-tests passaram (webhook 400, cron 401, /conta 200).
+> 🟡 **Falta a (B): virar TEST→LIVE** (criar preços live, webhook live, trocar as chaves pra `*_live_`, atualizar os price IDs do catálogo). É o passo que mexe com dinheiro de verdade — faça quando decidir lançar.
 
 Aqui tem duas coisas: (A) **subir o código** e (B) **trocar de TESTE pra LIVE** no Stripe. Faça na ordem.
 
@@ -125,6 +137,8 @@ Faça com calma; é o único ponto que mexe com dinheiro de verdade.
 
 ## 6. 🟡 FASE 3 — Fila global de concorrência (Fal)
 
+> ✅ **Quase tudo feito:** código commitado e no ar, `CRON_SECRET` setado na Vercel, plano **Pro confirmado**, e o cron por minuto está ativo. **Falta só validar** (item 6.1 abaixo: disparar >2 gerações e ver a fila funcionando).
+
 Garante que você nunca estoura o limite de jobs simultâneos da Fal (hoje 2). Já existe um "heartbeat" por minuto na Vercel que empurra a fila.
 
 - [ ] Commitar/pushar os arquivos da fila (se você **não** subiu tudo junto na FASE 2):
@@ -163,14 +177,14 @@ Teste de fumaça de ponta a ponta, como se você fosse um cliente novo.
 
 Coisas que eu **não consegui confirmar sozinho** ou que dependem da sua decisão:
 
-- [ ] **Plano da Vercel é Pro?** O cron por minuto exige Pro. _A verificar:_ Vercel → projeto animov → **Settings → Billing**. (Não dá pra ver isso pelas ferramentas que tenho aqui.)
-- [ ] **Envs já setadas na Vercel?** (`CRON_SECRET`, chaves do Stripe.) _A verificar:_ Settings → Environment Variables. (Só presença — nunca exponha o valor.)
-- [ ] **Confirmar que quer ir LIVE agora** (criar produtos/preços live + trocar as chaves). A decisão registrada foi: **testar em TESTE primeiro, depois virar LIVE** — você decide quando virar.
+- [x] **Plano da Vercel é Pro?** ✅ **Confirmado** (você confirmou). O cron por minuto está liberado.
+- [x] **Envs setadas na Vercel?** ✅ **Feito** — as 5 do Stripe/cron foram setadas em Production (modo **teste** por enquanto): `STRIPE_SECRET_KEY`, `NEXT_PUBLIC_STRIPE_PUBLISHABLE_KEY`, `STRIPE_WEBHOOK_SECRET`, `CRON_SECRET`, `NEXT_PUBLIC_APP_URL`.
+- [ ] **Confirmar que quer ir LIVE** (criar produtos/preços live + trocar as chaves). Decisão registrada: **testar em TESTE primeiro (estamos aqui), depois virar LIVE** — você decide quando virar.
 - [ ] **Ciência:** `localhost` e produção usam **o mesmo Supabase**. Testes locais escrevem no banco real (já aconteceu com o teste do pacote).
 - [ ] **Migrations 00026 e 00027:** ✅ **já aplicadas em produção** — não precisa rodar nada. (Só te avisando, é uma boa notícia.)
 
 ---
 
 ### 📌 Resumo de uma linha
-**Produção estável e no ar. Billing e Fila estão prontos no seu PC e o banco já tá preparado — falta testar a assinatura (FASE 1), depois commitar/subir e virar a chave LIVE.**
-👉 **Comece pela FASE 0** (5 min conferindo o dashboard).
+**Billing e Fila já estão NO AR em produção (modo teste), validados localmente. Falta: validar uma compra no site real, virar a chave TEST→LIVE (FASE 2-B) e validar a fila (FASE 3).**
+👉 **Próxima ação:** uma compra de teste em `animov.vercel.app/conta` com o cartão `4242…`.

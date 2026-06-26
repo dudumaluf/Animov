@@ -12,6 +12,7 @@ import {
 } from "@/stores/project-store";
 import { extractFrameFile, sourceTimeForEdge } from "@/lib/video/extract-frame";
 import { runQueuedJob } from "@/lib/jobs/queue-client";
+import type { SceneResolution } from "@/lib/adapters";
 
 /**
  * Global-queue rollout switch. `false` keeps the proven synchronous
@@ -42,8 +43,18 @@ export type VideoTransitionPayload = {
   projectId: string;
   duration: number;
   modelId: string;
-  /** Optional user steering appended to the base transition prompt. */
+  /** Optional user steering. In "auto" mode it's appended to the base prompt;
+   *  in "custom" mode it REPLACES the base prompt entirely. */
   guidancePrompt?: string;
+  /** "auto" (default) keeps the curated base prompt; "custom" uses the user's
+   *  text verbatim as the full prompt. */
+  promptMode?: "auto" | "custom";
+  /** Output resolution (Seedance only; 480p/720p/1080p). Server clamps to the model. */
+  resolution?: SceneResolution;
+  /** Concrete aspect ratio (Seedance only). */
+  aspectRatio?: string;
+  /** Whether the model also synthesizes audio (V3 + Seedance). */
+  generateAudio?: boolean;
 };
 
 /**
@@ -145,8 +156,12 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
           duration: p.duration,
           modelId: p.modelId,
           guidancePrompt: p.guidancePrompt,
+          promptMode: p.promptMode,
           transitionId: p.transitionId,
           projectId: p.projectId,
+          resolution: p.resolution,
+          aspectRatio: p.aspectRatio,
+          generateAudio: p.generateAudio,
         },
         signal,
         targetId: p.transitionId,
@@ -167,6 +182,10 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
           duration: p.duration,
           modelId: p.modelId,
           guidancePrompt: p.guidancePrompt,
+          promptMode: p.promptMode,
+          resolution: p.resolution,
+          aspectRatio: p.aspectRatio,
+          generateAudio: p.generateAudio,
         }),
         signal,
       });

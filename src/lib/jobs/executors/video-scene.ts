@@ -9,6 +9,7 @@ import {
   kickoffStaging,
 } from "@/stores/project-store";
 import { runQueuedJob } from "@/lib/jobs/queue-client";
+import type { SceneResolution } from "@/lib/adapters";
 
 /**
  * Global-queue rollout switch. `false` keeps the proven synchronous
@@ -46,6 +47,14 @@ export type VideoScenePayload = {
   modelId: string;
   /** Optional user steering appended to the preset-built prompt. */
   guidancePrompt?: string;
+  /** Output resolution (Seedance only; 480p/720p/1080p). Server clamps to the model. */
+  resolution?: SceneResolution;
+  /** Concrete aspect ratio (Seedance only). */
+  aspectRatio?: string;
+  /** User-typed negative prompt (Kling V3 only); overrides the auto default. */
+  negativePrompt?: string;
+  /** Whether the model also synthesizes audio (V3 + Seedance). */
+  generateAudio?: boolean;
 };
 
 const execute: ExecutorFn = async ({ payload, signal }) => {
@@ -90,6 +99,10 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
           guidancePrompt: p.guidancePrompt,
           sceneId: p.sceneId,
           projectId: p.projectId,
+          resolution: p.resolution,
+          aspectRatio: p.aspectRatio,
+          negativePrompt: p.negativePrompt,
+          generateAudio: p.generateAudio,
         },
         signal,
         targetId: p.sceneId,
@@ -110,6 +123,10 @@ const execute: ExecutorFn = async ({ payload, signal }) => {
           duration: p.duration,
           modelId: p.modelId,
           guidancePrompt: p.guidancePrompt,
+          resolution: p.resolution,
+          aspectRatio: p.aspectRatio,
+          negativePrompt: p.negativePrompt,
+          generateAudio: p.generateAudio,
         }),
         signal,
       });

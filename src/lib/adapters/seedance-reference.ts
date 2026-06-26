@@ -85,6 +85,26 @@ export function clampResolutionForTier(
 const ANCHOR_CREDITS_PER_SECOND = 3;
 const ANCHOR_USD_PER_SECOND = 0.3034;
 
+/**
+ * Standard-tier fal USD/s by resolution. This is ALSO the price basis for the
+ * Seedance image-to-video adapter (same model family, same per-second rates),
+ * so both endpoints scale credits off identical numbers. Exported so the i2v
+ * adapter doesn't duplicate the constants. 4k is intentionally omitted — we
+ * don't expose it (no clean $/s constant).
+ */
+export const SEEDANCE_STANDARD_USD_PER_SECOND: Record<ReferenceResolution, number> =
+  REFERENCE_USD_PER_SECOND.standard;
+
+/**
+ * Single source of truth for Seedance credit scaling: credits/s from a fal
+ * USD/s figure, anchored at standard@720p (3 cr/s @ $0.3034/s). Used by BOTH
+ * the reference-to-video and image-to-video adapters so a given resolution
+ * costs the same credits regardless of which Seedance endpoint renders it.
+ */
+export function seedanceCreditsPerSecondFromUsd(usdPerSecond: number): number {
+  return (usdPerSecond / ANCHOR_USD_PER_SECOND) * ANCHOR_CREDITS_PER_SECOND;
+}
+
 /** Credits debited per second @ standard/720p (back-compat anchor export). */
 export const REFERENCE_CREDITS_PER_SECOND = ANCHOR_CREDITS_PER_SECOND;
 
@@ -128,8 +148,7 @@ export function referenceCreditsPerSecond(
   tier: ReferenceTier = REFERENCE_DEFAULT_TIER,
   resolution: ReferenceResolution = REFERENCE_DEFAULT_RESOLUTION,
 ): number {
-  const usd = REFERENCE_USD_PER_SECOND[tier][resolution];
-  return (usd / ANCHOR_USD_PER_SECOND) * ANCHOR_CREDITS_PER_SECOND;
+  return seedanceCreditsPerSecondFromUsd(REFERENCE_USD_PER_SECOND[tier][resolution]);
 }
 
 /**

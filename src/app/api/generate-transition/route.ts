@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
+import {
+  getAdapter,
+  DEFAULT_MODEL_ID,
+  creditCostFor,
+  sanitizeGenerationOptions,
+} from "@/lib/adapters";
 import { configureFal } from "@/lib/fal-key";
 
 // Video synthesis waits for fal before responding; longer clips exceed the 60s
@@ -34,6 +39,9 @@ export async function POST(req: NextRequest) {
   const modelId = (body.modelId as string) || DEFAULT_MODEL_ID;
   const guidancePrompt =
     typeof body.guidancePrompt === "string" ? body.guidancePrompt.trim() : "";
+  // "custom" ⇒ the guidance text REPLACES the base prompt (full creative
+  // control); "auto" (default) ⇒ legacy behavior (append as a director's note).
+  const promptMode = body.promptMode === "custom" ? "custom" : "auto";
 
   if (!startImageUrl || !endImageUrl) {
     return NextResponse.json(
@@ -43,7 +51,13 @@ export async function POST(req: NextRequest) {
   }
 
   const adapter = getAdapter(modelId);
-  const creditCost = creditCostFor(modelId, duration);
+  const options = sanitizeGenerationOptions(modelId, {
+    resolution: body.resolution,
+    aspectRatio: body.aspectRatio,
+    negativePrompt: body.negativePrompt,
+    generateAudio: body.generateAudio,
+  });
+  const creditCost = creditCostFor(modelId, duration, { resolution: options.resolution });
 
   const admin = createAdminClient();
 
@@ -73,18 +87,26 @@ export async function POST(req: NextRequest) {
       "Smooth cinematic camera transition between two interior spaces. " +
       "Continuous fluid movement, photorealistic, locked architecture, " +
       "preserve all visible surfaces exactly. No new elements, no scene morphing, natural camera flow.";
-    // User guidance gets the last word so it can steer the motion (e.g. "whip
-    // pan to the right", "slow push through the doorway") without losing the
-    // safety rails of the base prompt.
-    const prompt = guidancePrompt
-      ? `${basePrompt} Director's note: ${guidancePrompt}`
-      : basePrompt;
+    // Two modes:
+    //  - custom: the user's text IS the full prompt (true creative control).
+    //  - auto (default): the curated base prompt, with any guidance appended as
+    //    a director's note so the safety rails stay in place.
+    const prompt =
+      promptMode === "custom" && guidancePrompt
+        ? guidancePrompt
+        : guidancePrompt
+          ? `${basePrompt} Director's note: ${guidancePrompt}`
+          : basePrompt;
 
     const result = await adapter.generateTransition({
       startFrameUrl: falStartUrl,
       endFrameUrl: falEndUrl,
       prompt,
       duration,
+      negativePrompt: options.negativePrompt,
+      resolution: options.resolution,
+      aspectRatio: options.aspectRatio,
+      generateAudio: options.generateAudio,
     });
 
     await admin.from("generation_logs").insert({

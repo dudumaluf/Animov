@@ -25,24 +25,40 @@ function clampV3Duration(seconds: number): number {
 }
 
 // Shared input builders so the sync (subscribe) and async (queue) paths submit
-// byte-identical payloads — only the transport differs.
+// byte-identical payloads — only the transport differs. Kling V3 i2v exposes
+// `negative_prompt` + `generate_audio` (but NO resolution/aspect — the ratio is
+// inferred from the start frame), so we only forward those two extras.
+function withNegative<T extends Record<string, unknown>>(
+  base: T,
+  negativePrompt: string | null | undefined,
+): T {
+  const neg = negativePrompt?.trim();
+  return neg ? { ...base, negative_prompt: neg } : base;
+}
+
 function sceneInputFor(input: SceneInput) {
-  return {
-    prompt: input.prompt,
-    start_image_url: input.photoUrl,
-    duration: String(clampV3Duration(input.duration)) as never,
-    generate_audio: false,
-  };
+  return withNegative(
+    {
+      prompt: input.prompt,
+      start_image_url: input.photoUrl,
+      duration: String(clampV3Duration(input.duration)) as never,
+      generate_audio: input.generateAudio ?? false,
+    },
+    input.negativePrompt,
+  );
 }
 
 function transitionInputFor(input: TransitionInput) {
-  return {
-    prompt: input.prompt,
-    start_image_url: input.startFrameUrl,
-    end_image_url: input.endFrameUrl,
-    duration: String(clampV3Duration(input.duration)) as never,
-    generate_audio: false,
-  };
+  return withNegative(
+    {
+      prompt: input.prompt,
+      start_image_url: input.startFrameUrl,
+      end_image_url: input.endFrameUrl,
+      duration: String(clampV3Duration(input.duration)) as never,
+      generate_audio: input.generateAudio ?? false,
+    },
+    input.negativePrompt,
+  );
 }
 
 export const klingV3Adapter: VideoModelAdapter = {
@@ -52,6 +68,8 @@ export const klingV3Adapter: VideoModelAdapter = {
   creditsPerSecond: 1,
   supportsStartEndFrame: true,
   supportsNegativePrompt: true,
+  supportsGenerateAudio: true,
+  supportsAspectRatio: false,
   maxDuration: 15,
   minDuration: 3,
   curatedDurations: [3, 5, 7, 10, 12, 15],

@@ -6,7 +6,7 @@ import {
   parsePortableProjectJson,
   portableToScene,
 } from "@/lib/project-portable";
-import { DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
+import { DEFAULT_MODEL_ID, creditCostFor, type SceneResolution } from "@/lib/adapters";
 import {
   referenceCreditCost,
   clampReferenceDuration,
@@ -202,6 +202,14 @@ export type ReferenceConfig = {
 export type ReferenceAspectPref = ReferenceAspectRatio | "project";
 
 /**
+ * Sentinel `presetId` meaning "no director preset — the user writes a fully
+ * custom prompt from scratch". Distinct from `""` (nothing chosen yet) so the
+ * panel can tell an explicit free-prompt choice apart from the initial state,
+ * and so compose/auto-compose (which need a real recipe) stay disabled.
+ */
+export const REFERENCE_FREE_PROMPT_ID = "__free__";
+
+/**
  * Resolve a reference aspect preference to the concrete value Seedance accepts.
  * `"project"` maps the canvas/export ratio onto the closest supported enum
  * (4:5 → 3:4, the nearest portrait); unset/"auto" → "auto".
@@ -271,6 +279,24 @@ export type Scene = {
    */
   guidancePrompt?: string;
   /**
+   * Output resolution requested from the model on the NEXT generation. Only
+   * meaningful for models that expose resolutions (Seedance i2v: 480p/720p);
+   * ignored (and dropped server-side) for Kling. Undefined ⇒ model default
+   * (720p) — i.e. today's behavior for scenes that predate this field.
+   */
+  genResolution?: SceneResolution;
+  /**
+   * Whether the model should also synthesize audio (Seedance + Kling V3).
+   * Undefined/false ⇒ silent (today's default). Dropped for models that don't
+   * accept `generate_audio` (Kling O1).
+   */
+  genGenerateAudio?: boolean;
+  /**
+   * User-typed negative prompt (Kling V3 only). Overrides the auto-built
+   * negative when non-empty; empty/undefined falls back to the preset default.
+   */
+  genNegativePrompt?: string;
+  /**
    * Present only when `sourceType === "reference-group"`. Holds the reference
    * images (roles + descriptions), the selected preset, creative guidance and
    * the composed `@Image1..N` prompt. Persisted to `scenes.reference_config`.
@@ -318,10 +344,21 @@ export type Transition = {
   sprite?: SceneSprite;
   stagingStatus?: SceneStagingStatus;
   /**
-   * Optional free-text appended to the base transition prompt to steer the
-   * generated motion. Empty/undefined = default cinematic transition prompt.
+   * Optional free-text. In "auto" mode it's appended to the base transition
+   * prompt as a director's note; in "custom" mode it REPLACES the base prompt
+   * entirely. Empty/undefined = default cinematic transition prompt.
    */
   guidancePrompt?: string;
+  /**
+   * How `guidancePrompt` is applied. "auto" (default) keeps the curated base
+   * prompt with the guidance appended; "custom" sends the guidance verbatim as
+   * the full prompt. Undefined ⇒ "auto" (back-compat for older transitions).
+   */
+  promptMode?: "auto" | "custom";
+  /** Output resolution (Seedance only; 480p/720p). Undefined ⇒ model default. */
+  genResolution?: SceneResolution;
+  /** Whether the model also synthesizes audio (Seedance + Kling V3). */
+  genGenerateAudio?: boolean;
 };
 
 export type ProjectStore = {
@@ -519,6 +556,12 @@ export type ProjectStore = {
   ) => void;
   setSceneTransform: (sceneId: string, transform: ImageTransform | null) => void;
   setSceneGuidancePrompt: (sceneId: string, prompt: string) => void;
+  /** Set the output resolution (480p | 720p) for an image→video scene. */
+  setSceneResolution: (sceneId: string, resolution: SceneResolution) => void;
+  /** Toggle whether the model also synthesizes audio for a scene. */
+  setSceneGenerateAudio: (sceneId: string, generateAudio: boolean) => void;
+  /** Set the user negative prompt (Kling V3 only) for a scene. */
+  setSceneNegativePrompt: (sceneId: string, prompt: string) => void;
   setActiveVersion: (sceneId: string, version: number) => void;
   updateSceneImage: (sceneId: string, newImageUrl: string) => void;
 
@@ -527,7 +570,12 @@ export type ProjectStore = {
     fromSceneId: string,
     toSceneId: string,
     duration?: number,
-    guidancePrompt?: string,
+    opts?: {
+      guidancePrompt?: string;
+      promptMode?: "auto" | "custom";
+      resolution?: SceneResolution;
+      generateAudio?: boolean;
+    },
   ) => Promise<void>;
   removeTransition: (transitionId: string) => void;
   setHasEditNode: (has: boolean) => void;
@@ -2212,6 +2260,21 @@ export const useProjectStore = create<ProjectStore>()(
         set((state) => ({
           scenes: state.scenes.map((s) => {
             if (s.id !== sceneId || !s.referenceConfig) return s;
+            // Free-prompt mode: restore the user's cached free text if they had
+            // one; otherwise PRESERVE the current prompt (so switching a preset
+            // draft into "free" keeps it editable). Never clobber with empty.
+            if (presetId === REFERENCE_FREE_PROMPT_ID) {
+              const cachedFree =
+                s.referenceConfig.presetPrompts?.[REFERENCE_FREE_PROMPT_ID];
+              return {
+                ...s,
+                referenceConfig: {
+                  ...s.referenceConfig,
+                  presetId,
+                  composedPrompt: cachedFree ?? s.referenceConfig.composedPrompt ?? "",
+                },
+              };
+            }
             // Instant switch: show this preset's already-composed prompt (seeded
             // at analysis time or edited earlier). Empty when not yet generated
             // — the panel will compose it on demand.
@@ -2318,7 +2381,9 @@ export const useProjectStore = create<ProjectStore>()(
         const scene = get().scenes.find((s) => s.id === sceneId);
         const config = scene?.referenceConfig;
         if (!config) return { ok: false, error: "Grupo de referência não encontrado" };
-        if (!config.presetId) return { ok: false, error: "Escolha um preset primeiro" };
+        if (!config.presetId || config.presetId === REFERENCE_FREE_PROMPT_ID) {
+          return { ok: false, error: "Escolha um preset primeiro" };
+        }
 
         const images = config.images
           .filter((im) => im.url.startsWith("http"))
@@ -2488,7 +2553,8 @@ export const useProjectStore = create<ProjectStore>()(
                 resolution,
                 aspectRatio,
                 generateAudio: config.generateAudio ?? false,
-                presetId: config.presetId,
+                presetId:
+                  config.presetId === REFERENCE_FREE_PROMPT_ID ? undefined : config.presetId,
               },
             },
           ],
@@ -2996,6 +3062,40 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
+      setSceneResolution: (sceneId, resolution) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId ? { ...s, genResolution: resolution } : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      setSceneGenerateAudio: (sceneId, generateAudio) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) =>
+            s.id === sceneId ? { ...s, genGenerateAudio: generateAudio } : s,
+          ),
+          isDirty: true,
+        }));
+      },
+
+      setSceneNegativePrompt: (sceneId, prompt) => {
+        set((state) => ({
+          scenes: state.scenes.map((s) => {
+            if (s.id !== sceneId) return s;
+            const next: Scene = { ...s };
+            if (prompt.trim()) {
+              next.genNegativePrompt = prompt;
+            } else {
+              delete next.genNegativePrompt;
+            }
+            return next;
+          }),
+          isDirty: true,
+        }));
+      },
+
       setActiveVersion: (sceneId, version) => {
         set((state) => ({
           scenes: state.scenes.map((s) => {
@@ -3075,7 +3175,7 @@ export const useProjectStore = create<ProjectStore>()(
         }));
       },
 
-      generateTransition: async (fromSceneId, toSceneId, duration = 5, guidancePrompt) => {
+      generateTransition: async (fromSceneId, toSceneId, duration = 5, opts) => {
         const state = get();
         const fromScene = state.scenes.find((s) => s.id === fromSceneId);
         const toScene = state.scenes.find((s) => s.id === toSceneId);
@@ -3083,18 +3183,30 @@ export const useProjectStore = create<ProjectStore>()(
 
         const transitionId = `t-${fromSceneId}-${toSceneId}`;
         const pid = state.supabaseProjectId ?? state.projectId;
-        const trimmedPrompt = guidancePrompt?.trim() || undefined;
+        const trimmedPrompt = opts?.guidancePrompt?.trim() || undefined;
+        // "custom" only makes sense with text — fall back to "auto" when empty
+        // so an accidental empty custom prompt still yields the base prompt.
+        const promptMode: "auto" | "custom" =
+          opts?.promptMode === "custom" && trimmedPrompt ? "custom" : "auto";
+        const resolution = opts?.resolution;
+        const generateAudio = opts?.generateAudio;
 
-        // Persist the prompt onto the transition row so a later regeneration
-        // (or reload) keeps the user's steering. The transition may not exist
-        // in the store yet (first time) — upsert it as idle so the field has
-        // somewhere to live until the executor flips it to generating.
+        // Persist the prompt + options onto the transition row so a later
+        // regeneration (or reload) keeps the user's steering. The transition
+        // may not exist in the store yet (first time) — upsert it as idle so
+        // the fields have somewhere to live until the executor flips it.
         set((st) => {
+          const patch = {
+            guidancePrompt: trimmedPrompt,
+            promptMode,
+            genResolution: resolution,
+            genGenerateAudio: generateAudio,
+          };
           const existing = st.transitions.find((t) => t.id === transitionId);
           if (existing) {
             return {
               transitions: st.transitions.map((t) =>
-                t.id === transitionId ? { ...t, guidancePrompt: trimmedPrompt } : t,
+                t.id === transitionId ? { ...t, ...patch } : t,
               ),
             };
           }
@@ -3112,7 +3224,7 @@ export const useProjectStore = create<ProjectStore>()(
                 enabled: true,
                 status: "idle" as const,
                 costCredits: 5,
-                guidancePrompt: trimmedPrompt,
+                ...patch,
               },
             ],
           };
@@ -3123,7 +3235,7 @@ export const useProjectStore = create<ProjectStore>()(
             {
               targetId: transitionId,
               label: `Transição · ${duration}s`,
-              estimatedCost: creditCostFor(state.modelId, duration),
+              estimatedCost: creditCostFor(state.modelId, duration, { resolution }),
               type: "video.transition" as const,
               payload: {
                 transitionId,
@@ -3133,6 +3245,9 @@ export const useProjectStore = create<ProjectStore>()(
                 duration,
                 modelId: state.modelId,
                 guidancePrompt: trimmedPrompt,
+                promptMode,
+                resolution,
+                generateAudio,
               },
             },
           ],
@@ -3510,6 +3625,38 @@ export const useProjectStore = create<ProjectStore>()(
             }
           });
 
+          // Restore Path A generation knobs stashed in metadata (see save()).
+          // Validated lightly here; the routes/dispatcher re-sanitize anyway.
+          const sceneGenOptions: Record<
+            string,
+            { resolution?: unknown; generateAudio?: unknown; negativePrompt?: unknown }
+          > = meta.sceneGenOptions ?? {};
+          scenes.forEach((s) => {
+            const o = sceneGenOptions[s.id];
+            if (!o) return;
+            if (o.resolution === "480p" || o.resolution === "720p" || o.resolution === "1080p") {
+              s.genResolution = o.resolution;
+            }
+            if (typeof o.generateAudio === "boolean") s.genGenerateAudio = o.generateAudio;
+            if (typeof o.negativePrompt === "string" && o.negativePrompt.trim()) {
+              s.genNegativePrompt = o.negativePrompt;
+            }
+          });
+
+          const transitionGenOptions: Record<
+            string,
+            { promptMode?: unknown; resolution?: unknown; generateAudio?: unknown }
+          > = meta.transitionGenOptions ?? {};
+          dbTransitions.forEach((t) => {
+            const o = transitionGenOptions[t.id];
+            if (!o) return;
+            if (o.promptMode === "custom") t.promptMode = "custom";
+            if (o.resolution === "480p" || o.resolution === "720p" || o.resolution === "1080p") {
+              t.genResolution = o.resolution;
+            }
+            if (typeof o.generateAudio === "boolean") t.genGenerateAudio = o.generateAudio;
+          });
+
           set({
             supabaseProjectId: supabaseId,
             projectId: supabaseId,
@@ -3760,6 +3907,42 @@ export const useProjectStore = create<ProjectStore>()(
             if (s.sprite) sceneStaging[s.id] = s.sprite;
           });
 
+          // Path A generation knobs (resolution/audio/negative + transition
+          // prompt-mode) live in project.metadata keyed by scene/transition id
+          // — no DB migration needed, mirrors the sceneStaging pattern. Only
+          // non-default values are written so legacy projects stay clean.
+          const sceneGenOptions: Record<
+            string,
+            { resolution?: SceneResolution; generateAudio?: boolean; negativePrompt?: string }
+          > = {};
+          state.scenes.forEach((s) => {
+            const entry: {
+              resolution?: SceneResolution;
+              generateAudio?: boolean;
+              negativePrompt?: string;
+            } = {};
+            if (s.genResolution) entry.resolution = s.genResolution;
+            if (s.genGenerateAudio) entry.generateAudio = true;
+            if (s.genNegativePrompt?.trim()) entry.negativePrompt = s.genNegativePrompt;
+            if (Object.keys(entry).length > 0) sceneGenOptions[s.id] = entry;
+          });
+
+          const transitionGenOptions: Record<
+            string,
+            { promptMode?: "auto" | "custom"; resolution?: SceneResolution; generateAudio?: boolean }
+          > = {};
+          state.transitions.forEach((t) => {
+            const entry: {
+              promptMode?: "auto" | "custom";
+              resolution?: SceneResolution;
+              generateAudio?: boolean;
+            } = {};
+            if (t.promptMode === "custom") entry.promptMode = "custom";
+            if (t.genResolution) entry.resolution = t.genResolution;
+            if (t.genGenerateAudio) entry.generateAudio = true;
+            if (Object.keys(entry).length > 0) transitionGenOptions[t.id] = entry;
+          });
+
           const payload: Record<string, unknown> = {
             name: state.projectName,
             metadata: {
@@ -3769,6 +3952,10 @@ export const useProjectStore = create<ProjectStore>()(
               exportAspectRatio: state.exportAspectRatio !== "16:9" ? state.exportAspectRatio : undefined,
               audioMix: state.audioMix,
               sceneStaging: Object.keys(sceneStaging).length > 0 ? sceneStaging : undefined,
+              sceneGenOptions:
+                Object.keys(sceneGenOptions).length > 0 ? sceneGenOptions : undefined,
+              transitionGenOptions:
+                Object.keys(transitionGenOptions).length > 0 ? transitionGenOptions : undefined,
             },
             transitions: transitionsPayload,
           };
@@ -3888,7 +4075,9 @@ export const useProjectStore = create<ProjectStore>()(
           return {
             targetId: scene.id,
             label: `Cena ${idx + 1} · ${scene.presetId.replace(/_/g, " ")} · ${targetDuration}s`,
-            estimatedCost: creditCostFor(state.modelId, targetDuration),
+            estimatedCost: creditCostFor(state.modelId, targetDuration, {
+              resolution: scene.genResolution,
+            }),
             type: "video.scene" as const,
             payload: {
               sceneId: scene.id,
@@ -3897,6 +4086,9 @@ export const useProjectStore = create<ProjectStore>()(
               duration: targetDuration,
               modelId: state.modelId,
               guidancePrompt: scene.guidancePrompt,
+              resolution: scene.genResolution,
+              generateAudio: scene.genGenerateAudio,
+              negativePrompt: scene.genNegativePrompt,
             },
           };
         });
@@ -3922,7 +4114,9 @@ export const useProjectStore = create<ProjectStore>()(
             {
               targetId: sceneId,
               label: `Cena ${sceneIdx + 1} · ${scene.presetId.replace(/_/g, " ")} · ${targetDuration}s`,
-              estimatedCost: creditCostFor(state.modelId, targetDuration),
+              estimatedCost: creditCostFor(state.modelId, targetDuration, {
+                resolution: scene.genResolution,
+              }),
               type: "video.scene" as const,
               payload: {
                 sceneId,
@@ -3931,6 +4125,9 @@ export const useProjectStore = create<ProjectStore>()(
                 duration: targetDuration,
                 modelId: state.modelId,
                 guidancePrompt: scene.guidancePrompt,
+                resolution: scene.genResolution,
+                generateAudio: scene.genGenerateAudio,
+                negativePrompt: scene.genNegativePrompt,
               },
             },
           ],

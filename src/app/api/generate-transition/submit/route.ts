@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
+import { DEFAULT_MODEL_ID, creditCostFor, sanitizeGenerationOptions } from "@/lib/adapters";
 import { ensureFalUrl } from "@/lib/fal-helpers";
 import { dispatch } from "@/lib/jobs/dispatch";
 import { configureFal } from "@/lib/fal-key";
@@ -40,6 +40,7 @@ export async function POST(req: NextRequest) {
   const modelId = (body.modelId as string) || DEFAULT_MODEL_ID;
   const guidancePrompt =
     typeof body.guidancePrompt === "string" ? body.guidancePrompt.trim() : "";
+  const promptMode = body.promptMode === "custom" ? "custom" : "auto";
   const transitionId = typeof body.transitionId === "string" ? body.transitionId : undefined;
   const projectId = typeof body.projectId === "string" ? body.projectId : undefined;
 
@@ -50,7 +51,13 @@ export async function POST(req: NextRequest) {
     );
   }
 
-  const creditCost = creditCostFor(modelId, duration);
+  const options = sanitizeGenerationOptions(modelId, {
+    resolution: body.resolution,
+    aspectRatio: body.aspectRatio,
+    negativePrompt: body.negativePrompt,
+    generateAudio: body.generateAudio,
+  });
+  const creditCost = creditCostFor(modelId, duration, { resolution: options.resolution });
   const admin = createAdminClient();
 
   let debited = false;
@@ -75,9 +82,14 @@ export async function POST(req: NextRequest) {
       ensureFalUrl(endImageUrl),
     ]);
 
-    const prompt = guidancePrompt
-      ? `${BASE_PROMPT} Director's note: ${guidancePrompt}`
-      : BASE_PROMPT;
+    // custom ⇒ the user's text is the full prompt; auto ⇒ base prompt with the
+    // guidance appended as a director's note (legacy behavior).
+    const prompt =
+      promptMode === "custom" && guidancePrompt
+        ? guidancePrompt
+        : guidancePrompt
+          ? `${BASE_PROMPT} Director's note: ${guidancePrompt}`
+          : BASE_PROMPT;
 
     const { data: inserted, error: insertError } = await admin
       .from("generation_jobs")
@@ -94,6 +106,10 @@ export async function POST(req: NextRequest) {
           startFrameUrl: falStartUrl,
           endFrameUrl: falEndUrl,
           prompt,
+          resolution: options.resolution,
+          aspectRatio: options.aspectRatio,
+          generateAudio: options.generateAudio,
+          negativePrompt: options.negativePrompt ?? null,
         },
       })
       .select("id")

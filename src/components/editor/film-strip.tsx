@@ -34,10 +34,17 @@ import {
   timeToSegment,
 } from "@/lib/timeline/segments";
 import { extractFrameFile, sourceTimeForEdge } from "@/lib/video/extract-frame";
-import { creditCostFor, curatedDurationsFor, usdEstimateFor } from "@/lib/adapters";
+import {
+  creditCostFor,
+  curatedDurationsFor,
+  usdEstimateFor,
+  getAdapter,
+  type SceneResolution,
+} from "@/lib/adapters";
 import type { Scene } from "@/stores/project-store";
 import { beginPhotoImport } from "@/components/editor/import-choice-modal";
 import { useReferenceAssetsStore } from "@/components/editor/reference-assets-modal";
+import { SegmentedControl } from "@/components/editor/segmented-control";
 
 // Kept small on purpose: a larger min-width would clamp short/trimmed clips to
 // a visual width wider than their actual timeline slot (duration * pps), which
@@ -895,6 +902,9 @@ function InsertMenu({
   const [showDurationPicker, setShowDurationPicker] = useState(false);
   const [showFramePicker, setShowFramePicker] = useState(false);
   const [transitionPrompt, setTransitionPrompt] = useState("");
+  const [transitionPromptMode, setTransitionPromptMode] = useState<"auto" | "custom">("auto");
+  const [transitionResolution, setTransitionResolution] = useState<SceneResolution>("720p");
+  const [transitionAudio, setTransitionAudio] = useState(false);
   const [menuPos, setMenuPos] = useState<{ x: number; y: number } | null>(null);
   const insertPhotoAt = useProjectStore((s) => s.insertPhotoAt);
   const insertVideoAt = useProjectStore((s) => s.insertVideoAt);
@@ -910,6 +920,19 @@ function InsertMenu({
   const btnRef = useRef<HTMLButtonElement>(null);
 
   const transitionDurations = curatedDurationsFor(modelId);
+  // Only surface the knobs the chosen model accepts (resolution → Seedance;
+  // audio → Seedance + V3). Kling O1 shows neither — just the prompt + duration.
+  const transitionCaps = (() => {
+    try {
+      const a = getAdapter(modelId);
+      return {
+        resolutions: a.resolutions ?? [],
+        supportsAudio: a.supportsGenerateAudio,
+      };
+    } catch {
+      return { resolutions: [] as readonly SceneResolution[], supportsAudio: false };
+    }
+  })();
 
   const hasTransition = fromSceneId && toSceneId
     ? transitions.some((t) => t.id === `t-${fromSceneId}-${toSceneId}` && t.status !== "idle")
@@ -945,8 +968,14 @@ function InsertMenu({
     setOpen(false);
     setShowDurationPicker(false);
     if (fromSceneId && toSceneId) {
-      generateTransition(fromSceneId, toSceneId, duration, transitionPrompt);
+      generateTransition(fromSceneId, toSceneId, duration, {
+        guidancePrompt: transitionPrompt,
+        promptMode: transitionPromptMode,
+        resolution: transitionCaps.resolutions.length > 0 ? transitionResolution : undefined,
+        generateAudio: transitionCaps.supportsAudio ? transitionAudio : undefined,
+      });
       setTransitionPrompt("");
+      setTransitionPromptMode("auto");
     }
   };
 
@@ -1068,7 +1097,7 @@ function InsertMenu({
         <>
           <div className="fixed inset-0 z-50" onClick={() => { setOpen(false); setShowDurationPicker(false); setShowFramePicker(false); }} />
           <div
-            className="fixed z-50 w-52 -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl"
+            className="fixed z-50 w-56 -translate-x-1/2 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl"
             style={{ left: menuPos.x, top: menuPos.y }}
           >
             {showDurationPicker ? (
@@ -1078,19 +1107,73 @@ function InsertMenu({
                   <span className="font-mono text-[10px] text-accent-gold">Transição AI</span>
                 </div>
                 <div className="px-3 pt-2.5">
+                  {/* Prompt mode: "auto" appends the text to the curated base
+                      prompt; "custom" sends it verbatim as the full prompt. */}
+                  <div className="mb-2">
+                    <SegmentedControl<"auto" | "custom">
+                      value={transitionPromptMode}
+                      onChange={setTransitionPromptMode}
+                      options={[
+                        { value: "auto", label: "Guiado", title: "Texto complementa o prompt base" },
+                        { value: "custom", label: "Livre", title: "Seu texto vira o prompt completo" },
+                      ]}
+                    />
+                  </div>
                   <textarea
                     value={transitionPrompt}
                     onChange={(e) => setTransitionPrompt(e.target.value)}
-                    placeholder="Guia opcional (ex: giro lento pela porta)"
+                    placeholder={
+                      transitionPromptMode === "custom"
+                        ? "Prompt completo da transição (substitui o padrão)"
+                        : "Guia opcional (ex: giro lento pela porta)"
+                    }
                     rows={2}
                     className="w-full resize-none rounded-md border border-white/10 bg-black/30 px-2 py-1.5 font-mono text-[10px] leading-snug text-[var(--text)] placeholder:text-text-secondary/50 focus:border-accent-gold/40 focus:outline-none"
                   />
+                  {transitionPromptMode === "custom" && !transitionPrompt.trim() && (
+                    <p className="mt-1 font-mono text-[9px] text-text-secondary/60">
+                      Vazio = usa o prompt padrão de transição.
+                    </p>
+                  )}
                 </div>
+
+                {(transitionCaps.resolutions.length > 0 || transitionCaps.supportsAudio) && (
+                  <div className="space-y-2 px-3 pt-2.5">
+                    {transitionCaps.resolutions.length > 0 && (
+                      <div>
+                        <span className="mb-1 block font-mono text-[9px] uppercase tracking-widest text-text-secondary">Resolução</span>
+                        <SegmentedControl<SceneResolution>
+                          value={transitionResolution}
+                          onChange={setTransitionResolution}
+                          options={transitionCaps.resolutions.map((r) => ({ value: r, label: r }))}
+                        />
+                      </div>
+                    )}
+                    {transitionCaps.supportsAudio && (
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="font-mono text-[9px] uppercase tracking-widest text-text-secondary">Áudio</span>
+                        <div className="w-24">
+                          <SegmentedControl<"off" | "on">
+                            value={transitionAudio ? "on" : "off"}
+                            onChange={(v) => setTransitionAudio(v === "on")}
+                            options={[
+                              { value: "off", label: "Sem" },
+                              { value: "on", label: "Com" },
+                            ]}
+                          />
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                )}
+
                 <div className="px-3 pb-1 pt-2">
                   <span className="font-mono text-[9px] uppercase tracking-widest text-text-secondary">Duração</span>
                 </div>
                 {transitionDurations.map((d) => {
-                  const cr = creditCostFor(modelId, d);
+                  const cr = creditCostFor(modelId, d, {
+                    resolution: transitionCaps.resolutions.length > 0 ? transitionResolution : undefined,
+                  });
                   return (
                   <button
                     key={d}

@@ -21,10 +21,12 @@ import {
   VolumeX,
   RectangleHorizontal,
   CreditCard,
+  Type,
   type LucideIcon,
 } from "lucide-react";
 import {
   useProjectStore,
+  REFERENCE_FREE_PROMPT_ID,
   type Scene,
   type ReferenceAspectPref,
 } from "@/stores/project-store";
@@ -43,6 +45,7 @@ import {
 import { useReferenceAssetsStore } from "@/components/editor/reference-assets-modal";
 import { RecipesDrawer } from "@/components/editor/recipes-drawer";
 import { ReferencePromptEditor } from "@/components/editor/reference-prompt-editor";
+import { SegmentedControl } from "@/components/editor/segmented-control";
 
 /** Lucide icons referenced by the seeded video_reference presets (by icon slug). */
 const PRESET_ICONS: Record<string, LucideIcon> = {
@@ -82,43 +85,6 @@ const ASPECT_SHORT: Record<ReferenceAspectPref, string> = {
   "3:4": "3:4",
   "21:9": "21:9",
 };
-
-/** Compact two/three-way segmented control matching the inspector look. */
-function SegmentedControl<T extends string>({
-  options,
-  value,
-  onChange,
-  disabled,
-}: {
-  options: { value: T; label: string; title?: string }[];
-  value: T;
-  onChange: (v: T) => void;
-  disabled?: boolean;
-}) {
-  return (
-    <div className="flex items-center rounded-lg border border-white/10 p-0.5">
-      {options.map((opt) => {
-        const active = opt.value === value;
-        return (
-          <button
-            key={opt.value}
-            type="button"
-            disabled={disabled}
-            title={opt.title}
-            onClick={() => onChange(opt.value)}
-            className={`flex-1 rounded-md px-2 py-1.5 font-mono text-[10px] uppercase tracking-wide transition-all ${
-              active
-                ? "bg-accent-gold/15 text-accent-gold"
-                : "text-text-secondary hover:text-white"
-            } ${disabled ? "cursor-not-allowed opacity-50" : ""}`}
-          >
-            {opt.label}
-          </button>
-        );
-      })}
-    </div>
-  );
-}
 
 /**
  * Inspector body for a `reference-group` scene. Pick a director preset, compose
@@ -174,14 +140,18 @@ export function ReferenceGroupInspectorPanel({ scene }: { scene: Scene }) {
   const uploadedCount = images.filter((im) => im.url.startsWith("http")).length;
   const hasPendingUploads = uploadedCount < images.length;
   const presetId = config?.presetId ?? "";
+  // "Free prompt" = user explicitly chose to write their own prompt (no preset).
+  // Distinct from `presetId === ""` which means nothing has been chosen yet.
+  const isFreePrompt = presetId === REFERENCE_FREE_PROMPT_ID;
   const selectedPreset = presets.find((p) => p.id === presetId) ?? null;
   const composedPrompt = config?.composedPrompt ?? "";
   const presetPrompts = config?.presetPrompts ?? {};
   const analysisStatus = config?.analysisStatus ?? "idle";
   const analyzing = analysisStatus === "analyzing";
 
+  // Compose/regenerate need a real recipe — only available with a preset.
   const canCompose =
-    !composing && !enhancing && !analyzing && !!presetId && uploadedCount > 0;
+    !composing && !enhancing && !analyzing && !!presetId && !isFreePrompt && uploadedCount > 0;
   const canEnhance =
     !enhancing && !composing && !analyzing && !hasPendingUploads && composedPrompt.trim().length > 0;
 
@@ -247,7 +217,7 @@ export function ReferenceGroupInspectorPanel({ scene }: { scene: Scene }) {
   // a manual click. Tracked per preset so a failure doesn't loop.
   const autoComposed = useRef<Set<string>>(new Set());
   useEffect(() => {
-    if (!presetId || analyzing || hasPendingUploads || uploadedCount === 0) return;
+    if (!presetId || isFreePrompt || analyzing || hasPendingUploads || uploadedCount === 0) return;
     if (composing) return;
     if (composedPrompt.trim() || presetPrompts[presetId]) return;
     if (autoComposed.current.has(presetId)) return;
@@ -311,25 +281,27 @@ export function ReferenceGroupInspectorPanel({ scene }: { scene: Scene }) {
             onClick={() => {
               setDurationOpen(false);
               setAspectOpen(false);
-              if (presets.length > 0) setPresetOpen((v) => !v);
+              setPresetOpen((v) => !v);
             }}
             className="flex h-full w-full items-center justify-between rounded-lg border border-white/10 px-3 py-2.5 text-left transition-all hover:border-accent-gold/30"
           >
             <div className="flex min-w-0 items-center gap-2.5">
               <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md bg-accent-gold/10 text-accent-gold">
-                <PresetIcon name={selectedPreset?.icon} />
+                {isFreePrompt ? <Type size={15} /> : <PresetIcon name={selectedPreset?.icon} />}
               </span>
               <div className="min-w-0">
                 <span className="block truncate font-mono text-[12px] font-medium">
-                  {selectedPreset?.display_name ??
-                    (recipesLoading
-                      ? "Carregando presets…"
-                      : presets.length === 0
-                        ? "Nenhum preset"
-                        : "Escolher estilo")}
+                  {isFreePrompt
+                    ? "Sem estilo (prompt livre)"
+                    : (selectedPreset?.display_name ??
+                      (recipesLoading
+                        ? "Carregando presets…"
+                        : "Escolher estilo"))}
                 </span>
                 <span className="block truncate font-mono text-[9px] text-text-secondary">
-                  {selectedPreset?.description ?? "Selecione um preset de vídeo"}
+                  {isFreePrompt
+                    ? "Escreva seu próprio prompt"
+                    : (selectedPreset?.description ?? "Selecione um preset de vídeo")}
                 </span>
               </div>
             </div>
@@ -343,6 +315,43 @@ export function ReferenceGroupInspectorPanel({ scene }: { scene: Scene }) {
             <>
               <div className="fixed inset-0 z-40" onClick={() => setPresetOpen(false)} />
               <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
+                {/* Free-prompt option — always first, always available, even
+                    while recipes load or when there are no presets. */}
+                <button
+                  type="button"
+                  onClick={() => {
+                    setReferencePreset(scene.id, REFERENCE_FREE_PROMPT_ID);
+                    setPresetOpen(false);
+                  }}
+                  className={`flex w-full items-center gap-3 border-b border-white/5 px-3 py-2.5 text-left transition-colors ${
+                    isFreePrompt ? "bg-accent-gold/5" : "hover:bg-white/5"
+                  }`}
+                >
+                  <span
+                    className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md ${
+                      isFreePrompt
+                        ? "bg-accent-gold/20 text-accent-gold"
+                        : "bg-white/5 text-text-secondary"
+                    }`}
+                  >
+                    <Type size={15} />
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span
+                      className={`block font-mono text-[11px] font-medium ${
+                        isFreePrompt ? "text-accent-gold" : ""
+                      }`}
+                    >
+                      Sem estilo (prompt livre)
+                    </span>
+                    <span className="block truncate font-mono text-[9px] text-text-secondary">
+                      Escreva seu próprio prompt do zero
+                    </span>
+                  </div>
+                  {isFreePrompt && (
+                    <span className="font-mono text-[10px] text-accent-gold">✓</span>
+                  )}
+                </button>
                 {presets.map((preset) => {
                   const isSelected = preset.id === presetId;
                   return (
@@ -448,6 +457,11 @@ export function ReferenceGroupInspectorPanel({ scene }: { scene: Scene }) {
           images={images}
           value={composedPrompt}
           onChange={(prompt) => setReferenceComposedPrompt(scene.id, prompt)}
+          placeholder={
+            isFreePrompt
+              ? "Escreva o prompt do vídeo. Use @ para citar imagens (ex: @Image1 caminha pela sala)…"
+              : undefined
+          }
           actions={
             <div className="flex items-center gap-1.5">
               <button
@@ -494,7 +508,12 @@ export function ReferenceGroupInspectorPanel({ scene }: { scene: Scene }) {
       {/* Status hints / errors */}
       {!presetId && (
         <p className="mt-1.5 font-mono text-[10px] text-text-secondary/60">
-          Escolha um estilo — o prompt já vem pronto.
+          Escolha um estilo (prompt pronto) ou “Sem estilo” para escrever o seu.
+        </p>
+      )}
+      {isFreePrompt && (
+        <p className="mt-1.5 font-mono text-[10px] text-text-secondary/60">
+          Modo livre — escreva seu prompt e use @ para citar as imagens.
         </p>
       )}
       {presetId && hasPendingUploads && (

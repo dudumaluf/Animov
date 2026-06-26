@@ -29,12 +29,19 @@ import {
 
 import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
-import { listAdapters, curatedDurationsFor, creditCostFor } from "@/lib/adapters";
+import {
+  listAdapters,
+  curatedDurationsFor,
+  creditCostFor,
+  getAdapter,
+  type SceneResolution,
+} from "@/lib/adapters";
 import { useCreditsBalance } from "@/hooks/use-credits-balance";
 import { type AudioMixSettings } from "@/lib/composition/compose";
 import { InspectorPreviewVideo } from "@/components/editor/video-mirror";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { ReferenceGroupInspectorPanel } from "@/components/editor/reference-group-inspector-panel";
+import { SegmentedControl } from "@/components/editor/segmented-control";
 import { KenBurnsPreview } from "@/components/editor/ken-burns-preview";
 
 const MUSIC_PRESETS = [
@@ -59,11 +66,33 @@ function getDurations(modelId: string): number[] {
 }
 
 /** Credit estimate for a scene generation; 0 if the model id can't be resolved. */
-function safeSceneCreditCost(modelId: string, duration: number): number {
+function safeSceneCreditCost(
+  modelId: string,
+  duration: number,
+  resolution?: SceneResolution,
+): number {
   try {
-    return creditCostFor(modelId, duration);
+    return creditCostFor(modelId, duration, { resolution });
   } catch {
     return 0;
+  }
+}
+
+/** Model capability flags for the generation-options block; safe defaults if unknown. */
+function modelCaps(modelId: string): {
+  resolutions: readonly SceneResolution[];
+  supportsAudio: boolean;
+  supportsNegative: boolean;
+} {
+  try {
+    const a = getAdapter(modelId);
+    return {
+      resolutions: a.resolutions ?? [],
+      supportsAudio: a.supportsGenerateAudio,
+      supportsNegative: a.supportsNegativePrompt,
+    };
+  } catch {
+    return { resolutions: [], supportsAudio: false, supportsNegative: false };
   }
 }
 
@@ -819,6 +848,9 @@ export function Inspector({
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
   const setScenePreset = useProjectStore((s) => s.setScenePreset);
   const setSceneGuidancePrompt = useProjectStore((s) => s.setSceneGuidancePrompt);
+  const setSceneResolution = useProjectStore((s) => s.setSceneResolution);
+  const setSceneGenerateAudio = useProjectStore((s) => s.setSceneGenerateAudio);
+  const setSceneNegativePrompt = useProjectStore((s) => s.setSceneNegativePrompt);
   const setSceneGenerationTarget = useProjectStore(
     (s) => s.setSceneGenerationTarget,
   );
@@ -836,9 +868,10 @@ export function Inspector({
   const sceneTarget = scene
     ? scene.generationTargetSeconds ?? scene.duration
     : 0;
+  const caps = modelCaps(modelId);
   const sceneEstimate =
     scene && scene.sourceType !== "video-upload" && scene.sourceType !== "reference-group"
-      ? safeSceneCreditCost(modelId, sceneTarget)
+      ? safeSceneCreditCost(modelId, sceneTarget, scene.genResolution)
       : 0;
   const sceneInsufficient =
     creditBalance !== null && sceneEstimate > 0 && sceneEstimate > creditAvailable;
@@ -1050,6 +1083,76 @@ export function Inspector({
                     className="w-full resize-none rounded-lg border border-white/5 bg-black/20 px-2.5 py-2 font-mono text-[11px] leading-snug text-[var(--text)] placeholder:text-text-secondary/40 transition-colors focus:border-accent-gold/30 focus:outline-none"
                   />
                 </div>
+
+                {/* Model-aware output options. Only the knobs the chosen model
+                    actually accepts are shown (resolution → Seedance; audio →
+                    Seedance + V3; negative prompt → V3); Kling O1 shows none. */}
+                {(caps.resolutions.length > 0 ||
+                  caps.supportsAudio ||
+                  caps.supportsNegative) && (
+                  <div className="mt-3 space-y-2.5">
+                    <label className="block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                      Saída
+                    </label>
+
+                    {caps.resolutions.length > 0 && (
+                      <div>
+                        <span className="mb-1 block font-mono text-[10px] text-text-secondary">
+                          Resolução
+                        </span>
+                        <SegmentedControl<SceneResolution>
+                          value={scene.genResolution ?? "720p"}
+                          onChange={(v) => setSceneResolution(selectedSceneId, v)}
+                          options={caps.resolutions.map((r) => ({
+                            value: r,
+                            label: r,
+                          }))}
+                        />
+                      </div>
+                    )}
+
+                    {caps.supportsAudio && (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-[10px] text-text-secondary">
+                          Áudio
+                        </span>
+                        <div className="w-32">
+                          <SegmentedControl<"off" | "on">
+                            value={scene.genGenerateAudio ? "on" : "off"}
+                            onChange={(v) =>
+                              setSceneGenerateAudio(selectedSceneId, v === "on")
+                            }
+                            options={[
+                              { value: "off", label: "Sem" },
+                              { value: "on", label: "Com" },
+                            ]}
+                          />
+                        </div>
+                      </div>
+                    )}
+
+                    {caps.supportsNegative && (
+                      <div>
+                        <label className="mb-1 block font-mono text-[10px] text-text-secondary">
+                          Prompt negativo (opcional)
+                        </label>
+                        <textarea
+                          value={scene.genNegativePrompt ?? ""}
+                          onChange={(e) =>
+                            setSceneNegativePrompt(selectedSceneId, e.target.value)
+                          }
+                          placeholder="Ex: borrado, distorção, baixa qualidade"
+                          rows={1}
+                          className="w-full resize-none rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5 font-mono text-[11px] leading-snug text-[var(--text)] placeholder:text-text-secondary/40 transition-colors focus:border-accent-gold/30 focus:outline-none"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-end font-mono text-[9px] text-text-secondary/70">
+                      Estimativa: {sceneEstimate} cr.
+                    </div>
+                  </div>
+                )}
 
                 {/* "Alvo de geração": how long we ask the model for on the NEXT
                     generation. After a successful generate this clears and

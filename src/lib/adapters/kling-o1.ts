@@ -53,6 +53,10 @@ export const klingO1Adapter: VideoModelAdapter = {
   creditsPerSecond: 1,
   supportsStartEndFrame: true,
   supportsNegativePrompt: false,
+  // O1 image-to-video accepts only prompt + start/end frames + duration — no
+  // resolution/aspect/negative/audio inputs per the live fal schema.
+  supportsGenerateAudio: false,
+  supportsAspectRatio: false,
   maxDuration: 10,
   minDuration: 5,
   curatedDurations: [5, 10],

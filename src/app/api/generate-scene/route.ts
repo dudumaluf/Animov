@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from "next/server";
 import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
+import {
+  getAdapter,
+  DEFAULT_MODEL_ID,
+  creditCostFor,
+  sanitizeGenerationOptions,
+} from "@/lib/adapters";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 import { ensureFalUrl } from "@/lib/fal-helpers";
 import { configureFal } from "@/lib/fal-key";
@@ -18,6 +23,10 @@ type JsonBody = {
   duration?: number;
   modelId?: string;
   guidancePrompt?: string;
+  resolution?: string;
+  aspectRatio?: string;
+  negativePrompt?: string;
+  generateAudio?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -43,6 +52,12 @@ export async function POST(req: NextRequest) {
   let duration = 5;
   let modelId = DEFAULT_MODEL_ID;
   let guidancePrompt: string | undefined;
+  let rawOptions: {
+    resolution?: unknown;
+    aspectRatio?: unknown;
+    negativePrompt?: unknown;
+    generateAudio?: unknown;
+  } = {};
 
   try {
     if (isJson) {
@@ -58,6 +73,12 @@ export async function POST(req: NextRequest) {
       duration = Number(body.duration ?? duration);
       modelId = body.modelId ?? modelId;
       guidancePrompt = body.guidancePrompt?.trim() || undefined;
+      rawOptions = {
+        resolution: body.resolution,
+        aspectRatio: body.aspectRatio,
+        negativePrompt: body.negativePrompt,
+        generateAudio: body.generateAudio,
+      };
     } else {
       const formData = await req.formData();
       const photo = formData.get("photo") as File | null;
@@ -72,6 +93,13 @@ export async function POST(req: NextRequest) {
       duration = Number(formData.get("duration") ?? duration);
       modelId = (formData.get("modelId") as string) || modelId;
       guidancePrompt = (formData.get("guidancePrompt") as string)?.trim() || undefined;
+      const fdAudio = formData.get("generateAudio");
+      rawOptions = {
+        resolution: (formData.get("resolution") as string) || undefined,
+        aspectRatio: (formData.get("aspectRatio") as string) || undefined,
+        negativePrompt: (formData.get("negativePrompt") as string) || undefined,
+        generateAudio: fdAudio === null ? undefined : fdAudio === "true",
+      };
     }
   } catch (err) {
     console.error("[generate-scene] parse body", err);
@@ -79,7 +107,10 @@ export async function POST(req: NextRequest) {
   }
 
   const adapter = getAdapter(modelId);
-  const creditCost = creditCostFor(modelId, duration);
+  // Drop any option the chosen model doesn't actually accept (validated against
+  // the live fal schema via the adapter capabilities).
+  const options = sanitizeGenerationOptions(modelId, rawOptions);
+  const creditCost = creditCostFor(modelId, duration, { resolution: options.resolution });
 
   const admin = createAdminClient();
 
@@ -111,10 +142,19 @@ export async function POST(req: NextRequest) {
       guidancePrompt,
     });
 
+    // A user-typed negative (V3 only) overrides the auto-built one; empty falls
+    // back to the preset/model default. `negative` is null for models that
+    // don't support negatives, so the field is simply omitted there.
+    const negativePrompt = options.negativePrompt ?? negative;
+
     const result = await adapter.generateScene({
       photoUrl: falPhotoUrl,
       prompt: positive,
       duration,
+      negativePrompt,
+      resolution: options.resolution,
+      aspectRatio: options.aspectRatio,
+      generateAudio: options.generateAudio,
     });
 
     await admin.from("generation_logs").insert({

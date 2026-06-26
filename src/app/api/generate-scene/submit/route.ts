@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
+import {
+  getAdapter,
+  DEFAULT_MODEL_ID,
+  creditCostFor,
+  sanitizeGenerationOptions,
+} from "@/lib/adapters";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 import { ensureFalUrl } from "@/lib/fal-helpers";
 import { dispatch } from "@/lib/jobs/dispatch";
@@ -22,6 +27,10 @@ type JsonBody = {
   guidancePrompt?: string;
   sceneId?: string;
   projectId?: string;
+  resolution?: string;
+  aspectRatio?: string;
+  negativePrompt?: string;
+  generateAudio?: boolean;
 };
 
 export async function POST(req: NextRequest) {
@@ -42,6 +51,12 @@ export async function POST(req: NextRequest) {
   let guidancePrompt: string | undefined;
   let sceneId: string | undefined;
   let projectId: string | undefined;
+  let rawOptions: {
+    resolution?: unknown;
+    aspectRatio?: unknown;
+    negativePrompt?: unknown;
+    generateAudio?: unknown;
+  } = {};
 
   try {
     const body = (await req.json()) as JsonBody;
@@ -55,13 +70,20 @@ export async function POST(req: NextRequest) {
     guidancePrompt = body.guidancePrompt?.trim() || undefined;
     sceneId = typeof body.sceneId === "string" ? body.sceneId : undefined;
     projectId = typeof body.projectId === "string" ? body.projectId : undefined;
+    rawOptions = {
+      resolution: body.resolution,
+      aspectRatio: body.aspectRatio,
+      negativePrompt: body.negativePrompt,
+      generateAudio: body.generateAudio,
+    };
   } catch (err) {
     console.error("[generate-scene:submit] parse body", err);
     return NextResponse.json({ error: "Invalid request body" }, { status: 400 });
   }
 
   const adapter = getAdapter(modelId);
-  const creditCost = creditCostFor(modelId, duration);
+  const options = sanitizeGenerationOptions(modelId, rawOptions);
+  const creditCost = creditCostFor(modelId, duration, { resolution: options.resolution });
   const admin = createAdminClient();
 
   let debited = false;
@@ -89,6 +111,10 @@ export async function POST(req: NextRequest) {
       guidancePrompt,
     });
 
+    // User-typed negative (V3) overrides the auto-built default; the dispatcher
+    // re-sanitizes on submit, so persisting the raw choice here is safe.
+    const negativePrompt = options.negativePrompt ?? negative;
+
     const { data: inserted, error: insertError } = await admin
       .from("generation_jobs")
       .insert({
@@ -103,8 +129,11 @@ export async function POST(req: NextRequest) {
         payload: {
           photoUrl: falPhotoUrl,
           prompt: positive,
-          negativePrompt: negative,
+          negativePrompt,
           presetId,
+          resolution: options.resolution,
+          aspectRatio: options.aspectRatio,
+          generateAudio: options.generateAudio,
         },
       })
       .select("id")

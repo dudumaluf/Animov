@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { getAdapter } from "@/lib/adapters";
+import { getAdapter, sanitizeGenerationOptions } from "@/lib/adapters";
+import type { SceneResolution, SceneAspectRatio } from "@/lib/adapters";
 import { configureFal } from "@/lib/fal-key";
 
 /**
@@ -135,27 +136,52 @@ async function submitOneQueued(admin: AdminClient, job: JobRow): Promise<boolean
     let requestId: string;
 
     if (job.type === "scene") {
-      const pl = job.payload as { photoUrl?: string; prompt?: string };
+      const pl = job.payload as {
+        photoUrl?: string;
+        prompt?: string;
+        negativePrompt?: string | null;
+        resolution?: SceneResolution;
+        aspectRatio?: SceneAspectRatio;
+        generateAudio?: boolean;
+      };
       if (!pl.photoUrl || !pl.prompt) throw new Error("scene payload incomplete");
+      // Sanitize against the model's real capabilities so a payload written by
+      // an older client (or for a different model) can never push an
+      // unsupported field to fal. Missing fields fall back to the adapter
+      // defaults (720p / no audio) — i.e. today's behavior for legacy jobs.
+      const opts = sanitizeGenerationOptions(job.model_id, pl);
       requestId = await adapter.submitScene({
         photoUrl: pl.photoUrl,
         prompt: pl.prompt,
         duration,
+        negativePrompt: opts.negativePrompt ?? pl.negativePrompt ?? null,
+        resolution: opts.resolution,
+        aspectRatio: opts.aspectRatio,
+        generateAudio: opts.generateAudio,
       });
     } else if (job.type === "transition") {
       const pl = job.payload as {
         startFrameUrl?: string;
         endFrameUrl?: string;
         prompt?: string;
+        negativePrompt?: string | null;
+        resolution?: SceneResolution;
+        aspectRatio?: SceneAspectRatio;
+        generateAudio?: boolean;
       };
       if (!pl.startFrameUrl || !pl.endFrameUrl || !pl.prompt) {
         throw new Error("transition payload incomplete");
       }
+      const opts = sanitizeGenerationOptions(job.model_id, pl);
       requestId = await adapter.submitTransition({
         startFrameUrl: pl.startFrameUrl,
         endFrameUrl: pl.endFrameUrl,
         prompt: pl.prompt,
         duration,
+        negativePrompt: opts.negativePrompt ?? pl.negativePrompt ?? null,
+        resolution: opts.resolution,
+        aspectRatio: opts.aspectRatio,
+        generateAudio: opts.generateAudio,
       });
     } else {
       throw new Error(`unsupported job type for generic queue: ${job.type}`);

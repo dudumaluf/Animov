@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { ensureFalUrl } from "@/lib/fal-helpers";
@@ -13,8 +12,7 @@ import {
   type ReferenceResolution,
   type ReferenceAspectRatio,
 } from "@/lib/adapters/seedance-reference";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // This route only SUBMITS to the fal queue and returns the request id — the
 // heavy render happens on fal and the client polls /status. A short ceiling is
@@ -56,6 +54,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let prompt: string;
   let imageUrls: string[];

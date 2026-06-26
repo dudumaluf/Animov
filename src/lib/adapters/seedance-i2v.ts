@@ -7,8 +7,6 @@ import type {
   QueueState,
 } from "./types";
 
-fal.config({ credentials: process.env.FAL_KEY! });
-
 const MODEL_ID = "bytedance/seedance-2.0/image-to-video";
 
 /** Default resolution for Phase 1 — balances quality vs the ~$0.30/s price point. */

@@ -1,9 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { dispatch, reapStale, reapSubmitted } from "@/lib/jobs/dispatch";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // Vercel Cron (~1 min) heartbeat for the generation queue: reap stuck jobs
 // (frees leaked slots), reap finished in-flight jobs (frees slots, logs success
@@ -30,6 +28,7 @@ async function run(req: NextRequest) {
   if (!authorized(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+  await configureFal();
   const admin = createAdminClient();
   try {
     await reapStale(admin);

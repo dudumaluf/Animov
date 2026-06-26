@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { callVision } from "@/lib/vision/call-vision";
 import { ensureFalUrl } from "@/lib/fal-helpers";
+import { configureFal } from "@/lib/fal-key";
 
 /**
  * Polishes an existing `@Image1..N` reference video prompt: richer camera
@@ -63,6 +64,8 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let body: EnhanceBody;
   try {

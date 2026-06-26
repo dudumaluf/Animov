@@ -1,12 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
 import { ensureFalUrl } from "@/lib/fal-helpers";
 import { dispatch } from "@/lib/jobs/dispatch";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // SUBMIT-ONLY sibling of /api/generate-transition. Debits, resolves the two
 // frame URLs, inserts a `queued` generation_jobs row, then best-effort
@@ -28,6 +26,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   const body = await req.json().catch(() => null);
   if (!body) {

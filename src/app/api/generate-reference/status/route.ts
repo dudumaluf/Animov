@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -9,8 +8,7 @@ import {
   type ReferenceTier,
   type ReferenceResolution,
 } from "@/lib/adapters/seedance-reference";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // Polls a previously-submitted fal reference job and finalizes it: on success
 // it records the generation log; on failure it refunds the credits debited at
@@ -29,6 +27,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let requestId: string;
   try {

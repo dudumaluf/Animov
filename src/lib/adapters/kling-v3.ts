@@ -7,8 +7,6 @@ import type {
   QueueState,
 } from "./types";
 
-fal.config({ credentials: process.env.FAL_KEY! });
-
 const MODEL_ID = "fal-ai/kling-video/v3/pro/image-to-video";
 
 type KlingOutput = {

@@ -1,5 +1,6 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdapter } from "@/lib/adapters";
+import { configureFal } from "@/lib/fal-key";
 
 /**
  * Global generation-queue dispatcher (server-only — uses the service-role key)
@@ -184,6 +185,8 @@ async function submitOneQueued(admin: AdminClient, job: JobRow): Promise<boolean
  * beyond it), so a momentary +1 under a race is harmless.
  */
 export async function dispatch(admin: AdminClient): Promise<void> {
+  // Ensure the shared fal client points at the active key before any submit.
+  await configureFal();
   const cap = await getFalMaxConcurrent(admin);
   const inFlight = await countInFlight(admin);
   const slots = cap - inFlight;
@@ -273,6 +276,9 @@ export async function finalizeJob(
   job: JobRow,
 ): Promise<FinalizeOutcome> {
   if (!job.model_id || !job.request_id) return "in_progress";
+
+  // Ensure the shared fal client points at the active key before polling fal.
+  await configureFal();
 
   let adapter;
   try {

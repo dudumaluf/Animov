@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callVision } from "@/lib/vision/call-vision";
 import { ensureFalUrl } from "@/lib/fal-helpers";
+import { configureFal } from "@/lib/fal-key";
 import type { Recipe } from "@/types/recipes";
 
 /**
@@ -64,6 +65,8 @@ export async function POST(req: Request) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let body: ComposeBody;
   try {

@@ -1,6 +1,7 @@
 import { createClient } from "@/lib/supabase/server";
 import { ModelToggle } from "./model-toggle";
 import { SettingRow, CatalogRow } from "./settings-editors";
+import { FalKeyEditor } from "./fal-key-editor";
 
 export default async function AdminSettingsPage() {
   const supabase = createClient();
@@ -67,6 +68,8 @@ export default async function AdminSettingsPage() {
           </table>
         </div>
       </div>
+
+      <FalKeyEditor />
 
       <div className="mt-8">
         <h2 className="font-display text-xl">Catálogo de Preços</h2>

@@ -5,8 +5,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 import { ensureFalUrl } from "@/lib/fal-helpers";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // Video synthesis waits for fal before responding; longer clips exceed the 60s
 // serverless default. Pin the Pro-plan ceiling so the request isn't 504'd.
@@ -30,6 +29,9 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  // Resolve the active Fal key (custom BYOK key, else env fallback) before any fal.* call.
+  await configureFal();
 
   // Accept both JSON (preferred — URL-based, no body size limit) and
   // multipart/form-data (legacy — raw File, bounded by Vercel's 4.5MB cap).

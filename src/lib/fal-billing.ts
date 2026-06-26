@@ -11,14 +11,27 @@
  * model key returns 401/403 — we surface that as a clear, non-fatal message.
  */
 
+import { getFalKey } from "@/lib/fal-key";
+
 const FAL_BILLING_URL = "https://api.fal.ai/v1/account/billing?expand=credits";
 
 export type FalBalanceResult =
   | { ok: true; balance: number; currency: string; username?: string }
   | { ok: false; status: number; message: string };
 
-export async function getFalBalance(): Promise<FalBalanceResult> {
-  const key = process.env.FAL_KEY;
+/**
+ * Read the prepaid Fal balance for the account currently being charged.
+ *
+ * @param overrideKey when provided (e.g. the admin testing a candidate key
+ *   before saving it), the balance is read for THAT key instead of the active
+ *   one. Otherwise it resolves via {@link getFalKey} (custom BYOK key if set,
+ *   else the env `FAL_KEY`) so the displayed balance always matches the account
+ *   that generations will actually bill.
+ */
+export async function getFalBalance(
+  overrideKey?: string,
+): Promise<FalBalanceResult> {
+  const key = (overrideKey ?? (await getFalKey()))?.trim();
   if (!key) {
     return { ok: false, status: 0, message: "FAL_KEY não configurada" };
   }

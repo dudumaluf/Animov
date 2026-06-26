@@ -1,13 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
 import { buildPromptForScene } from "@/lib/presets/build-prompt";
 import { ensureFalUrl } from "@/lib/fal-helpers";
 import { dispatch } from "@/lib/jobs/dispatch";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // SUBMIT-ONLY sibling of /api/generate-scene. Debits, builds the prompt, inserts
 // a `queued` generation_jobs row, then best-effort dispatches (global cap gate).
@@ -34,6 +32,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let photoUrl: string;
   let presetId = "push_in_serene";

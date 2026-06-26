@@ -1,5 +1,4 @@
 import { NextRequest, NextResponse } from "next/server";
-import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import {
@@ -8,8 +7,7 @@ import {
   queuePosition,
   type JobRow,
 } from "@/lib/jobs/dispatch";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // Unified poll endpoint for the generic generation queue. Maps a generation_jobs
 // row to the client's status contract: `queued` (+ position #N) / `in_progress`
@@ -37,6 +35,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let jobId: string;
   try {

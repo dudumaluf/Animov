@@ -1,7 +1,5 @@
 import { fal } from "@fal-ai/client";
 
-fal.config({ credentials: process.env.FAL_KEY! });
-
 const MODEL_ID = "openrouter/router/vision";
 
 const TIER_MODELS: Record<string, string> = {

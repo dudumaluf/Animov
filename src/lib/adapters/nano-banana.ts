@@ -1,7 +1,5 @@
 import { fal } from "@fal-ai/client";
 
-fal.config({ credentials: process.env.FAL_KEY! });
-
 const MODEL_ID = "fal-ai/nano-banana-2/edit";
 
 type NanoBananaInput = {

@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { callVision } from "@/lib/vision/call-vision";
 import { ensureFalUrl } from "@/lib/fal-helpers";
+import { configureFal } from "@/lib/fal-key";
 import type { Recipe } from "@/types/recipes";
 
 type MarkerPayload = {
@@ -31,6 +32,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let body: ComposeBody;
   try {

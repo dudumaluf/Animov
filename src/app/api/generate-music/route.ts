@@ -1,7 +1,10 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateMusic } from "@/lib/adapters/music";
+import { configureFal } from "@/lib/fal-key";
 
 export async function POST(req: NextRequest) {
+  await configureFal();
+
   const body = await req.json();
   const prompt = body.prompt as string;
 

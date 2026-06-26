@@ -3,8 +3,7 @@ import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { getAdapter, DEFAULT_MODEL_ID, creditCostFor } from "@/lib/adapters";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 // Video synthesis waits for fal before responding; longer clips exceed the 60s
 // serverless default. Pin the Pro-plan ceiling so the request isn't 504'd.
@@ -26,6 +25,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   const body = await req.json();
   const { startImageUrl, endImageUrl } = body;

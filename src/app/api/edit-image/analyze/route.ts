@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { createClient } from "@/lib/supabase/server";
 import { callVision } from "@/lib/vision/call-vision";
 import { ensureFalUrl } from "@/lib/fal-helpers";
+import { configureFal } from "@/lib/fal-key";
 import { PLACEMENT_DESCRIPTOR_PROMPT } from "@/lib/prompts/placement-system-prompt";
 
 type ReferencePayload = {
@@ -29,6 +30,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   let body: AnalyzeBody;
   try {

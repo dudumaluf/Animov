@@ -3,8 +3,7 @@ import { fal } from "@fal-ai/client";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { editImage } from "@/lib/adapters/nano-banana";
-
-fal.config({ credentials: process.env.FAL_KEY! });
+import { configureFal } from "@/lib/fal-key";
 
 async function ensureFalUrl(url: string): Promise<string> {
   if (url.startsWith("https://") && !url.startsWith("data:") && !url.startsWith("blob:")) {
@@ -23,6 +22,8 @@ export async function POST(req: NextRequest) {
   if (!user) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
+
+  await configureFal();
 
   const body = await req.json();
   const {

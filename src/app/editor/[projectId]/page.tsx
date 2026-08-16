@@ -638,7 +638,7 @@ export default function EditorPage({
         target?.tagName === "TEXTAREA" ||
         target?.isContentEditable;
 
-      if ((e.ctrlKey || e.metaKey) && e.key === "s") {
+      if ((e.ctrlKey || e.metaKey) && (e.key === "s" || e.key === "S")) {
         e.preventDefault();
         saveToSupabase();
         return;
@@ -719,8 +719,8 @@ export default function EditorPage({
         timelineSeek(next);
       }
     };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
+    window.addEventListener("keydown", handler, true);
+    return () => window.removeEventListener("keydown", handler, true);
   }, [saveToSupabase, fitToView, viewMode, segments, timelineTogglePlay, timelineSeek]);
 
   const handleExport = useCallback(async () => {

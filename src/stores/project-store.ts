@@ -1493,11 +1493,33 @@ export async function resolveSceneHttpsUrl(
  * backend no longer deletes — but the scene still wouldn't get its real URL
  * persisted, so the save would just leave stale data. Waiting is correct.
  */
+function dropPhotoFile(
+  files: Record<string, File>,
+  id: string,
+): Record<string, File> {
+  if (!(id in files)) return files;
+  const next = { ...files };
+  delete next[id];
+  return next;
+}
+
 export function hasPendingPhotoUploads(
   state: Pick<ProjectStore, "scenes" | "_photoFiles" | "_referenceFiles">,
 ): boolean {
-  if (Object.keys(state._photoFiles).length > 0) return true;
-  if (Object.keys(state._referenceFiles ?? {}).length > 0) return true;
+  // A leftover File after a successful upload is NOT pending — only treat
+  // it as in-flight when that scene still has a local (non-http) photo URL.
+  for (const id of Object.keys(state._photoFiles)) {
+    const scene = state.scenes.find((s) => s.id === id);
+    if (!scene) continue;
+    if (!scene.photoUrl.startsWith("http")) return true;
+  }
+  for (const id of Object.keys(state._referenceFiles ?? {})) {
+    const scene = state.scenes.find((s) => s.id === id);
+    const images = scene?.referenceConfig?.images ?? [];
+    if (images.some((im) => im.url.startsWith("blob:") || im.url.startsWith("data:"))) {
+      return true;
+    }
+  }
   return state.scenes.some((s) => {
     if (
       s.photoUrl &&
@@ -1602,6 +1624,7 @@ export const useProjectStore = create<ProjectStore>()(
                   : s,
               ),
               isDirty: true,
+              _photoFiles: dropPhotoFile(state._photoFiles, ids[i]!),
             }));
           } catch (err) {
             console.error("[upload] photo failed:", err);
@@ -1663,6 +1686,7 @@ export const useProjectStore = create<ProjectStore>()(
                   : s,
               ),
               isDirty: true,
+              _photoFiles: dropPhotoFile(state._photoFiles, id),
             }));
           })
           .catch(() => {
@@ -2765,6 +2789,7 @@ export const useProjectStore = create<ProjectStore>()(
               s.id === sceneId ? { ...s, photoUrl: supabaseUrl } : s,
             ),
             isDirty: true,
+            _photoFiles: dropPhotoFile(state._photoFiles, sceneId),
           }));
         } catch (err) {
           console.error("[updatePlaceholderImage] upload failed:", err);

@@ -21,6 +21,11 @@ export type ClipInfo = {
   durationHint?: number;
   clipVolume?: number;
   /**
+   * Still-image timeline cards (no generated/uploaded video). Held as a
+   * frozen frame for `durationHint` seconds. Video is the default.
+   */
+  kind?: "video" | "image";
+  /**
    * Non-destructive trim (seconds into source). When set, composition only
    * renders frames/audio in [sourceStart, sourceEnd). `sourceEnd` defaults to
    * the native duration of the source when omitted.
@@ -28,6 +33,20 @@ export type ClipInfo = {
   sourceStart?: number;
   sourceEnd?: number;
 };
+
+/** True when a scene still (photo URL) is real media, not the 1×1 placeholder. */
+export function isUsableStillUrl(url?: string | null): url is string {
+  if (!url) return false;
+  if (url.startsWith("blob:") || url.startsWith("http://") || url.startsWith("https://")) {
+    return true;
+  }
+  return url.startsWith("data:image/") && url.length > 200;
+}
+
+function isStillClip(clip: ClipInfo, blob?: Blob): boolean {
+  if (clip.kind === "image") return true;
+  return !!blob?.type.startsWith("image/");
+}
 
 export type AudioMixSettings = {
   musicVolume: number;
@@ -329,23 +348,23 @@ export async function composeVideos({
   if (clips.length === 0) throw new Error("No clips to compose");
 
   const anyClipHasAudio = clips.some((c) => c.hasAudio);
+  const single = clips[0]!;
+  const canPassthrough =
+    clips.length === 1 &&
+    !audioUrl &&
+    single.kind !== "image" &&
+    (!anyClipHasAudio || single.hasAudio);
 
-  if (clips.length === 1 && !audioUrl && !anyClipHasAudio) {
+  if (canPassthrough) {
     onProgress?.({ message: "Baixando vídeo...", percent: 30 });
-    const blob = await fetchBlobWithRetry(clips[0]!.url, (a) => {
+    const blob = await fetchBlobWithRetry(single.url, (a) => {
       onProgress?.({ message: `Reconectando (${a}/3)...`, percent: 20 + a * 5 });
     });
-    onProgress?.({ message: "Pronto", percent: 100 });
-    return blob;
-  }
-
-  if (clips.length === 1 && clips[0]!.hasAudio && !audioUrl) {
-    onProgress?.({ message: "Baixando vídeo...", percent: 30 });
-    const blob = await fetchBlobWithRetry(clips[0]!.url, (a) => {
-      onProgress?.({ message: `Reconectando (${a}/3)...`, percent: 20 + a * 5 });
-    });
-    onProgress?.({ message: "Pronto", percent: 100 });
-    return blob;
+    if (!blob.type.startsWith("image/")) {
+      onProgress?.({ message: "Pronto", percent: 100 });
+      return blob;
+    }
+    // Image-only project: fall through and encode a real MP4 still-hold.
   }
 
   try {
@@ -418,6 +437,11 @@ async function composeWithMediabunny({
 
   for (let i = 0; i < n; i++) {
     const clip = clips[i]!;
+    if (isStillClip(clip, clipData[i]!.blob)) {
+      const duration = Math.max(0.1, clip.durationHint ?? 1);
+      clipMetas.push({ duration, sourceStart: 0, sourceEnd: duration });
+      continue;
+    }
     const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(clipData[i]!.blob) });
     const videoTrack = await input.getPrimaryVideoTrack();
     const native = videoTrack ? await videoTrack.computeDuration() : 0;
@@ -501,6 +525,39 @@ async function composeWithMediabunny({
 
   for (let i = 0; i < n; i++) {
     report(`Abrindo clipe ${i + 1} de ${n}...`, basePct + (i / n) * 3);
+
+    if (isStillClip(clips[i]!, clipData[i]!.blob)) {
+      const duration = clipMetas[i]!.duration;
+      const totalFrames = Math.max(1, Math.ceil(duration * fps));
+      let bitmap: ImageBitmap | null = null;
+      try {
+        bitmap = await createImageBitmap(clipData[i]!.blob);
+        const crop = coverCrop(bitmap.width, bitmap.height, width, height);
+        ctx.clearRect(0, 0, width, height);
+        ctx.drawImage(bitmap, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
+      } finally {
+        bitmap?.close();
+      }
+
+      for (let f = 0; f < totalFrames; f++) {
+        await videoSource.add(globalTime, frameDuration);
+        if (audioSource) {
+          while (audioChunkIdx < mixedChunks.length && audioChunkIdx <= globalTime) {
+            await audioSource.add(mixedChunks[audioChunkIdx]!);
+            audioChunkIdx++;
+          }
+        }
+        globalTime += frameDuration;
+        if (f === 0 || f === totalFrames - 1 || f % Math.max(1, Math.floor(totalFrames / 25)) === 0) {
+          report(
+            `Codificando clipe ${i + 1}/${n} — quadro ${f + 1} de ${totalFrames}`,
+            basePct + 3 + (i + (f + 1) / totalFrames) / n * spanEncode,
+          );
+        }
+      }
+      report(`Clipe ${i + 1}/${n} concluído`, basePct + 3 + (i + 1) / n * spanEncode);
+      continue;
+    }
 
     const input = new Input({ formats: ALL_FORMATS, source: new BlobSource(clipData[i]!.blob) });
     const videoTrack = await input.getPrimaryVideoTrack();
@@ -658,7 +715,9 @@ async function composeWithMediaRecorder({
     const clip = clips[i]!;
     report(`Gravando clipe ${i + 1} de ${nc}...`, 15 + (i / nc) * 75);
 
-    if (clip.hasAudio) {
+    if (isStillClip(clip)) {
+      await playStill(clip.url, ctx, width, height, clip.durationHint ?? 1);
+    } else if (clip.hasAudio) {
       await playClipWithAudio(clip.url, ctx, width, height, audioCtx, dest, musicGain, audioMix.musicVolume);
     } else {
       await playClipMuted(clip.url, ctx, width, height);
@@ -676,6 +735,35 @@ async function composeWithMediaRecorder({
   await audioCtx.close();
 
   return new Blob(chunks, { type: mimeType });
+}
+
+function playStill(
+  url: string,
+  ctx: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  durationSec: number,
+): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => {
+      const crop = coverCrop(img.naturalWidth, img.naturalHeight, width, height);
+      const ms = Math.max(100, durationSec * 1000);
+      const start = performance.now();
+      const draw = () => {
+        ctx.drawImage(img, crop.sx, crop.sy, crop.sw, crop.sh, 0, 0, width, height);
+        if (performance.now() - start < ms) {
+          requestAnimationFrame(draw);
+        } else {
+          resolve();
+        }
+      };
+      draw();
+    };
+    img.onerror = () => reject(new Error(`Failed to load still: ${url}`));
+    img.src = url;
+  });
 }
 
 function playClipMuted(

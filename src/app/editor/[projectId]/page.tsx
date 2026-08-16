@@ -39,7 +39,7 @@ import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 // Register all job executors at the editor boundary so batches-store can
 // dispatch video/music/image-edit jobs without each caller wiring them up.
 import "@/lib/jobs/executors";
-import { composeVideos, downloadBlob, RATIO_DIMS, type ComposeProgress } from "@/lib/composition/compose";
+import { composeVideos, downloadBlob, isUsableStillUrl, RATIO_DIMS, type ComposeProgress, type ClipInfo } from "@/lib/composition/compose";
 import { buildSegments, findNextSceneTime, findPreviousSceneTime, timeToSegment, totalDuration } from "@/lib/timeline/segments";
 import { useTimelineEngine } from "@/hooks/use-timeline-engine";
 import { ZoomIn, ZoomOut, Maximize } from "lucide-react";
@@ -726,12 +726,11 @@ export default function EditorPage({
   const handleExport = useCallback(async () => {
     const state = useProjectStore.getState();
     const allScenes = state.scenes;
-    const readyScenes = allScenes.filter((s) => s.status === "ready" && s.videoUrl);
-    if (readyScenes.length < 1 || composing) return;
+    if (composing) return;
     setComposing(true);
     setExportProgress({ message: "Iniciando...", percent: 0 });
     try {
-      const clips: { url: string; hasAudio: boolean; durationHint?: number; clipVolume?: number; sourceStart?: number; sourceEnd?: number }[] = [];
+      const clips: ClipInfo[] = [];
       for (let i = 0; i < allScenes.length; i++) {
         const scene = allScenes[i]!;
         if (scene.status === "ready" && scene.videoUrl) {
@@ -754,6 +753,16 @@ export default function EditorPage({
             sourceStart,
             sourceEnd,
           });
+        } else {
+          const stillUrl = scene.photoDataUrl ?? scene.photoUrl;
+          if (isUsableStillUrl(stillUrl)) {
+            clips.push({
+              kind: "image",
+              url: stillUrl,
+              hasAudio: false,
+              durationHint: Math.max(0.1, scene.duration || 1),
+            });
+          }
         }
         if (i < allScenes.length - 1) {
           const nextScene = allScenes[i + 1]!;

@@ -144,7 +144,7 @@ function ReferenceGroupThumb({
 /** Min duration window when trimming (both sides combined, per scene). */
 const MIN_TRIM_WINDOW = 0.5;
 /** Image-only scenes: bounds for the right-edge drag. */
-const IMAGE_MIN_DURATION = 1;
+const IMAGE_MIN_DURATION = 0.1;
 const IMAGE_MAX_DURATION = 30;
 
 type TrimSide = "left" | "right";

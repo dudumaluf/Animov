@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useProjectStore, type Scene } from "@/stores/project-store";
 
-const IMAGE_MIN = 1;
+const IMAGE_MIN = 0.1;
 const IMAGE_MAX = 30;
 const VIDEO_MIN_WINDOW = 0.5;
 
@@ -13,7 +13,7 @@ const VIDEO_MIN_WINDOW = 0.5;
  * inline editor on click. Works in both canvas and timeline view modes.
  *
  * For image-only scenes the editor directly sets `scene.duration` (clamped to
- * [1, 30]). For video-backed scenes (generated or uploaded) the editor lets
+ * [0.1, 30]). For video-backed scenes (generated or uploaded) the editor lets
  * the user tweak the trim window by pulling the right edge, so `duration` is
  * always derived from `trimEnd - trimStart` and never exceeds the native
  * source length.

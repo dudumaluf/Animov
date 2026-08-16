@@ -9,6 +9,7 @@ import {
   type ExportAspectRatio,
 } from "@/stores/project-store";
 import { useHasActiveMusicJob } from "@/stores/batches-store";
+import Link from "next/link";
 import {
   Maximize2,
   ChevronDown,
@@ -22,10 +23,11 @@ import {
   Loader2,
   Volume2,
   SlidersHorizontal,
-  Monitor,
-  Plus,
+  AlertCircle,
+  CreditCard,
 } from "lucide-react";
 
+import { PRESET_CATALOG } from "@/lib/presets";
 import { downloadVideoBlob } from "@/lib/utils/download";
 import {
   listAdapters,
@@ -33,22 +35,14 @@ import {
   creditCostFor,
   getAdapter,
   type SceneResolution,
-  type SceneAspectRatio,
 } from "@/lib/adapters";
 import { useCreditsBalance } from "@/hooks/use-credits-balance";
 import { isUsableStillUrl, type AudioMixSettings } from "@/lib/composition/compose";
 import { InspectorPreviewVideo } from "@/components/editor/video-mirror";
 import { useEditorSettingsStore } from "@/stores/editor-settings-store";
 import { ReferenceGroupInspectorPanel } from "@/components/editor/reference-group-inspector-panel";
+import { SegmentedControl } from "@/components/editor/segmented-control";
 import { KenBurnsPreview } from "@/components/editor/ken-burns-preview";
-import { ScenePromptControls } from "@/components/editor/scene-prompt-controls";
-import {
-  GenerationDurationDropdown,
-  AspectRatioDropdown,
-  PillSelect,
-  OutputSettingsSection,
-  GenerateFooter,
-} from "@/components/editor/inspector-ui";
 
 const MUSIC_PRESETS = [
   { id: "calm", label: "Calm Corporate", desc: "Piano, strings, elegant", icon: "♬", prompt: "Calm corporate instrumental, warm piano melody, soft strings, professional and elegant, 85 BPM, real estate luxury atmosphere" },
@@ -61,33 +55,6 @@ const MUSIC_PRESETS = [
 const CURATED_DURATIONS: Record<string, number[]> = {
   "kling-v3-pro": [3, 5, 7, 10, 12, 15],
   "kling-o1-pro": [5, 10],
-};
-
-/**
- * Aspect-ratio choices for the scene "Saída" block (Seedance only). Mirrors the
- * reference flow's enum/labels for visual consistency; the scene enum has no
- * "project/follow-canvas" notion, so "auto" (model infers from the image) is
- * the default and back-compat value.
- */
-const SCENE_ASPECT_OPTIONS: { value: SceneAspectRatio; label: string }[] = [
-  { value: "auto", label: "Automática" },
-  { value: "16:9", label: "16:9 · paisagem" },
-  { value: "9:16", label: "9:16 · vertical" },
-  { value: "1:1", label: "1:1 · quadrado" },
-  { value: "4:3", label: "4:3" },
-  { value: "3:4", label: "3:4" },
-  { value: "21:9", label: "21:9 · cinema" },
-];
-
-/** Short labels for the compact format pill (full names live in the dropdown). */
-const SCENE_ASPECT_SHORT: Record<SceneAspectRatio, string> = {
-  auto: "Auto",
-  "21:9": "21:9",
-  "16:9": "16:9",
-  "4:3": "4:3",
-  "1:1": "1:1",
-  "3:4": "3:4",
-  "9:16": "9:16",
 };
 
 function getDurations(modelId: string): number[] {
@@ -114,7 +81,6 @@ function safeSceneCreditCost(
 /** Model capability flags for the generation-options block; safe defaults if unknown. */
 function modelCaps(modelId: string): {
   resolutions: readonly SceneResolution[];
-  aspectRatios: readonly SceneAspectRatio[];
   supportsAudio: boolean;
   supportsNegative: boolean;
 } {
@@ -122,12 +88,11 @@ function modelCaps(modelId: string): {
     const a = getAdapter(modelId);
     return {
       resolutions: a.resolutions ?? [],
-      aspectRatios: a.aspectRatios ?? [],
       supportsAudio: a.supportsGenerateAudio,
       supportsNegative: a.supportsNegativePrompt,
     };
   } catch {
-    return { resolutions: [], aspectRatios: [], supportsAudio: false, supportsNegative: false };
+    return { resolutions: [], supportsAudio: false, supportsNegative: false };
   }
 }
 
@@ -351,64 +316,6 @@ function ModelChip({ modelId, onChange }: { modelId: string; onChange: (id: stri
   );
 }
 
-/**
- * Negative-prompt disclosure — collapsed by default so the "Saída" block reads
- * as a tidy set of knobs (not a confusing second prompt). A tiny ghost button
- * reveals a clearly-labeled "Evitar" textarea; it starts expanded when a value
- * already exists. Presentation only — the value and its `caps.supportsNegative`
- * gating stay with the caller/store.
- */
-function NegativePromptField({
-  value,
-  onChange,
-}: {
-  value: string;
-  onChange: (v: string) => void;
-}) {
-  const [open, setOpen] = useState(value.trim().length > 0);
-
-  if (!open) {
-    return (
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        title="Adicionar um prompt negativo — o que NÃO deve aparecer no vídeo"
-        className="flex items-center gap-1 font-mono text-[10px] text-text-secondary/70 transition-colors hover:text-accent-gold"
-      >
-        <Plus size={11} className="shrink-0" /> Prompt negativo
-      </button>
-    );
-  }
-
-  return (
-    <div className="space-y-1">
-      <div className="flex items-center justify-between">
-        <label className="font-mono text-[10px] uppercase tracking-widest text-text-secondary">
-          Evitar (prompt negativo)
-        </label>
-        <button
-          type="button"
-          onClick={() => setOpen(false)}
-          title="Ocultar o campo (o texto é mantido)"
-          className="font-mono text-[9px] uppercase tracking-wide text-text-secondary/60 transition-colors hover:text-accent-gold"
-        >
-          Ocultar
-        </button>
-      </div>
-      <textarea
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        placeholder="ex: borrado, distorção, marca d'água"
-        rows={2}
-        className="w-full resize-none rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5 font-mono text-[11px] leading-snug text-[var(--text)] placeholder:text-text-secondary/40 transition-colors focus:border-accent-gold/30 focus:outline-none"
-      />
-      <p className="font-mono text-[10px] leading-relaxed text-text-secondary/50">
-        O que NÃO deve aparecer — ex: borrado, distorção.
-      </p>
-    </div>
-  );
-}
-
 function MusicPresetSelector({
   selectedPrompt,
   onSelect,
@@ -462,6 +369,72 @@ function MusicPresetSelector({
                     </span>
                     <span className="block truncate font-mono text-[9px] text-text-secondary">
                       {preset.desc}
+                    </span>
+                  </div>
+                  {isSelected && <span className="text-accent-gold font-mono text-[10px]">✓</span>}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
+function PresetSelector({
+  selectedId,
+  onSelect,
+}: {
+  selectedId: string;
+  onSelect: (id: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const selected = PRESET_CATALOG.find((p) => p.id === selectedId) ?? PRESET_CATALOG[0]!;
+
+  return (
+    <div className="relative">
+      <button
+        onClick={() => setOpen(!open)}
+        className="flex w-full items-center justify-between rounded-lg border border-white/10 px-3 py-2.5 text-left transition-all hover:border-accent-gold/30"
+      >
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-7 w-7 items-center justify-center rounded-md bg-accent-gold/10 font-mono text-sm text-accent-gold">
+            {selected.arrow}
+          </span>
+          <div>
+            <span className="block font-mono text-[12px] font-medium">{selected.displayName}</span>
+            <span className="block font-mono text-[9px] text-text-secondary">{selected.description}</span>
+          </div>
+        </div>
+        <ChevronDown size={14} className={`text-text-secondary transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+
+      {open && (
+        <>
+          <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
+          <div className="absolute left-0 right-0 top-full z-50 mt-1 overflow-hidden rounded-xl border border-white/10 bg-[#141412] shadow-xl">
+            {PRESET_CATALOG.map((preset) => {
+              const isSelected = preset.id === selectedId;
+              return (
+                <button
+                  key={preset.id}
+                  onClick={() => { onSelect(preset.id); setOpen(false); }}
+                  className={`flex w-full items-center gap-3 px-3 py-2.5 text-left transition-colors ${
+                    isSelected ? "bg-accent-gold/5" : "hover:bg-white/5"
+                  }`}
+                >
+                  <span className={`flex h-7 w-7 shrink-0 items-center justify-center rounded-md font-mono text-sm ${
+                    isSelected ? "bg-accent-gold/20 text-accent-gold" : "bg-white/5 text-text-secondary"
+                  }`}>
+                    {preset.arrow}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <span className={`block font-mono text-[11px] font-medium ${isSelected ? "text-accent-gold" : ""}`}>
+                      {preset.displayName}
+                    </span>
+                    <span className="block truncate font-mono text-[9px] text-text-secondary">
+                      {preset.description}
                     </span>
                   </div>
                   {isSelected && <span className="text-accent-gold font-mono text-[10px]">✓</span>}
@@ -879,8 +852,9 @@ export function Inspector({
   const selectedSceneId = useProjectStore((s) => s.selectedSceneId);
   const editNodeSelected = useProjectStore((s) => s.editNodeSelected);
   const scene = useProjectStore((s) => s.scenes.find((sc) => sc.id === s.selectedSceneId));
+  const setScenePreset = useProjectStore((s) => s.setScenePreset);
+  const setSceneGuidancePrompt = useProjectStore((s) => s.setSceneGuidancePrompt);
   const setSceneResolution = useProjectStore((s) => s.setSceneResolution);
-  const setSceneAspect = useProjectStore((s) => s.setSceneAspect);
   const setSceneGenerateAudio = useProjectStore((s) => s.setSceneGenerateAudio);
   const setSceneNegativePrompt = useProjectStore((s) => s.setSceneNegativePrompt);
   const setSceneGenerationTarget = useProjectStore(
@@ -1088,102 +1062,142 @@ export function Inspector({
               <ReferenceGroupInspectorPanel scene={scene} />
             ) : (
               <>
-                {/* Order: Movimento (preset + duração + modelo) → Saída
-                    (output knobs) → Prompt (editável) → Gerar. The output
-                    block is injected BETWEEN the preset and the prompt via
-                    ScenePromptControls' outputSlot, so the video-influencing
-                    controls sit right under the preset. */}
-                <ScenePromptControls
-                  scene={scene}
-                  sceneId={selectedSceneId}
-                  modelChip={
-                    showModelPicker ? (
-                      <ModelChip modelId={modelId} onChange={setModelId} />
-                    ) : null
-                  }
-                  durationSlot={
-                    <GenerationDurationDropdown
-                      durations={durations}
-                      value={sceneTarget}
-                      onChange={(d) => setSceneGenerationTarget(selectedSceneId, d)}
-                    />
-                  }
-                  outputSlot={
-                    /* Model-aware output options. Only the knobs the chosen
-                       model actually accepts are shown (resolution + aspect →
-                       Seedance; audio → Seedance + V3; negative prompt → V3);
-                       Kling O1 shows none. Audio toggles from the "Saída" header
-                       (compact), mirroring the reference panel. */
-                    caps.resolutions.length > 0 ||
-                    caps.aspectRatios.length > 0 ||
-                    caps.supportsAudio ||
-                    caps.supportsNegative ? (
-                      <OutputSettingsSection
-                        className="mt-3"
-                        audio={
-                          caps.supportsAudio
-                            ? {
-                                value: scene.genGenerateAudio ?? false,
-                                onChange: (v) =>
-                                  setSceneGenerateAudio(selectedSceneId, v),
-                                disabled: scene.status === "generating",
-                              }
-                            : undefined
-                        }
-                      >
-                        <div className="space-y-2">
-                          {(caps.resolutions.length > 0 ||
-                            caps.aspectRatios.length > 0) && (
-                            <div className="flex flex-wrap items-center gap-1.5">
-                              {caps.resolutions.length > 0 && (
-                                <PillSelect<SceneResolution>
-                                  icon={Monitor}
-                                  value={scene.genResolution ?? "720p"}
-                                  shortLabel={scene.genResolution ?? "720p"}
-                                  onChange={(v) =>
-                                    setSceneResolution(selectedSceneId, v)
-                                  }
-                                  options={caps.resolutions.map((r) => ({
-                                    value: r,
-                                    label: r,
-                                  }))}
-                                  align="left"
-                                  title={`Resolução · ${scene.genResolution ?? "720p"}`}
-                                />
-                              )}
+                <div>
+                  <div className="mb-1.5 flex items-center justify-between">
+                    <label className="font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                      Movimento
+                    </label>
+                    {showModelPicker && <ModelChip modelId={modelId} onChange={setModelId} />}
+                  </div>
+                  <PresetSelector
+                    selectedId={scene.presetId}
+                    onSelect={(id) => setScenePreset(selectedSceneId, id)}
+                  />
+                </div>
 
-                              {caps.aspectRatios.length > 0 && (
-                                <AspectRatioDropdown<SceneAspectRatio>
-                                  options={SCENE_ASPECT_OPTIONS.filter((o) =>
-                                    caps.aspectRatios.includes(o.value),
-                                  )}
-                                  value={scene.genAspect ?? "auto"}
-                                  shortLabel={SCENE_ASPECT_SHORT[scene.genAspect ?? "auto"]}
-                                  onChange={(v) => setSceneAspect(selectedSceneId, v)}
-                                  title={`Proporção do vídeo · ${
-                                    SCENE_ASPECT_OPTIONS.find(
-                                      (o) => o.value === (scene.genAspect ?? "auto"),
-                                    )?.label ?? "Automática"
-                                  }`}
-                                />
-                              )}
-                            </div>
-                          )}
+                {/* Optional free-text to steer the preset. Appended to the
+                    auto-built prompt at generation time; empty = preset only. */}
+                <div className="mt-3">
+                  <label className="mb-1.5 block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                    Guia (opcional)
+                  </label>
+                  <textarea
+                    value={scene.guidancePrompt ?? ""}
+                    onChange={(e) => setSceneGuidancePrompt(selectedSceneId, e.target.value)}
+                    placeholder="Ex: foco na lareira, luz mais quente, leve movimento de cortina"
+                    rows={2}
+                    className="w-full resize-none rounded-lg border border-white/5 bg-black/20 px-2.5 py-2 font-mono text-[11px] leading-snug text-[var(--text)] placeholder:text-text-secondary/40 transition-colors focus:border-accent-gold/30 focus:outline-none"
+                  />
+                </div>
 
-                          {caps.supportsNegative && (
-                            <NegativePromptField
-                              key={selectedSceneId}
-                              value={scene.genNegativePrompt ?? ""}
-                              onChange={(v) =>
-                                setSceneNegativePrompt(selectedSceneId, v)
-                              }
-                            />
-                          )}
+                {/* Model-aware output options. Only the knobs the chosen model
+                    actually accepts are shown (resolution → Seedance; audio →
+                    Seedance + V3; negative prompt → V3); Kling O1 shows none. */}
+                {(caps.resolutions.length > 0 ||
+                  caps.supportsAudio ||
+                  caps.supportsNegative) && (
+                  <div className="mt-3 space-y-2.5">
+                    <label className="block font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                      Saída
+                    </label>
+
+                    {caps.resolutions.length > 0 && (
+                      <div>
+                        <span className="mb-1 block font-mono text-[10px] text-text-secondary">
+                          Resolução
+                        </span>
+                        <SegmentedControl<SceneResolution>
+                          value={scene.genResolution ?? "720p"}
+                          onChange={(v) => setSceneResolution(selectedSceneId, v)}
+                          options={caps.resolutions.map((r) => ({
+                            value: r,
+                            label: r,
+                          }))}
+                        />
+                      </div>
+                    )}
+
+                    {caps.supportsAudio && (
+                      <div className="flex items-center justify-between gap-3">
+                        <span className="font-mono text-[10px] text-text-secondary">
+                          Áudio
+                        </span>
+                        <div className="w-32">
+                          <SegmentedControl<"off" | "on">
+                            value={scene.genGenerateAudio ? "on" : "off"}
+                            onChange={(v) =>
+                              setSceneGenerateAudio(selectedSceneId, v === "on")
+                            }
+                            options={[
+                              { value: "off", label: "Sem" },
+                              { value: "on", label: "Com" },
+                            ]}
+                          />
                         </div>
-                      </OutputSettingsSection>
-                    ) : null
-                  }
-                />
+                      </div>
+                    )}
+
+                    {caps.supportsNegative && (
+                      <div>
+                        <label className="mb-1 block font-mono text-[10px] text-text-secondary">
+                          Prompt negativo (opcional)
+                        </label>
+                        <textarea
+                          value={scene.genNegativePrompt ?? ""}
+                          onChange={(e) =>
+                            setSceneNegativePrompt(selectedSceneId, e.target.value)
+                          }
+                          placeholder="Ex: borrado, distorção, baixa qualidade"
+                          rows={1}
+                          className="w-full resize-none rounded-lg border border-white/5 bg-black/20 px-2.5 py-1.5 font-mono text-[11px] leading-snug text-[var(--text)] placeholder:text-text-secondary/40 transition-colors focus:border-accent-gold/30 focus:outline-none"
+                        />
+                      </div>
+                    )}
+
+                    <div className="flex items-center justify-end font-mono text-[9px] text-text-secondary/70">
+                      Estimativa: {sceneEstimate} cr.
+                    </div>
+                  </div>
+                )}
+
+                {/* "Alvo de geração": how long we ask the model for on the NEXT
+                    generation. After a successful generate this clears and
+                    scene.duration reflects the effective clip length (adjusted
+                    by trim). Picking a value here does NOT change the existing
+                    clip duration — only the next attempt. */}
+                <div className="mt-3">
+                  <label className="mb-1.5 flex items-center justify-between font-mono text-label-xs uppercase tracking-widest text-text-secondary">
+                    <span>Alvo (gerar)</span>
+                    {scene.status === "ready" && scene.videoUrl && (
+                      <span className="font-mono text-[9px] normal-case text-text-secondary/60">
+                        Clip: {Math.round(scene.duration * 10) / 10}s
+                      </span>
+                    )}
+                  </label>
+                  <div
+                    className={`grid gap-1 ${durations.length > 4 ? "grid-cols-6" : durations.length > 2 ? "grid-cols-4" : "grid-cols-2"}`}
+                  >
+                    {durations.map((d) => {
+                      const effective =
+                        scene.generationTargetSeconds ?? scene.duration;
+                      const isActive = effective === d;
+                      return (
+                        <button
+                          key={d}
+                          type="button"
+                          onClick={() => setSceneGenerationTarget(selectedSceneId, d)}
+                          className={`rounded-md border py-1 font-mono text-[10px] transition-all ${
+                            isActive
+                              ? "border-accent-gold/40 bg-accent-gold/5 text-accent-gold"
+                              : "border-white/5 text-text-secondary hover:border-white/10"
+                          }`}
+                        >
+                          {d}s
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
 
                 {scene.status === "ready" && scene.videoUrl && (
                   <TrimControls
@@ -1194,32 +1208,57 @@ export function Inspector({
 
                 <div className="min-h-4 flex-1" aria-hidden />
 
-                <GenerateFooter
-                  label={
-                    scene.status === "ready" ? "Regenerar cena" : "Gerar esta cena"
-                  }
-                  estimate={sceneEstimate}
-                  onGenerate={() => generateScene(selectedSceneId)}
-                  disabled={scene.status === "generating" || sceneInsufficient}
-                  isGenerating={scene.status === "generating"}
-                  title={
-                    sceneInsufficient
-                      ? `Créditos insuficientes — precisa de ${sceneEstimate}, você tem ${creditAvailable}`
-                      : undefined
-                  }
-                  insufficientCredits={sceneInsufficient}
-                  available={creditAvailable}
-                >
+                <div className="mt-auto shrink-0 space-y-2 pt-2">
+                  {sceneInsufficient && scene.status !== "generating" && (
+                    <div className="flex items-center justify-between gap-2 rounded-lg border border-amber-500/30 bg-amber-500/5 px-2.5 py-1.5">
+                      <p className="flex items-center gap-1.5 font-mono text-[10px] text-amber-400">
+                        <AlertCircle size={11} className="shrink-0" />
+                        Faltam créditos ({sceneEstimate} / {creditAvailable})
+                      </p>
+                      <Link
+                        href="/conta"
+                        className="flex shrink-0 items-center gap-1 rounded-full bg-accent-gold px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider text-[#0D0D0B] transition-opacity hover:opacity-90"
+                      >
+                        <CreditCard size={10} /> Comprar
+                      </Link>
+                    </div>
+                  )}
+                  <button
+                    type="button"
+                    disabled={scene.status === "generating" || sceneInsufficient}
+                    onClick={() => generateScene(selectedSceneId)}
+                    title={
+                      sceneInsufficient
+                        ? `Créditos insuficientes — precisa de ${sceneEstimate}, você tem ${creditAvailable}`
+                        : undefined
+                    }
+                    className="w-full rounded-lg border border-accent-gold/30 py-2 font-mono text-label-sm text-accent-gold transition-all hover:bg-accent-gold/10 disabled:cursor-not-allowed disabled:opacity-30"
+                  >
+                    {scene.status === "ready"
+                      ? "Regenerar cena"
+                      : scene.status === "generating"
+                        ? "Gerando..."
+                        : "Gerar esta cena"}
+                  </button>
+
                   {onEditImage && (
                     <button
                       type="button"
                       onClick={() => onEditImage(selectedSceneId)}
-                      className="mb-2 w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
+                      className="w-full rounded-lg border border-white/10 py-2 font-mono text-label-sm text-text-secondary transition-all hover:border-accent-gold/20 hover:text-accent-gold"
                     >
                       Editar imagem
                     </button>
                   )}
-                </GenerateFooter>
+
+                  <div className="flex items-center justify-between border-t border-white/5 pt-2 font-mono text-[10px] text-text-secondary">
+                    <span className="text-accent-gold/80">{scene.costCredits} cr.</span>
+                    <span className="flex items-center gap-1.5">
+                      <StatusDot status={scene.status} />
+                      <StatusLabel status={scene.status} />
+                    </span>
+                  </div>
+                </div>
               </>
             )}
           </div>
